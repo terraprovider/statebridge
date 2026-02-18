@@ -485,6 +485,89 @@ func TestDestroyValue_ExplicitTrue(t *testing.T) {
 	}
 }
 
+func TestParseFile_WithCondition(t *testing.T) {
+	content := `
+description: "Move with condition"
+condition:
+  resources_exist:
+    - layer: "./layers/compute"
+      addresses:
+        - "aws_instance.web"
+        - "aws_instance.api"
+  resources_not_exist:
+    - layer: "./layers/app"
+      addresses:
+        - "aws_instance.web"
+operations:
+  - type: move
+    source_layer: "./layers/compute"
+    destination_layer: "./layers/app"
+    resources:
+      - address: "aws_instance.web"
+        import_id: "i-0abc123"
+`
+	path := writeTestFile(t, "001_cond.yaml", content)
+	parser := NewParser()
+
+	mf, err := parser.ParseFile(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if mf.Condition == nil {
+		t.Fatal("expected condition to be parsed")
+	}
+	if len(mf.Condition.ResourcesExist) != 1 {
+		t.Fatalf("expected 1 resources_exist check, got %d", len(mf.Condition.ResourcesExist))
+	}
+	re := mf.Condition.ResourcesExist[0]
+	if re.Layer != "./layers/compute" {
+		t.Errorf("expected layer %q, got %q", "./layers/compute", re.Layer)
+	}
+	if len(re.Addresses) != 2 {
+		t.Fatalf("expected 2 addresses, got %d", len(re.Addresses))
+	}
+	if re.Addresses[0] != "aws_instance.web" {
+		t.Errorf("expected address %q, got %q", "aws_instance.web", re.Addresses[0])
+	}
+	if re.Addresses[1] != "aws_instance.api" {
+		t.Errorf("expected address %q, got %q", "aws_instance.api", re.Addresses[1])
+	}
+
+	if len(mf.Condition.ResourcesNotExist) != 1 {
+		t.Fatalf("expected 1 resources_not_exist check, got %d", len(mf.Condition.ResourcesNotExist))
+	}
+	rne := mf.Condition.ResourcesNotExist[0]
+	if rne.Layer != "./layers/app" {
+		t.Errorf("expected layer %q, got %q", "./layers/app", rne.Layer)
+	}
+	if len(rne.Addresses) != 1 || rne.Addresses[0] != "aws_instance.web" {
+		t.Errorf("expected address %q, got %v", "aws_instance.web", rne.Addresses)
+	}
+}
+
+func TestParseFile_WithoutCondition(t *testing.T) {
+	content := `
+description: "No condition"
+operations:
+  - type: remove
+    layer: "./l"
+    addresses:
+      - "aws_instance.x"
+`
+	path := writeTestFile(t, "002_nocond.yaml", content)
+	parser := NewParser()
+
+	mf, err := parser.ParseFile(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if mf.Condition != nil {
+		t.Errorf("expected nil condition, got %+v", mf.Condition)
+	}
+}
+
 func TestFullAddress(t *testing.T) {
 	tests := []struct {
 		prefix, addr, want string

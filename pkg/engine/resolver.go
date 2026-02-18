@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	tfjson "github.com/hashicorp/terraform-json"
 	"github.com/redtenant/tfmigrate/pkg/state"
 	tmpl "github.com/redtenant/tfmigrate/pkg/template"
 )
@@ -18,6 +19,16 @@ type Resolver struct {
 // NewResolver creates a Resolver with the given StateReader.
 func NewResolver(sr state.StateReader) *Resolver {
 	return &Resolver{stateReader: sr}
+}
+
+// ReadState reads the raw Terraform state for a given layer path.
+// Used by the engine for condition evaluation against state.
+func (r *Resolver) ReadState(ctx context.Context, layerPath string) (*tfjson.State, error) {
+	s, err := r.stateReader.ReadState(ctx, layerPath)
+	if err != nil {
+		return nil, fmt.Errorf("reading state for layer %q: %w", layerPath, err)
+	}
+	return s, nil
 }
 
 // LookupResources returns all for_each instances of a resource from state.

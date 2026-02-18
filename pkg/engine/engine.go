@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/redtenant/tfmigrate/pkg/generator"
@@ -69,6 +70,14 @@ func (e *Engine) ProcessFiles(ctx context.Context, paths []string) ([]string, er
 				msgs = append(msgs, ve.Error())
 			}
 			return nil, fmt.Errorf("validation errors in %q:\n  %s", mf.FilePath, strings.Join(msgs, "\n  "))
+		}
+
+		proceed, err := e.evaluateCondition(ctx, mf)
+		if err != nil {
+			return nil, fmt.Errorf("evaluating condition in %q: %w", mf.FilePath, err)
+		}
+		if !proceed {
+			continue
 		}
 
 		if err := e.processMigration(ctx, mf); err != nil {
@@ -378,4 +387,42 @@ func (e *Engine) processImport(op *migration.Operation) ([]generator.Block, erro
 		})
 	}
 	return blocks, nil
+}
+
+// evaluateCondition checks whether a migration file's preconditions are met.
+// Returns (true, nil) if there is no condition or all checks pass.
+// Returns (false, nil) if a check fails (logs skip reason to stderr).
+// Returns (false, error) if a state read error occurs.
+func (e *Engine) evaluateCondition(ctx context.Context, mf *migration.MigrationFile) (bool, error) {
+	if mf.Condition == nil {
+		return true, nil
+	}
+
+	for _, check := range mf.Condition.ResourcesExist {
+		s, err := e.resolver.ReadState(ctx, check.Layer)
+		if err != nil {
+			return false, err
+		}
+		for _, addr := range check.Addresses {
+			if !state.ResourceExists(s, addr) {
+				fmt.Fprintf(os.Stderr, "Skipping %q: resource %q not found in layer %q\n", mf.FilePath, addr, check.Layer)
+				return false, nil
+			}
+		}
+	}
+
+	for _, check := range mf.Condition.ResourcesNotExist {
+		s, err := e.resolver.ReadState(ctx, check.Layer)
+		if err != nil {
+			return false, err
+		}
+		for _, addr := range check.Addresses {
+			if state.ResourceExists(s, addr) {
+				fmt.Fprintf(os.Stderr, "Skipping %q: resource %q already exists in layer %q\n", mf.FilePath, addr, check.Layer)
+				return false, nil
+			}
+		}
+	}
+
+	return true, nil
 }

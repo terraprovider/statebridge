@@ -40,6 +40,10 @@ func Validate(mf *MigrationFile) []ValidationError {
 		})
 	}
 
+	if mf.Condition != nil {
+		errs = append(errs, validateCondition(mf.Condition)...)
+	}
+
 	if len(mf.Operations) == 0 {
 		errs = append(errs, ValidationError{
 			OperationIndex: -1,
@@ -245,6 +249,55 @@ func validateImport(index int, op *Operation) []ValidationError {
 				OperationIndex: index,
 				Field:          fieldPrefix + ".import_id",
 				Message:        "import entry requires an import_id",
+			})
+		}
+	}
+
+	return errs
+}
+
+// validateCondition checks the structural correctness of a Condition block.
+func validateCondition(cond *Condition) []ValidationError {
+	var errs []ValidationError
+
+	for i := range cond.ResourcesExist {
+		errs = append(errs, validateResourceCheck("condition.resources_exist", i, &cond.ResourcesExist[i])...)
+	}
+
+	for i := range cond.ResourcesNotExist {
+		errs = append(errs, validateResourceCheck("condition.resources_not_exist", i, &cond.ResourcesNotExist[i])...)
+	}
+
+	return errs
+}
+
+// validateResourceCheck checks a single ResourceCheck entry within a condition.
+func validateResourceCheck(parentField string, index int, rc *ResourceCheck) []ValidationError {
+	var errs []ValidationError
+	fieldPrefix := fmt.Sprintf("%s[%d]", parentField, index)
+
+	if rc.Layer == "" {
+		errs = append(errs, ValidationError{
+			OperationIndex: -1,
+			Field:          fieldPrefix + ".layer",
+			Message:        "resource check requires a layer path",
+		})
+	}
+
+	if len(rc.Addresses) == 0 {
+		errs = append(errs, ValidationError{
+			OperationIndex: -1,
+			Field:          fieldPrefix + ".addresses",
+			Message:        "resource check requires at least one address",
+		})
+	}
+
+	for j, addr := range rc.Addresses {
+		if addr == "" {
+			errs = append(errs, ValidationError{
+				OperationIndex: -1,
+				Field:          fmt.Sprintf("%s.addresses[%d]", fieldPrefix, j),
+				Message:        "address must not be empty",
 			})
 		}
 	}

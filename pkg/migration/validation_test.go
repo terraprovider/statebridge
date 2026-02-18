@@ -455,3 +455,117 @@ func hasError(errs []ValidationError, field string) bool {
 	}
 	return false
 }
+
+func TestValidate_ValidCondition(t *testing.T) {
+	mf := &MigrationFile{
+		Description: "Valid with condition",
+		Condition: &Condition{
+			ResourcesExist: []ResourceCheck{
+				{Layer: "./layers/compute", Addresses: []string{"aws_instance.web"}},
+			},
+			ResourcesNotExist: []ResourceCheck{
+				{Layer: "./layers/app", Addresses: []string{"aws_instance.web"}},
+			},
+		},
+		Operations: []Operation{
+			{
+				Type:      OpRemove,
+				Layer:     "./l",
+				Addresses: []string{"aws_instance.x"},
+			},
+		},
+	}
+
+	errs := Validate(mf)
+	if len(errs) != 0 {
+		t.Errorf("expected no errors, got %v", errs)
+	}
+}
+
+func TestValidate_ConditionMissingLayer(t *testing.T) {
+	mf := &MigrationFile{
+		Description: "Missing layer in condition",
+		Condition: &Condition{
+			ResourcesExist: []ResourceCheck{
+				{Layer: "", Addresses: []string{"aws_instance.web"}},
+			},
+		},
+		Operations: []Operation{
+			{
+				Type:      OpRemove,
+				Layer:     "./l",
+				Addresses: []string{"aws_instance.x"},
+			},
+		},
+	}
+
+	errs := Validate(mf)
+	if !hasError(errs, "condition.resources_exist[0].layer") {
+		t.Errorf("expected error for missing layer, got %v", errs)
+	}
+}
+
+func TestValidate_ConditionEmptyAddresses(t *testing.T) {
+	mf := &MigrationFile{
+		Description: "Empty addresses in condition",
+		Condition: &Condition{
+			ResourcesNotExist: []ResourceCheck{
+				{Layer: "./layers/app", Addresses: []string{}},
+			},
+		},
+		Operations: []Operation{
+			{
+				Type:      OpRemove,
+				Layer:     "./l",
+				Addresses: []string{"aws_instance.x"},
+			},
+		},
+	}
+
+	errs := Validate(mf)
+	if !hasError(errs, "condition.resources_not_exist[0].addresses") {
+		t.Errorf("expected error for empty addresses, got %v", errs)
+	}
+}
+
+func TestValidate_ConditionEmptyAddressString(t *testing.T) {
+	mf := &MigrationFile{
+		Description: "Empty address string in condition",
+		Condition: &Condition{
+			ResourcesExist: []ResourceCheck{
+				{Layer: "./layers/compute", Addresses: []string{"aws_instance.web", ""}},
+			},
+		},
+		Operations: []Operation{
+			{
+				Type:      OpRemove,
+				Layer:     "./l",
+				Addresses: []string{"aws_instance.x"},
+			},
+		},
+	}
+
+	errs := Validate(mf)
+	if !hasError(errs, "condition.resources_exist[0].addresses[1]") {
+		t.Errorf("expected error for empty address string, got %v", errs)
+	}
+}
+
+func TestValidate_EmptyConditionStruct(t *testing.T) {
+	mf := &MigrationFile{
+		Description: "Empty condition struct",
+		Condition:   &Condition{},
+		Operations: []Operation{
+			{
+				Type:      OpRemove,
+				Layer:     "./l",
+				Addresses: []string{"aws_instance.x"},
+			},
+		},
+	}
+
+	errs := Validate(mf)
+	if len(errs) != 0 {
+		t.Errorf("expected no errors for empty condition struct, got %v", errs)
+	}
+}

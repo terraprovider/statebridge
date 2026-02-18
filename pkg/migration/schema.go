@@ -31,12 +31,43 @@ type MigrationFile struct {
 	// SchemaVersion identifies the schema version for forward compatibility.
 	SchemaVersion string `yaml:"schema_version,omitempty"`
 
+	// Condition defines optional preconditions that must all be met for this
+	// migration file to be processed. If any condition is not met, the entire
+	// file is silently skipped with an informational log message.
+	Condition *Condition `yaml:"condition,omitempty"`
+
 	// Operations is the ordered list of migration operations to perform.
 	Operations []Operation `yaml:"operations"`
 
 	// FilePath is the filesystem path this file was loaded from.
 	// Set by the parser after loading; not present in YAML.
 	FilePath string `yaml:"-"`
+}
+
+// Condition defines preconditions that must all be met for a migration file
+// to be processed. All checks are ANDed — every check must pass.
+type Condition struct {
+	// ResourcesExist requires that ALL listed addresses exist in their
+	// respective layer's state. If any address is missing, the condition fails.
+	ResourcesExist []ResourceCheck `yaml:"resources_exist,omitempty"`
+
+	// ResourcesNotExist requires that NONE of the listed addresses exist in
+	// their respective layer's state. If any address is found, the condition fails.
+	ResourcesNotExist []ResourceCheck `yaml:"resources_not_exist,omitempty"`
+}
+
+// ResourceCheck specifies a layer path and a set of resource addresses to
+// check against that layer's state.
+type ResourceCheck struct {
+	// Layer is the filesystem path to the Terraform root module whose state
+	// will be queried.
+	Layer string `yaml:"layer"`
+
+	// Addresses lists the resource addresses to check. A base address
+	// (e.g., "aws_instance.web") matches if any for_each instance exists.
+	// A fully-qualified address (e.g., "aws_instance.web[\"key\"]") matches
+	// only that specific instance.
+	Addresses []string `yaml:"addresses"`
 }
 
 // Operation represents a single migration operation.
