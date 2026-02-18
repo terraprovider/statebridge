@@ -1,0 +1,27 @@
+---
+# aqua - Declarative CLI Version Manager
+# https://aquaproj.github.io/
+checksum:
+  # Enable Checksum Verification
+  # https://aquaproj.github.io/docs/tutorial-extras/checksum/
+  enabled: true
+  require_checksum: true
+registries:
+  - type: standard
+    ref: v4.468.0 # renovate: depName=aquaproj/aqua-registry
+packages:
+  - name: suzuki-shunsuke/tfcmt@v4.14.14
+  - name: opentofu/opentofu@v1.11.4
+    command_aliases:
+      - command: tofu
+        alias: tf
+  - name: pre-commit/pre-commit@v4.5.1
+  - name: gruntwork-io/terragrunt@v0.99.1
+    command_aliases:
+      - command: terragrunt
+        alias: tg
+  - name: casey/just@1.46.0
+  - name: sigstore/cosign@v3.0.4
+  - name: anchore/syft@v1.42.0
+  - name: goreleaser/goreleaser@v2.13.3
+  - name: SonarSource/sonar-scanner-cli@8.0.1.6346
