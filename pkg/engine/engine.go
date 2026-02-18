@@ -152,7 +152,9 @@ func (e *Engine) processMoveSingle(
 }
 
 // processMoveWildcard handles a wildcard move operation, expanding all matching
-// instances from state and generating removed+import block pairs for each.
+// instances from state and generating a single removed block for the base
+// resource in the source layer, plus individual import blocks for each
+// expanded instance in the destination layer.
 func (e *Engine) processMoveWildcard(
 	ctx context.Context,
 	op *migration.Operation,
@@ -163,15 +165,19 @@ func (e *Engine) processMoveWildcard(
 		return nil, err
 	}
 
-	var blocks []generator.Block
+	// Single removed block for the base resource address (without [*]).
+	// OpenTofu requires removing the entire for_each resource, not individual instances.
+	blocks := []generator.Block{
+		&generator.RemovedBlock{
+			From:        BaseAddress(srcAddr),
+			Destroy:     false,
+			Layer:       srcLayer,
+			Description: op.Description,
+		},
+	}
+
 	for _, inst := range instances {
 		blocks = append(blocks,
-			&generator.RemovedBlock{
-				From:        inst.SourceResource.Address,
-				Destroy:     false,
-				Layer:       srcLayer,
-				Description: op.Description,
-			},
 			&generator.ImportBlock{
 				To:          inst.DestAddress,
 				ID:          inst.ImportID,

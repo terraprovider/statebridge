@@ -198,16 +198,14 @@ If the source state contains:
 
 This generates:
 
-**Source layer (`removed` blocks):**
+**Source layer (single `removed` block for the base resource):**
 ```hcl
 removed {
-  from = aws_s3_bucket.data["composite-abc-us-east-1"]
-  lifecycle { destroy = false }
-}
+  from = aws_s3_bucket.data
 
-removed {
-  from = aws_s3_bucket.data["composite-xyz-eu-west-1"]
-  lifecycle { destroy = false }
+  lifecycle {
+    destroy = false
+  }
 }
 ```
 
@@ -259,6 +257,9 @@ The following custom functions are available in templates. All string functions 
 | `default` | `{{ .Key \| default "fallback" }}` | Fallback for empty values |
 | `quote` | `{{ .Key \| quote }}` | Wrap in double quotes |
 | `printf` | `{{ printf "%s-%s" .Type .Name }}` | Formatted string |
+| `regexReplace` | `{{ .Key \| regexReplace "[^a-z0-9]+" "_" }}` | Regex-based replacement |
+| `sanitizeKey` | `{{ .Key \| sanitizeKey }}` | Lowercase + replace non-alphanumeric with `_` |
+| `formatKey` | `{{ formatKey "%s_%s" .Attributes.pkg .Attributes.role }}` | Format + sanitize in one step |
 
 ### Complex Key Transformation Examples
 

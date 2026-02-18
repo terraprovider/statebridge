@@ -2,6 +2,7 @@ package template
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 	"text/template"
 )
@@ -76,6 +77,23 @@ func FuncMap() template.FuncMap {
 		// Sprintf for custom formatting.
 		// Usage: {{ printf "%s-%s" .Type .Name }}
 		"printf": fmt.Sprintf,
+
+		// Regex replacement.
+		// Usage: {{ .Key | regexReplace "[^a-zA-Z0-9]+" "_" }}
+		"regexReplace": regexReplaceFunc,
+
+		// Sanitize a string into a safe for_each key: lowercase and replace
+		// all non-alphanumeric characters with underscores, collapsing runs.
+		// Usage: {{ printf "%s_%s" .Attributes.package_key .Attributes.role | sanitizeKey }}
+		// Equivalent to the Terraform expression:
+		//   lower(replace(format(...), "/[^a-zA-Z0-9]+/", "_"))
+		"sanitizeKey": sanitizeKeyFunc,
+
+		// Build a for_each key from multiple values: formats them with the
+		// given format string, then sanitizes the result (lowercase + replace
+		// non-alphanumeric chars with underscore).
+		// Usage: {{ formatKey "%s_%s" .Attributes.access_package_key .Attributes.role }}
+		"formatKey": formatKeyFunc,
 	}
 }
 
@@ -109,4 +127,49 @@ func defaultFunc(fallback string, val string) string {
 		return fallback
 	}
 	return val
+}
+
+// nonAlphanumRegex matches one or more non-alphanumeric characters.
+var nonAlphanumRegex = regexp.MustCompile(`[^a-zA-Z0-9]+`)
+
+// regexReplaceFunc replaces all matches of a regex pattern with a replacement string.
+// The input string is the last parameter for pipe compatibility.
+func regexReplaceFunc(pattern, repl, s string) (string, error) {
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		return "", fmt.Errorf("regexReplace: invalid pattern %q: %w", pattern, err)
+	}
+	return re.ReplaceAllString(s, repl), nil
+}
+
+// sanitizeKeyFunc lowercases a string and replaces all runs of
+// non-alphanumeric characters with a single underscore. Trailing
+// underscores are stripped.
+//
+// This mirrors the common Terraform pattern:
+//
+//	lower(replace(value, "/[^a-zA-Z0-9]+/", "_"))
+func sanitizeKeyFunc(s string) string {
+	s = strings.ToLower(s)
+	s = nonAlphanumRegex.ReplaceAllString(s, "_")
+	s = strings.Trim(s, "_")
+	return s
+}
+
+// formatKeyFunc formats a string from the given arguments using fmt.Sprintf,
+// then sanitizes the result into a safe for_each key.
+//
+// This is a convenience combining printf + sanitizeKey in one call:
+//
+//	{{ formatKey "%s_%s" .Attributes.access_package_key .Attributes.role }}
+//
+// is equivalent to:
+//
+//	{{ printf "%s_%s" .Attributes.access_package_key .Attributes.role | sanitizeKey }}
+//
+// which mirrors the Terraform expression:
+//
+//	lower(replace(format("%s_%s", item.access_package_key, item.role), "/[^a-zA-Z0-9]+/", "_"))
+func formatKeyFunc(format string, args ...interface{}) string {
+	return sanitizeKeyFunc(fmt.Sprintf(format, args...))
 }

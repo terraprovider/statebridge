@@ -273,8 +273,17 @@ operations:
 	if err != nil {
 		t.Fatalf("reading source: %v", err)
 	}
-	if strings.Count(string(srcContent), "removed {") != 2 {
-		t.Errorf("expected 2 removed blocks in source, got:\n%s", srcContent)
+	// Wildcard moves produce a single removed block for the base resource,
+	// not one per for_each instance.
+	if strings.Count(string(srcContent), "removed {") != 1 {
+		t.Errorf("expected 1 removed block for base resource in source, got:\n%s", srcContent)
+	}
+	if !strings.Contains(string(srcContent), "aws_s3_bucket.data") {
+		t.Error("expected base resource address in removed block")
+	}
+	// Must NOT contain individual instance keys in the removed block
+	if strings.Contains(string(srcContent), `["key-a"]`) || strings.Contains(string(srcContent), `["key-b"]`) {
+		t.Error("removed block should use base address, not individual instance keys")
 	}
 
 	dstContent, err := os.ReadFile(filepath.Join(dstLayer, "migrations.tf"))

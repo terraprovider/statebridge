@@ -285,3 +285,210 @@ func TestEvaluate_ContainsFunction(t *testing.T) {
 		t.Errorf("expected %q, got %q", "yes", result)
 	}
 }
+
+func TestEvaluate_SanitizeKeyFunction(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		template string
+		expected string
+	}{
+		{
+			name:     "simple lowercase",
+			input:    "Hello_World",
+			template: `{{ .Key | sanitizeKey }}`,
+			expected: "hello_world",
+		},
+		{
+			name:     "replace special chars",
+			input:    "my-key@with#special!chars",
+			template: `{{ .Key | sanitizeKey }}`,
+			expected: "my_key_with_special_chars",
+		},
+		{
+			name:     "collapse multiple non-alnum",
+			input:    "foo---bar___baz",
+			template: `{{ .Key | sanitizeKey }}`,
+			expected: "foo_bar_baz",
+		},
+		{
+			name:     "strip leading and trailing",
+			input:    "---hello---",
+			template: `{{ .Key | sanitizeKey }}`,
+			expected: "hello",
+		},
+		{
+			name:     "already clean",
+			input:    "clean_key_123",
+			template: `{{ .Key | sanitizeKey }}`,
+			expected: "clean_key_123",
+		},
+		{
+			name:     "mixed case with spaces and dots",
+			input:    "Access Package.Admin Role",
+			template: `{{ .Key | sanitizeKey }}`,
+			expected: "access_package_admin_role",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := &TemplateContext{Key: tt.input}
+			result, err := Evaluate(tt.template, ctx)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if result != tt.expected {
+				t.Errorf("expected %q, got %q", tt.expected, result)
+			}
+		})
+	}
+}
+
+func TestEvaluate_FormatKeyFunction(t *testing.T) {
+	ctx := &TemplateContext{
+		Attributes: map[string]interface{}{
+			"access_package_key": "Engineering Access",
+			"role":               "Admin-Role",
+		},
+	}
+
+	result, err := Evaluate(
+		`{{ formatKey "%s_%s" .Attributes.access_package_key .Attributes.role }}`,
+		ctx,
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// lower(replace(format("%s_%s", "Engineering Access", "Admin-Role"), "/[^a-zA-Z0-9]+/", "_"))
+	// = lower(replace("Engineering Access_Admin-Role", ...))
+	// = lower("Engineering_Access_Admin_Role")
+	// = "engineering_access_admin_role"
+	expected := "engineering_access_admin_role"
+	if result != expected {
+		t.Errorf("expected %q, got %q", expected, result)
+	}
+}
+
+func TestEvaluate_FormatKeyFunction_ComplexKeys(t *testing.T) {
+	tests := []struct {
+		name     string
+		attrs    map[string]interface{}
+		template string
+		expected string
+	}{
+		{
+			name: "ids with hyphens",
+			attrs: map[string]interface{}{
+				"package_id": "pkg-abc-123",
+				"role_id":    "role-def-456",
+			},
+			template: `{{ formatKey "%s_%s" .Attributes.package_id .Attributes.role_id }}`,
+			expected: "pkg_abc_123_role_def_456",
+		},
+		{
+			name: "unicode and special chars",
+			attrs: map[string]interface{}{
+				"name":  "Über-Admin",
+				"scope": "org/unit",
+			},
+			template: `{{ formatKey "%s_%s" .Attributes.name .Attributes.scope }}`,
+			expected: "ber_admin_org_unit",
+		},
+		{
+			name: "single value",
+			attrs: map[string]interface{}{
+				"name": "My Resource Name",
+			},
+			template: `{{ formatKey "%s" .Attributes.name }}`,
+			expected: "my_resource_name",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := &TemplateContext{Attributes: tt.attrs}
+			result, err := Evaluate(tt.template, ctx)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if result != tt.expected {
+				t.Errorf("expected %q, got %q", tt.expected, result)
+			}
+		})
+	}
+}
+
+func TestEvaluate_SanitizeKeyWithPrintf(t *testing.T) {
+	// Verify that piping printf through sanitizeKey gives the same result as formatKey
+	ctx := &TemplateContext{
+		Attributes: map[string]interface{}{
+			"access_package_key": "Engineering Access",
+			"role":               "Admin-Role",
+		},
+	}
+
+	piped, err := Evaluate(
+		`{{ printf "%s_%s" .Attributes.access_package_key .Attributes.role | sanitizeKey }}`,
+		ctx,
+	)
+	if err != nil {
+		t.Fatalf("piped: unexpected error: %v", err)
+	}
+
+	direct, err := Evaluate(
+		`{{ formatKey "%s_%s" .Attributes.access_package_key .Attributes.role }}`,
+		ctx,
+	)
+	if err != nil {
+		t.Fatalf("direct: unexpected error: %v", err)
+	}
+
+	if piped != direct {
+		t.Errorf("piped (%q) != direct (%q)", piped, direct)
+	}
+}
+
+func TestEvaluate_RegexReplaceFunction(t *testing.T) {
+	ctx := &TemplateContext{Key: "hello-world_123!foo"}
+
+	result, err := Evaluate(`{{ .Key | regexReplace "[^a-z0-9]+" "_" }}`, ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result != "hello_world_123_foo" {
+		t.Errorf("expected %q, got %q", "hello_world_123_foo", result)
+	}
+}
+
+func TestEvaluate_RegexReplaceFunction_InvalidPattern(t *testing.T) {
+	ctx := &TemplateContext{Key: "test"}
+	_, err := Evaluate(`{{ .Key | regexReplace "[invalid" "x" }}`, ctx)
+	if err == nil {
+		t.Fatal("expected error for invalid regex pattern")
+	}
+}
+
+func TestEvaluate_FormatKeyInAddress(t *testing.T) {
+	// End-to-end: use formatKey inside a destination address template
+	ctx := &TemplateContext{
+		Attributes: map[string]interface{}{
+			"access_package_key": "Finance Team",
+			"role":               "Reader",
+		},
+	}
+
+	result, err := Evaluate(
+		`aws_resource.items["{{ formatKey "%s_%s" .Attributes.access_package_key .Attributes.role }}"]`,
+		ctx,
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	expected := `aws_resource.items["finance_team_reader"]`
+	if result != expected {
+		t.Errorf("expected %q, got %q", expected, result)
+	}
+}

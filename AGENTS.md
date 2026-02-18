@@ -50,7 +50,7 @@ Optional fields: `description`, `import_id` (auto-resolved from state if omitted
   import_id: "i-0abc123def456"  # omit to auto-resolve from source state
 ```
 
-**Wildcard moves** — use `[*]` suffix on the source address to expand all for_each/count instances. Combine with Go templates in the destination address and import_id:
+**Wildcard moves** — use `[*]` suffix on the source address to expand all for_each/count instances. Combine with Go templates in the destination address and import_id. A wildcard move generates a **single** `removed` block for the base resource address (without instance keys) in the source layer, plus individual `import` blocks per instance in the destination layer:
 
 ```yaml
 - type: move
@@ -146,6 +146,13 @@ All string functions are pipe-compatible (input comes last).
 
 **Nested attribute access:**
 - `{{ attr .Attributes "tags" "Name" }}` — traverse nested maps
+
+**Regex:**
+- `{{ .Key | regexReplace "[^a-z0-9]+" "_" }}` — regex-based replacement
+
+**Key sanitization** (mirrors Terraform's `lower(replace(format(...), "/[^a-zA-Z0-9]+/", "_"))`):
+- `{{ .Key | sanitizeKey }}` — lowercase + replace non-alphanumeric runs with `_` + trim edges
+- `{{ formatKey "%s_%s" .Attributes.pkg .Attributes.role }}` — `printf` + `sanitizeKey` in one step
 
 **Utilities:**
 - `{{ .Key | default "fallback" }}` — use fallback if empty
