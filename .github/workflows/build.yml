@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-latest-l
+    runs-on: ubuntu-latest-8cpu
     strategy:
       matrix:
         goos: [linux, darwin, windows]
