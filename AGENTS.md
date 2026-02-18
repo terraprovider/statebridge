@@ -26,9 +26,40 @@ Every migration file has this top-level structure:
 ```yaml
 description: "<required: what this migration does>"
 schema_version: "2"  # optional
+condition:           # optional: skip file if checks fail
+  resources_exist:
+    - layer: "<layer path>"
+      addresses:
+        - "<resource address>"
+  resources_not_exist:
+    - layer: "<layer path>"
+      addresses:
+        - "<resource address>"
 operations:
   - type: <move|rename|remove|import>
     # ... fields depend on type
+```
+
+### File-Level Condition
+
+Optional. Controls whether the entire migration file is processed. If any check fails, the file is silently skipped.
+
+- `resources_exist`: ALL addresses must be found in the layer's state
+- `resources_not_exist`: NONE of the addresses must be found in the layer's state
+- All checks are ANDed
+- Base addresses (e.g., `aws_instance.web`) match any for_each instance
+- Full addresses (e.g., `aws_instance.web["key"]`) match only that instance
+
+```yaml
+condition:
+  resources_exist:
+    - layer: "./layers/compute"
+      addresses:
+        - "aws_instance.web"
+  resources_not_exist:
+    - layer: "./layers/app"
+      addresses:
+        - "aws_instance.web"
 ```
 
 ### Common Field: `address_prefix`
@@ -344,6 +375,51 @@ operations:
 
 All keys in the source state must be collectively covered by the operations. The user must provide the prefixes or you must ask for them.
 
+### "Only run this migration if resources still exist in source" / "Make migration idempotent"
+
+Add a `condition` block to check that the source resources still exist:
+
+```yaml
+description: "Move web server (idempotent)"
+condition:
+  resources_exist:
+    - layer: "<source layer>"
+      addresses:
+        - "<resource address>"
+operations:
+  - type: move
+    source_layer: "<source layer>"
+    destination_layer: "<destination layer>"
+    resources:
+      - address: "<resource address>"
+```
+
+### "Only run if not already migrated" / "Skip if already imported"
+
+Check that resources don't exist in the destination yet:
+
+```yaml
+condition:
+  resources_not_exist:
+    - layer: "<destination layer>"
+      addresses:
+        - "<resource address>"
+```
+
+Combine both checks for maximum safety:
+
+```yaml
+condition:
+  resources_exist:
+    - layer: "<source layer>"
+      addresses:
+        - "<resource address>"
+  resources_not_exist:
+    - layer: "<destination layer>"
+      addresses:
+        - "<resource address>"
+```
+
 ---
 
 ## Validation Rules
@@ -363,6 +439,9 @@ When generating YAML, ensure:
 11. Layer paths are relative to where `tfmigrate generate` is run
 12. When `keys` is present, all state keys must be covered (completeness check)
 13. A key matching multiple operations is an overlap error
+14. `condition` is optional; if present, each resource check requires `layer` (non-empty) and `addresses` (non-empty list of non-empty strings)
+15. `resources_exist`: all listed addresses must exist in the specified layer's state for the migration to proceed
+16. `resources_not_exist`: none of the listed addresses may exist in the specified layer's state
 
 ## File Naming Convention
 

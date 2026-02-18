@@ -257,6 +257,79 @@ When `keys` is omitted:
 - **Single resource**: one `removed` + one `import` block
 - **For_each resource**: expands all instances with the same keys
 
+## Conditions
+
+Migration files support an optional `condition` block that controls whether the entire file is processed. If any condition check fails, the migration is silently skipped with an informational log message. This makes migrations idempotent — safe to re-run even after partial completion.
+
+```yaml
+description: "Move web server to app layer"
+condition:
+  resources_exist:
+    - layer: "./layers/compute"
+      addresses:
+        - "aws_instance.web"
+  resources_not_exist:
+    - layer: "./layers/app"
+      addresses:
+        - "aws_instance.web"
+operations:
+  - type: move
+    source_layer: "./layers/compute"
+    destination_layer: "./layers/app"
+    resources:
+      - address: "aws_instance.web"
+```
+
+### Condition Types
+
+| Type | Behavior |
+|------|----------|
+| `resources_exist` | ALL listed addresses must be found in the layer's state |
+| `resources_not_exist` | NONE of the listed addresses must be found in the layer's state |
+
+All condition checks are ANDed — every check must pass for the migration to proceed.
+
+### Address Matching
+
+- A base address (e.g., `aws_instance.web`) matches if **any** for_each instance exists in state
+- A fully-qualified address (e.g., `aws_instance.web["key"]`) matches only that specific instance
+
+### Common Patterns
+
+**Only migrate if resources still exist in source** (idempotent re-runs):
+
+```yaml
+condition:
+  resources_exist:
+    - layer: "./layers/compute"
+      addresses:
+        - "aws_instance.web"
+```
+
+**Only migrate if not already imported into destination**:
+
+```yaml
+condition:
+  resources_not_exist:
+    - layer: "./layers/app"
+      addresses:
+        - "aws_instance.web"
+```
+
+**Combine both** (source still has it AND destination doesn't):
+
+```yaml
+condition:
+  resources_exist:
+    - layer: "./layers/compute"
+      addresses:
+        - "aws_instance.web"
+  resources_not_exist:
+    - layer: "./layers/app"
+      addresses:
+        - "aws_instance.web"
+```
+
 ## Go Template Reference
 
 Templates in key values and `import_id` fields have access to:

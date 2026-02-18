@@ -880,3 +880,231 @@ operations:
 		t.Errorf("expected destination_address override in import, got:\n%s", dstContent)
 	}
 }
+
+func TestEngine_ProcessFiles_ConditionMet(t *testing.T) {
+	dir := t.TempDir()
+	srcLayer := filepath.Join(dir, "layers", "compute")
+	dstLayer := filepath.Join(dir, "layers", "app")
+	if err := os.MkdirAll(srcLayer, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(dstLayer, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	migrationContent := `
+description: "Move with met condition"
+condition:
+  resources_exist:
+    - layer: "` + srcLayer + `"
+      addresses:
+        - "aws_instance.web"
+operations:
+  - type: move
+    source_layer: "` + srcLayer + `"
+    destination_layer: "` + dstLayer + `"
+    resources:
+      - address: "aws_instance.web"
+        import_id: "i-0abc123"
+`
+	migrationFile := filepath.Join(dir, "001_cond.yaml")
+	if err := os.WriteFile(migrationFile, []byte(migrationContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	mock := testutil.NewMockStateReader(map[string]*tfjson.State{
+		srcLayer: testutil.BuildState(
+			testutil.NewResource("aws_instance.web", "aws_instance", "web", nil, map[string]interface{}{
+				"id": "i-0abc123",
+			}),
+		),
+	})
+
+	engine := New(Config{StateReader: mock})
+
+	files, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(files) != 2 {
+		t.Fatalf("expected 2 files (condition met, migration proceeds), got %d", len(files))
+	}
+}
+
+func TestEngine_ProcessFiles_ConditionResourcesExistFails(t *testing.T) {
+	dir := t.TempDir()
+	srcLayer := filepath.Join(dir, "layers", "compute")
+	dstLayer := filepath.Join(dir, "layers", "app")
+	if err := os.MkdirAll(srcLayer, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(dstLayer, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	migrationContent := `
+description: "Move with failing condition"
+condition:
+  resources_exist:
+    - layer: "` + srcLayer + `"
+      addresses:
+        - "aws_instance.web"
+        - "aws_instance.missing"
+operations:
+  - type: move
+    source_layer: "` + srcLayer + `"
+    destination_layer: "` + dstLayer + `"
+    resources:
+      - address: "aws_instance.web"
+        import_id: "i-0abc123"
+`
+	migrationFile := filepath.Join(dir, "001_cond_fail.yaml")
+	if err := os.WriteFile(migrationFile, []byte(migrationContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	mock := testutil.NewMockStateReader(map[string]*tfjson.State{
+		srcLayer: testutil.BuildState(
+			testutil.NewResource("aws_instance.web", "aws_instance", "web", nil, map[string]interface{}{
+				"id": "i-0abc123",
+			}),
+		),
+	})
+
+	engine := New(Config{StateReader: mock})
+
+	files, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
+	if err != nil {
+		t.Fatalf("unexpected error (should silently skip): %v", err)
+	}
+
+	if len(files) != 0 {
+		t.Errorf("expected 0 files (condition not met, migration skipped), got %d", len(files))
+	}
+}
+
+func TestEngine_ProcessFiles_ConditionResourcesNotExistFails(t *testing.T) {
+	dir := t.TempDir()
+	srcLayer := filepath.Join(dir, "layers", "compute")
+	dstLayer := filepath.Join(dir, "layers", "app")
+	if err := os.MkdirAll(srcLayer, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(dstLayer, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	migrationContent := `
+description: "Move blocked by destination check"
+condition:
+  resources_not_exist:
+    - layer: "` + dstLayer + `"
+      addresses:
+        - "aws_instance.web"
+operations:
+  - type: move
+    source_layer: "` + srcLayer + `"
+    destination_layer: "` + dstLayer + `"
+    resources:
+      - address: "aws_instance.web"
+        import_id: "i-0abc123"
+`
+	migrationFile := filepath.Join(dir, "001_not_exist_fail.yaml")
+	if err := os.WriteFile(migrationFile, []byte(migrationContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	mock := testutil.NewMockStateReader(map[string]*tfjson.State{
+		srcLayer: testutil.BuildState(
+			testutil.NewResource("aws_instance.web", "aws_instance", "web", nil, map[string]interface{}{
+				"id": "i-0abc123",
+			}),
+		),
+		dstLayer: testutil.BuildState(
+			testutil.NewResource("aws_instance.web", "aws_instance", "web", nil, map[string]interface{}{
+				"id": "i-0abc123",
+			}),
+		),
+	})
+
+	engine := New(Config{StateReader: mock})
+
+	files, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
+	if err != nil {
+		t.Fatalf("unexpected error (should silently skip): %v", err)
+	}
+
+	if len(files) != 0 {
+		t.Errorf("expected 0 files (resource already exists in destination), got %d", len(files))
+	}
+}
+
+func TestEngine_ProcessFiles_ConditionStateError(t *testing.T) {
+	dir := t.TempDir()
+
+	migrationContent := `
+description: "Move with state error"
+condition:
+  resources_exist:
+    - layer: "/nonexistent/layer"
+      addresses:
+        - "aws_instance.web"
+operations:
+  - type: move
+    source_layer: "/nonexistent/layer"
+    destination_layer: "/other/layer"
+    resources:
+      - address: "aws_instance.web"
+        import_id: "i-0abc123"
+`
+	migrationFile := filepath.Join(dir, "001_state_err.yaml")
+	if err := os.WriteFile(migrationFile, []byte(migrationContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// MockStateReader returns error for unknown layers
+	mock := testutil.NewMockStateReader(nil)
+	engine := New(Config{StateReader: mock})
+
+	_, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
+	if err == nil {
+		t.Fatal("expected error when state read fails during condition check")
+	}
+	if !strings.Contains(err.Error(), "condition") {
+		t.Errorf("expected error to mention condition, got: %v", err)
+	}
+}
+
+func TestEngine_ProcessFiles_NoConditionUnchanged(t *testing.T) {
+	dir := t.TempDir()
+	layerDir := filepath.Join(dir, "layers", "net")
+	if err := os.MkdirAll(layerDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// No condition field at all — should proceed normally
+	migrationContent := `
+description: "Rename without condition"
+operations:
+  - type: rename
+    layer: "` + layerDir + `"
+    renames:
+      - from: "module.old"
+        to: "module.new"
+`
+	migrationFile := filepath.Join(dir, "001_no_cond.yaml")
+	if err := os.WriteFile(migrationFile, []byte(migrationContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	engine := New(Config{StateReader: testutil.NewMockStateReader(nil)})
+
+	files, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(files) != 1 {
+		t.Fatalf("expected 1 file (no condition, proceeds normally), got %d", len(files))
+	}
+}

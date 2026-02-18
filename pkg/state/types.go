@@ -127,3 +127,21 @@ func LookupResourcesByPrefix(s *tfjson.State, baseAddress string) ([]*ResourceIn
 
 	return matches, nil
 }
+
+// ResourceExists checks whether any resource matching the given address exists
+// in state. For a base address (e.g., "aws_instance.web"), it matches any
+// for_each instance. For an address with an index (e.g., "aws_instance.web[\"key\"]"),
+// it matches only that specific instance. Returns false for nil or empty state.
+func ResourceExists(s *tfjson.State, address string) bool {
+	if s == nil || s.Values == nil || s.Values.RootModule == nil {
+		return false
+	}
+
+	if strings.Contains(address, "[") {
+		_, err := LookupResource(s, address)
+		return err == nil
+	}
+
+	_, err := LookupResourcesByPrefix(s, address)
+	return err == nil
+}
