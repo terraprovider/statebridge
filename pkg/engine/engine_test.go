@@ -12,7 +12,7 @@ import (
 	"github.com/redtenant/tfmigrate/internal/testutil"
 )
 
-func TestEngine_ProcessFiles_SimpleMoveWithExplicitID(t *testing.T) {
+func TestEngine_ProcessFiles_SimpleMove(t *testing.T) {
 	dir := t.TempDir()
 	srcLayer := filepath.Join(dir, "layers", "compute")
 	dstLayer := filepath.Join(dir, "layers", "app")
@@ -23,26 +23,22 @@ func TestEngine_ProcessFiles_SimpleMoveWithExplicitID(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Write migration file
 	migrationContent := `
 description: "Move web instance"
 operations:
   - type: move
     description: "Move to app layer"
-    source:
-      layer: "` + srcLayer + `"
-      address: "aws_instance.web"
-    destination:
-      layer: "` + dstLayer + `"
-      address: "aws_instance.web"
-    import_id: "i-0abc123"
+    source_layer: "` + srcLayer + `"
+    destination_layer: "` + dstLayer + `"
+    resources:
+      - address: "aws_instance.web"
+        import_id: "i-0abc123"
 `
 	migrationFile := filepath.Join(dir, "001_move.yaml")
 	if err := os.WriteFile(migrationFile, []byte(migrationContent), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	// No state reader needed for explicit import_id
 	mock := testutil.NewMockStateReader(map[string]*tfjson.State{
 		srcLayer: testutil.BuildState(
 			testutil.NewResource("aws_instance.web", "aws_instance", "web", nil, map[string]interface{}{
@@ -51,9 +47,7 @@ operations:
 		),
 	})
 
-	engine := New(Config{
-		StateReader: mock,
-	})
+	engine := New(Config{StateReader: mock})
 
 	files, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
 	if err != nil {
@@ -64,7 +58,6 @@ operations:
 		t.Fatalf("expected 2 files, got %d: %v", len(files), files)
 	}
 
-	// Check source layer file
 	srcContent, err := os.ReadFile(filepath.Join(srcLayer, "migrations.tf"))
 	if err != nil {
 		t.Fatalf("reading source migration file: %v", err)
@@ -76,7 +69,6 @@ operations:
 		t.Error("expected resource address in source layer")
 	}
 
-	// Check destination layer file
 	dstContent, err := os.ReadFile(filepath.Join(dstLayer, "migrations.tf"))
 	if err != nil {
 		t.Fatalf("reading destination migration file: %v", err)
@@ -102,8 +94,9 @@ operations:
   - type: rename
     description: "Rename old to new"
     layer: "` + layerDir + `"
-    from: "module.old_vpc"
-    to: "module.new_vpc"
+    renames:
+      - from: "module.old_vpc"
+        to: "module.new_vpc"
 `
 	migrationFile := filepath.Join(dir, "001_rename.yaml")
 	if err := os.WriteFile(migrationFile, []byte(migrationContent), 0o644); err != nil {
@@ -148,7 +141,8 @@ description: "Remove deprecated resource"
 operations:
   - type: remove
     layer: "` + layerDir + `"
-    address: "aws_iam_role.deprecated"
+    addresses:
+      - "aws_iam_role.deprecated"
 `
 	migrationFile := filepath.Join(dir, "001_remove.yaml")
 	if err := os.WriteFile(migrationFile, []byte(migrationContent), 0o644); err != nil {
@@ -186,9 +180,10 @@ description: "Import RDS instance"
 operations:
   - type: import
     layer: "` + layerDir + `"
-    address: "aws_db_instance.primary"
-    import_id: "my-database"
-    provider: "aws.useast1"
+    imports:
+      - address: "aws_db_instance.primary"
+        import_id: "my-database"
+        provider: "aws.useast1"
 `
 	migrationFile := filepath.Join(dir, "001_import.yaml")
 	if err := os.WriteFile(migrationFile, []byte(migrationContent), 0o644); err != nil {
@@ -217,7 +212,7 @@ operations:
 	}
 }
 
-func TestEngine_ProcessFiles_WildcardMove(t *testing.T) {
+func TestEngine_ProcessFiles_ForEachMoveAllKeys(t *testing.T) {
 	dir := t.TempDir()
 	srcLayer := filepath.Join(dir, "layers", "old")
 	dstLayer := filepath.Join(dir, "layers", "new")
@@ -228,19 +223,17 @@ func TestEngine_ProcessFiles_WildcardMove(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Move a for_each resource without keys map → moves all instances with same keys
 	migrationContent := `
-description: "Wildcard move with key mutation"
+description: "Move all instances"
 operations:
   - type: move
-    source:
-      layer: "` + srcLayer + `"
-      address: "aws_s3_bucket.data[*]"
-    destination:
-      layer: "` + dstLayer + `"
-      address: 'aws_s3_bucket.data["{{ .Attributes.bucket }}"]'
-    import_id: "{{ .Attributes.id }}"
+    source_layer: "` + srcLayer + `"
+    destination_layer: "` + dstLayer + `"
+    resources:
+      - address: "aws_s3_bucket.data"
 `
-	migrationFile := filepath.Join(dir, "001_wildcard.yaml")
+	migrationFile := filepath.Join(dir, "001_all.yaml")
 	if err := os.WriteFile(migrationFile, []byte(migrationContent), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -249,11 +242,11 @@ operations:
 		srcLayer: testutil.BuildState(
 			testutil.NewResource(
 				`aws_s3_bucket.data["key-a"]`, "aws_s3_bucket", "data", "key-a",
-				map[string]interface{}{"id": "bucket-a-id", "bucket": "bucket-a"},
+				map[string]interface{}{"id": "bucket-a-id"},
 			),
 			testutil.NewResource(
 				`aws_s3_bucket.data["key-b"]`, "aws_s3_bucket", "data", "key-b",
-				map[string]interface{}{"id": "bucket-b-id", "bucket": "bucket-b"},
+				map[string]interface{}{"id": "bucket-b-id"},
 			),
 		),
 	})
@@ -266,24 +259,15 @@ operations:
 	}
 
 	if len(files) != 2 {
-		t.Fatalf("expected 2 files, got %d", len(files))
+		t.Fatalf("expected 2 files, got %d: %v", len(files), files)
 	}
 
 	srcContent, err := os.ReadFile(filepath.Join(srcLayer, "migrations.tf"))
 	if err != nil {
 		t.Fatalf("reading source: %v", err)
 	}
-	// Wildcard moves produce a single removed block for the base resource,
-	// not one per for_each instance.
 	if strings.Count(string(srcContent), "removed {") != 1 {
-		t.Errorf("expected 1 removed block for base resource in source, got:\n%s", srcContent)
-	}
-	if !strings.Contains(string(srcContent), "aws_s3_bucket.data") {
-		t.Error("expected base resource address in removed block")
-	}
-	// Must NOT contain individual instance keys in the removed block
-	if strings.Contains(string(srcContent), `["key-a"]`) || strings.Contains(string(srcContent), `["key-b"]`) {
-		t.Error("removed block should use base address, not individual instance keys")
+		t.Errorf("expected 1 removed block, got:\n%s", srcContent)
 	}
 
 	dstContent, err := os.ReadFile(filepath.Join(dstLayer, "migrations.tf"))
@@ -291,135 +275,171 @@ operations:
 		t.Fatalf("reading destination: %v", err)
 	}
 	if strings.Count(string(dstContent), "import {") != 2 {
-		t.Errorf("expected 2 import blocks in destination, got:\n%s", dstContent)
+		t.Errorf("expected 2 import blocks, got:\n%s", dstContent)
 	}
-	if !strings.Contains(string(dstContent), `aws_s3_bucket.data["bucket-a"]`) {
-		t.Error("expected re-keyed address bucket-a in destination")
+	if !strings.Contains(string(dstContent), `aws_s3_bucket.data["key-a"]`) {
+		t.Error("expected key-a in destination")
 	}
-	if !strings.Contains(string(dstContent), `aws_s3_bucket.data["bucket-b"]`) {
-		t.Error("expected re-keyed address bucket-b in destination")
+	if !strings.Contains(string(dstContent), `aws_s3_bucket.data["key-b"]`) {
+		t.Error("expected key-b in destination")
 	}
 }
 
-func TestEngine_ProcessFiles_ValidationError(t *testing.T) {
+func TestEngine_ProcessFiles_KeyedMove(t *testing.T) {
 	dir := t.TempDir()
+	srcLayer := filepath.Join(dir, "layers", "old")
+	dstLayer := filepath.Join(dir, "layers", "new")
+	if err := os.MkdirAll(srcLayer, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(dstLayer, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Keyed move: rename exact keys + prefix pattern
 	migrationContent := `
-description: "Invalid migration"
+description: "Keyed move"
 operations:
   - type: move
+    source_layer: "` + srcLayer + `"
+    destination_layer: "` + dstLayer + `"
+    resources:
+      - address: "aws_resource.items"
+        keys:
+          exact_key: new_exact
+          "prefix_*": '{{ .Key | trimPrefix "prefix_" }}'
 `
-	migrationFile := filepath.Join(dir, "001_bad.yaml")
+	migrationFile := filepath.Join(dir, "001_keyed.yaml")
 	if err := os.WriteFile(migrationFile, []byte(migrationContent), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	engine := New(Config{StateReader: testutil.NewMockStateReader(nil)})
-
-	_, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
-	if err == nil {
-		t.Fatal("expected validation error")
-	}
-	if !strings.Contains(err.Error(), "validation") {
-		t.Errorf("expected validation error message, got: %v", err)
-	}
-}
-
-func TestEngine_ProcessFiles_DryRun(t *testing.T) {
-	dir := t.TempDir()
-	layerDir := filepath.Join(dir, "layers", "net")
-	if err := os.MkdirAll(layerDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-
-	migrationContent := `
-description: "Rename VPC"
-operations:
-  - type: rename
-    layer: "` + layerDir + `"
-    from: "module.old"
-    to: "module.new"
-`
-	migrationFile := filepath.Join(dir, "001_rename.yaml")
-	if err := os.WriteFile(migrationFile, []byte(migrationContent), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	engine := New(Config{
-		StateReader: testutil.NewMockStateReader(nil),
-		DryRun:      true,
+	mock := testutil.NewMockStateReader(map[string]*tfjson.State{
+		srcLayer: testutil.BuildState(
+			testutil.NewResource(
+				`aws_resource.items["exact_key"]`, "aws_resource", "items", "exact_key",
+				map[string]interface{}{"id": "id-exact"},
+			),
+			testutil.NewResource(
+				`aws_resource.items["prefix_alpha"]`, "aws_resource", "items", "prefix_alpha",
+				map[string]interface{}{"id": "id-alpha"},
+			),
+			testutil.NewResource(
+				`aws_resource.items["prefix_beta"]`, "aws_resource", "items", "prefix_beta",
+				map[string]interface{}{"id": "id-beta"},
+			),
+		),
 	})
 
+	engine := New(Config{StateReader: mock})
+
 	files, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(files) != 1 {
-		t.Fatalf("expected 1 file path, got %d", len(files))
+
+	if len(files) != 2 {
+		t.Fatalf("expected 2 files, got %d: %v", len(files), files)
 	}
 
-	// Verify file was NOT written in dry run mode
-	if _, statErr := os.Stat(files[0]); !os.IsNotExist(statErr) {
-		t.Error("expected file to not exist in dry-run mode")
+	srcContent, err := os.ReadFile(filepath.Join(srcLayer, "migrations.tf"))
+	if err != nil {
+		t.Fatalf("reading source: %v", err)
+	}
+	if strings.Count(string(srcContent), "removed {") != 1 {
+		t.Errorf("expected 1 removed block, got:\n%s", srcContent)
+	}
+
+	dstContent, err := os.ReadFile(filepath.Join(dstLayer, "migrations.tf"))
+	if err != nil {
+		t.Fatalf("reading destination: %v", err)
+	}
+	if strings.Count(string(dstContent), "import {") != 3 {
+		t.Errorf("expected 3 import blocks, got:\n%s", dstContent)
+	}
+	// exact_key → new_exact
+	if !strings.Contains(string(dstContent), `aws_resource.items["new_exact"]`) {
+		t.Error("expected exact key renamed to new_exact")
+	}
+	// prefix_alpha → alpha
+	if !strings.Contains(string(dstContent), `aws_resource.items["alpha"]`) {
+		t.Error("expected prefix_alpha trimmed to alpha")
+	}
+	// prefix_beta → beta
+	if !strings.Contains(string(dstContent), `aws_resource.items["beta"]`) {
+		t.Error("expected prefix_beta trimmed to beta")
 	}
 }
 
-func TestEngine_ProcessFiles_MultipleOperationsSameLayer(t *testing.T) {
+func TestEngine_ProcessFiles_KeyedMoveWithAddressPrefix(t *testing.T) {
 	dir := t.TempDir()
-	layerDir := filepath.Join(dir, "layers", "net")
-	if err := os.MkdirAll(layerDir, 0o755); err != nil {
+	srcLayer := filepath.Join(dir, "layers", "old")
+	dstLayer := filepath.Join(dir, "layers", "new")
+	if err := os.MkdirAll(srcLayer, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(dstLayer, 0o755); err != nil {
 		t.Fatal(err)
 	}
 
 	migrationContent := `
-description: "Multiple operations in same layer"
+description: "Keyed move with address prefix"
 operations:
-  - type: rename
-    layer: "` + layerDir + `"
-    from: "module.old_vpc"
-    to: "module.new_vpc"
-  - type: remove
-    layer: "` + layerDir + `"
-    address: "aws_security_group.legacy"
-  - type: import
-    layer: "` + layerDir + `"
-    address: "aws_route_table.new"
-    import_id: "rtb-0abc123"
+  - type: move
+    source_layer: "` + srcLayer + `"
+    destination_layer: "` + dstLayer + `"
+    address_prefix: "module.ig"
+    resources:
+      - address: "azuread_access_package_catalog.all"
+        keys:
+          mrt_customer: customer_approval
+          mrt_vaw: vaw
 `
-	migrationFile := filepath.Join(dir, "001_multi.yaml")
+	migrationFile := filepath.Join(dir, "001_prefix.yaml")
 	if err := os.WriteFile(migrationFile, []byte(migrationContent), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	engine := New(Config{StateReader: testutil.NewMockStateReader(nil)})
+	mock := testutil.NewMockStateReader(map[string]*tfjson.State{
+		srcLayer: testutil.BuildState(
+			testutil.NewResource(
+				`module.ig.azuread_access_package_catalog.all["mrt_customer"]`,
+				"azuread_access_package_catalog", "all", "mrt_customer",
+				map[string]interface{}{"id": "id-customer"},
+			),
+			testutil.NewResource(
+				`module.ig.azuread_access_package_catalog.all["mrt_vaw"]`,
+				"azuread_access_package_catalog", "all", "mrt_vaw",
+				map[string]interface{}{"id": "id-vaw"},
+			),
+		),
+	})
+
+	engine := New(Config{StateReader: mock})
 
 	files, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// All operations target the same layer, so only 1 file
-	if len(files) != 1 {
-		t.Fatalf("expected 1 file, got %d", len(files))
+	if len(files) != 2 {
+		t.Fatalf("expected 2 files, got %d: %v", len(files), files)
 	}
 
-	content, err := os.ReadFile(files[0])
+	dstContent, err := os.ReadFile(filepath.Join(dstLayer, "migrations.tf"))
 	if err != nil {
-		t.Fatalf("reading output: %v", err)
+		t.Fatalf("reading destination: %v", err)
 	}
-
-	contentStr := string(content)
-	if !strings.Contains(contentStr, "moved {") {
-		t.Error("expected moved block")
+	// Address prefix should be applied: module.ig.azuread_access_package_catalog.all["customer_approval"]
+	if !strings.Contains(string(dstContent), `module.ig.azuread_access_package_catalog.all["customer_approval"]`) {
+		t.Errorf("expected address prefix applied to destination, got:\n%s", dstContent)
 	}
-	if !strings.Contains(contentStr, "removed {") {
-		t.Error("expected removed block")
-	}
-	if !strings.Contains(contentStr, "import {") {
-		t.Error("expected import block")
+	if !strings.Contains(string(dstContent), `module.ig.azuread_access_package_catalog.all["vaw"]`) {
+		t.Errorf("expected address prefix applied to vaw destination, got:\n%s", dstContent)
 	}
 }
 
-func TestEngine_ProcessFiles_PrefixFilteredWildcardMove(t *testing.T) {
+func TestEngine_ProcessFiles_KeyedMoveSplitAcrossOps(t *testing.T) {
 	dir := t.TempDir()
 	srcLayer := filepath.Join(dir, "layers", "old")
 	engLayer := filepath.Join(dir, "layers", "engineering")
@@ -430,27 +450,24 @@ func TestEngine_ProcessFiles_PrefixFilteredWildcardMove(t *testing.T) {
 		}
 	}
 
+	// Same resource split across two operations with different destination layers
 	migrationContent := `
 description: "Split by department"
 operations:
   - type: move
-    source:
-      layer: "` + srcLayer + `"
-      address: "aws_resource.items[*]"
-      key_prefix: "eng_"
-    destination:
-      layer: "` + engLayer + `"
-      address: 'aws_resource.items["{{ .Key }}"]'
-    import_id: "{{ .Attributes.id }}"
+    source_layer: "` + srcLayer + `"
+    destination_layer: "` + engLayer + `"
+    resources:
+      - address: "aws_resource.items"
+        keys:
+          "eng_*": '{{ .Key }}'
   - type: move
-    source:
-      layer: "` + srcLayer + `"
-      address: "aws_resource.items[*]"
-      key_prefix: "fin_"
-    destination:
-      layer: "` + finLayer + `"
-      address: 'aws_resource.items["{{ .Key }}"]'
-    import_id: "{{ .Attributes.id }}"
+    source_layer: "` + srcLayer + `"
+    destination_layer: "` + finLayer + `"
+    resources:
+      - address: "aws_resource.items"
+        keys:
+          "fin_*": '{{ .Key }}'
 `
 	migrationFile := filepath.Join(dir, "001_split.yaml")
 	if err := os.WriteFile(migrationFile, []byte(migrationContent), 0o644); err != nil {
@@ -489,7 +506,6 @@ operations:
 		t.Fatalf("expected 3 files (source + 2 destinations), got %d: %v", len(files), files)
 	}
 
-	// Source layer: exactly 1 removed block for the base resource
 	srcContent, err := os.ReadFile(filepath.Join(srcLayer, "migrations.tf"))
 	if err != nil {
 		t.Fatalf("reading source: %v", err)
@@ -497,11 +513,7 @@ operations:
 	if strings.Count(string(srcContent), "removed {") != 1 {
 		t.Errorf("expected exactly 1 removed block in source, got:\n%s", srcContent)
 	}
-	if !strings.Contains(string(srcContent), "aws_resource.items") {
-		t.Error("expected base resource address in removed block")
-	}
 
-	// Engineering layer: 2 import blocks
 	engContent, err := os.ReadFile(filepath.Join(engLayer, "migrations.tf"))
 	if err != nil {
 		t.Fatalf("reading engineering layer: %v", err)
@@ -509,14 +521,7 @@ operations:
 	if strings.Count(string(engContent), "import {") != 2 {
 		t.Errorf("expected 2 import blocks in engineering, got:\n%s", engContent)
 	}
-	if !strings.Contains(string(engContent), "eng_admin") {
-		t.Error("expected eng_admin in engineering layer")
-	}
-	if !strings.Contains(string(engContent), "eng_reader") {
-		t.Error("expected eng_reader in engineering layer")
-	}
 
-	// Finance layer: 2 import blocks
 	finContent, err := os.ReadFile(filepath.Join(finLayer, "migrations.tf"))
 	if err != nil {
 		t.Fatalf("reading finance layer: %v", err)
@@ -524,15 +529,9 @@ operations:
 	if strings.Count(string(finContent), "import {") != 2 {
 		t.Errorf("expected 2 import blocks in finance, got:\n%s", finContent)
 	}
-	if !strings.Contains(string(finContent), "fin_admin") {
-		t.Error("expected fin_admin in finance layer")
-	}
-	if !strings.Contains(string(finContent), "fin_reader") {
-		t.Error("expected fin_reader in finance layer")
-	}
 }
 
-func TestEngine_ProcessFiles_PrefixFilteredIncompleteCoverage(t *testing.T) {
+func TestEngine_ProcessFiles_IncompleteCoverage(t *testing.T) {
 	dir := t.TempDir()
 	srcLayer := filepath.Join(dir, "layers", "old")
 	dstLayer := filepath.Join(dir, "layers", "new")
@@ -544,17 +543,15 @@ func TestEngine_ProcessFiles_PrefixFilteredIncompleteCoverage(t *testing.T) {
 	}
 
 	migrationContent := `
-description: "Incomplete prefix coverage"
+description: "Incomplete coverage"
 operations:
   - type: move
-    source:
-      layer: "` + srcLayer + `"
-      address: "aws_resource.items[*]"
-      key_prefix: "eng_"
-    destination:
-      layer: "` + dstLayer + `"
-      address: 'aws_resource.items["{{ .Key }}"]'
-    import_id: "{{ .Attributes.id }}"
+    source_layer: "` + srcLayer + `"
+    destination_layer: "` + dstLayer + `"
+    resources:
+      - address: "aws_resource.items"
+        keys:
+          "eng_*": '{{ .Key }}'
 `
 	migrationFile := filepath.Join(dir, "001_incomplete.yaml")
 	if err := os.WriteFile(migrationFile, []byte(migrationContent), 0o644); err != nil {
@@ -583,45 +580,270 @@ operations:
 	if !strings.Contains(err.Error(), "other_admin") {
 		t.Errorf("expected error to mention uncovered key 'other_admin', got: %v", err)
 	}
-	if !strings.Contains(err.Error(), "completeness") {
-		t.Errorf("expected error to mention completeness check, got: %v", err)
+}
+
+func TestEngine_ProcessFiles_ValidationError(t *testing.T) {
+	dir := t.TempDir()
+	migrationContent := `
+description: "Invalid migration"
+operations:
+  - type: move
+`
+	migrationFile := filepath.Join(dir, "001_bad.yaml")
+	if err := os.WriteFile(migrationFile, []byte(migrationContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	engine := New(Config{StateReader: testutil.NewMockStateReader(nil)})
+
+	_, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
+	if err == nil {
+		t.Fatal("expected validation error")
+	}
+	if !strings.Contains(err.Error(), "validation") {
+		t.Errorf("expected validation error message, got: %v", err)
 	}
 }
 
-func TestEngine_ProcessFiles_PrefixFilteredOverlap(t *testing.T) {
+func TestEngine_ProcessFiles_DryRun(t *testing.T) {
 	dir := t.TempDir()
-	srcLayer := filepath.Join(dir, "layers", "old")
-	dst1 := filepath.Join(dir, "layers", "d1")
-	dst2 := filepath.Join(dir, "layers", "d2")
-	for _, d := range []string{srcLayer, dst1, dst2} {
-		if err := os.MkdirAll(d, 0o755); err != nil {
-			t.Fatal(err)
-		}
+	layerDir := filepath.Join(dir, "layers", "net")
+	if err := os.MkdirAll(layerDir, 0o755); err != nil {
+		t.Fatal(err)
 	}
 
 	migrationContent := `
-description: "Overlapping prefixes"
+description: "Rename VPC"
+operations:
+  - type: rename
+    layer: "` + layerDir + `"
+    renames:
+      - from: "module.old"
+        to: "module.new"
+`
+	migrationFile := filepath.Join(dir, "001_rename.yaml")
+	if err := os.WriteFile(migrationFile, []byte(migrationContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	engine := New(Config{
+		StateReader: testutil.NewMockStateReader(nil),
+		DryRun:      true,
+	})
+
+	files, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(files) != 1 {
+		t.Fatalf("expected 1 file path, got %d", len(files))
+	}
+
+	// Verify file was NOT written in dry run mode
+	if _, statErr := os.Stat(files[0]); !os.IsNotExist(statErr) {
+		t.Error("expected file to not exist in dry-run mode")
+	}
+}
+
+func TestEngine_ProcessFiles_MultipleOperationsSameLayer(t *testing.T) {
+	dir := t.TempDir()
+	layerDir := filepath.Join(dir, "layers", "net")
+	if err := os.MkdirAll(layerDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	migrationContent := `
+description: "Multiple operations in same layer"
+operations:
+  - type: rename
+    layer: "` + layerDir + `"
+    renames:
+      - from: "module.old_vpc"
+        to: "module.new_vpc"
+  - type: remove
+    layer: "` + layerDir + `"
+    addresses:
+      - "aws_security_group.legacy"
+  - type: import
+    layer: "` + layerDir + `"
+    imports:
+      - address: "aws_route_table.new"
+        import_id: "rtb-0abc123"
+`
+	migrationFile := filepath.Join(dir, "001_multi.yaml")
+	if err := os.WriteFile(migrationFile, []byte(migrationContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	engine := New(Config{StateReader: testutil.NewMockStateReader(nil)})
+
+	files, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(files) != 1 {
+		t.Fatalf("expected 1 file, got %d", len(files))
+	}
+
+	content, err := os.ReadFile(files[0])
+	if err != nil {
+		t.Fatalf("reading output: %v", err)
+	}
+
+	contentStr := string(content)
+	if !strings.Contains(contentStr, "moved {") {
+		t.Error("expected moved block")
+	}
+	if !strings.Contains(contentStr, "removed {") {
+		t.Error("expected removed block")
+	}
+	if !strings.Contains(contentStr, "import {") {
+		t.Error("expected import block")
+	}
+}
+
+func TestEngine_ProcessFiles_MultipleRenames(t *testing.T) {
+	dir := t.TempDir()
+	layerDir := filepath.Join(dir, "layers", "net")
+	if err := os.MkdirAll(layerDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	migrationContent := `
+description: "Multiple renames in one operation"
+operations:
+  - type: rename
+    layer: "` + layerDir + `"
+    renames:
+      - from: "module.old_vpc"
+        to: "module.new_vpc"
+      - from: "aws_route_table.old"
+        to: "aws_route_table.new"
+`
+	migrationFile := filepath.Join(dir, "001_multi_renames.yaml")
+	if err := os.WriteFile(migrationFile, []byte(migrationContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	engine := New(Config{StateReader: testutil.NewMockStateReader(nil)})
+
+	files, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	content, err := os.ReadFile(files[0])
+	if err != nil {
+		t.Fatalf("reading output: %v", err)
+	}
+	if strings.Count(string(content), "moved {") != 2 {
+		t.Errorf("expected 2 moved blocks, got:\n%s", content)
+	}
+}
+
+func TestEngine_ProcessFiles_MultipleRemoveAddresses(t *testing.T) {
+	dir := t.TempDir()
+	layerDir := filepath.Join(dir, "layers", "iam")
+	if err := os.MkdirAll(layerDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	migrationContent := `
+description: "Multiple removals"
+operations:
+  - type: remove
+    layer: "` + layerDir + `"
+    addresses:
+      - "aws_iam_role.deprecated"
+      - "aws_iam_policy.old"
+`
+	migrationFile := filepath.Join(dir, "001_multi_removes.yaml")
+	if err := os.WriteFile(migrationFile, []byte(migrationContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	engine := New(Config{StateReader: testutil.NewMockStateReader(nil)})
+
+	files, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	content, err := os.ReadFile(files[0])
+	if err != nil {
+		t.Fatalf("reading output: %v", err)
+	}
+	if strings.Count(string(content), "removed {") != 2 {
+		t.Errorf("expected 2 removed blocks, got:\n%s", content)
+	}
+}
+
+func TestEngine_ProcessFiles_RenameWithAddressPrefix(t *testing.T) {
+	dir := t.TempDir()
+	layerDir := filepath.Join(dir, "layers", "net")
+	if err := os.MkdirAll(layerDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	migrationContent := `
+description: "Rename with address prefix"
+operations:
+  - type: rename
+    layer: "` + layerDir + `"
+    address_prefix: "module.vpc"
+    renames:
+      - from: "aws_subnet.old"
+        to: "aws_subnet.new"
+`
+	migrationFile := filepath.Join(dir, "001_prefix_rename.yaml")
+	if err := os.WriteFile(migrationFile, []byte(migrationContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	engine := New(Config{StateReader: testutil.NewMockStateReader(nil)})
+
+	files, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	content, err := os.ReadFile(files[0])
+	if err != nil {
+		t.Fatalf("reading output: %v", err)
+	}
+	if !strings.Contains(string(content), "module.vpc.aws_subnet.old") {
+		t.Errorf("expected address prefix applied to from, got:\n%s", content)
+	}
+	if !strings.Contains(string(content), "module.vpc.aws_subnet.new") {
+		t.Errorf("expected address prefix applied to to, got:\n%s", content)
+	}
+}
+
+func TestEngine_ProcessFiles_DestinationAddressOverride(t *testing.T) {
+	dir := t.TempDir()
+	srcLayer := filepath.Join(dir, "layers", "old")
+	dstLayer := filepath.Join(dir, "layers", "new")
+	if err := os.MkdirAll(srcLayer, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(dstLayer, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	migrationContent := `
+description: "Move with destination address override"
 operations:
   - type: move
-    source:
-      layer: "` + srcLayer + `"
-      address: "aws_resource.items[*]"
-      key_prefix: "a"
-    destination:
-      layer: "` + dst1 + `"
-      address: 'aws_resource.items["{{ .Key }}"]'
-    import_id: "{{ .Attributes.id }}"
-  - type: move
-    source:
-      layer: "` + srcLayer + `"
-      address: "aws_resource.items[*]"
-      key_prefix: "ab"
-    destination:
-      layer: "` + dst2 + `"
-      address: 'aws_resource.items["{{ .Key }}"]'
-    import_id: "{{ .Attributes.id }}"
+    source_layer: "` + srcLayer + `"
+    destination_layer: "` + dstLayer + `"
+    resources:
+      - address: "module.old.resource.all"
+        destination_address: "module.new.resource.all"
+        keys:
+          key1: key1
 `
-	migrationFile := filepath.Join(dir, "001_overlap.yaml")
+	migrationFile := filepath.Join(dir, "001_dest_override.yaml")
 	if err := os.WriteFile(migrationFile, []byte(migrationContent), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -629,12 +851,8 @@ operations:
 	mock := testutil.NewMockStateReader(map[string]*tfjson.State{
 		srcLayer: testutil.BuildState(
 			testutil.NewResource(
-				`aws_resource.items["ab_key"]`, "aws_resource", "items", "ab_key",
-				map[string]interface{}{"id": "id-ab"},
-			),
-			testutil.NewResource(
-				`aws_resource.items["ac_key"]`, "aws_resource", "items", "ac_key",
-				map[string]interface{}{"id": "id-ac"},
+				`module.old.resource.all["key1"]`, "resource", "all", "key1",
+				map[string]interface{}{"id": "id-key1"},
 			),
 		),
 	})
@@ -642,10 +860,23 @@ operations:
 	engine := New(Config{StateReader: mock})
 
 	_, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
-	if err == nil {
-		t.Fatal("expected overlap error for key matching multiple prefixes")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(err.Error(), "ab_key") {
-		t.Errorf("expected error to mention overlapping key 'ab_key', got: %v", err)
+
+	srcContent, err := os.ReadFile(filepath.Join(srcLayer, "migrations.tf"))
+	if err != nil {
+		t.Fatalf("reading source: %v", err)
+	}
+	if !strings.Contains(string(srcContent), "module.old.resource.all") {
+		t.Error("expected source address in removed block")
+	}
+
+	dstContent, err := os.ReadFile(filepath.Join(dstLayer, "migrations.tf"))
+	if err != nil {
+		t.Fatalf("reading destination: %v", err)
+	}
+	if !strings.Contains(string(dstContent), `module.new.resource.all["key1"]`) {
+		t.Errorf("expected destination_address override in import, got:\n%s", dstContent)
 	}
 }

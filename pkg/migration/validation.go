@@ -53,8 +53,6 @@ func Validate(mf *MigrationFile) []ValidationError {
 		errs = append(errs, validateOperation(i, &op)...)
 	}
 
-	errs = append(errs, validateWildcardPrefixConsistency(mf.Operations)...)
-
 	return errs
 }
 
@@ -92,67 +90,62 @@ func validateOperation(index int, op *Operation) []ValidationError {
 func validateMove(index int, op *Operation) []ValidationError {
 	var errs []ValidationError
 
-	if op.Source == nil {
+	if op.SourceLayer == "" {
 		errs = append(errs, ValidationError{
 			OperationIndex: index,
-			Field:          "source",
-			Message:        "move operation requires a source",
+			Field:          "source_layer",
+			Message:        "move operation requires a source_layer",
 		})
-	} else {
-		if op.Source.Layer == "" {
-			errs = append(errs, ValidationError{
-				OperationIndex: index,
-				Field:          "source.layer",
-				Message:        "source layer path is required",
-			})
-		}
-		if op.Source.Address == "" {
-			errs = append(errs, ValidationError{
-				OperationIndex: index,
-				Field:          "source.address",
-				Message:        "source address is required",
-			})
-		}
 	}
-
-	if op.Destination == nil {
+	if op.DestinationLayer == "" {
 		errs = append(errs, ValidationError{
 			OperationIndex: index,
-			Field:          "destination",
-			Message:        "move operation requires a destination",
+			Field:          "destination_layer",
+			Message:        "move operation requires a destination_layer",
 		})
-	} else {
-		if op.Destination.Layer == "" {
-			errs = append(errs, ValidationError{
-				OperationIndex: index,
-				Field:          "destination.layer",
-				Message:        "destination layer path is required",
-			})
-		}
-		if op.Destination.Address == "" {
-			errs = append(errs, ValidationError{
-				OperationIndex: index,
-				Field:          "destination.address",
-				Message:        "destination address is required",
-			})
-		}
-		if op.Destination.KeyPrefix != "" {
-			errs = append(errs, ValidationError{
-				OperationIndex: index,
-				Field:          "destination.key_prefix",
-				Message:        "key_prefix can only be set on source endpoints, not destinations",
-			})
-		}
+	}
+	if len(op.Resources) == 0 {
+		errs = append(errs, ValidationError{
+			OperationIndex: index,
+			Field:          "resources",
+			Message:        "move operation requires at least one resource",
+		})
 	}
 
-	// key_prefix is only valid on wildcard source addresses
-	if op.Source != nil && op.Source.KeyPrefix != "" {
-		if !strings.HasSuffix(op.Source.Address, "[*]") {
-			errs = append(errs, ValidationError{
-				OperationIndex: index,
-				Field:          "source.key_prefix",
-				Message:        "key_prefix can only be used with wildcard addresses (ending with [*])",
-			})
+	for i, res := range op.Resources {
+		errs = append(errs, validateResourceMove(index, i, &res)...)
+	}
+
+	return errs
+}
+
+// validateResourceMove checks a single ResourceMove entry within a move operation.
+func validateResourceMove(opIndex, resIndex int, res *ResourceMove) []ValidationError {
+	var errs []ValidationError
+	fieldPrefix := fmt.Sprintf("resources[%d]", resIndex)
+
+	if res.Address == "" {
+		errs = append(errs, ValidationError{
+			OperationIndex: opIndex,
+			Field:          fieldPrefix + ".address",
+			Message:        "resource address is required",
+		})
+	}
+
+	// Validate keys map entries
+	for pattern := range res.Keys {
+		if pattern == "*" {
+			continue // catch-all is valid
+		}
+		if strings.Contains(pattern, "*") {
+			// * must only appear at the end
+			if !strings.HasSuffix(pattern, "*") || strings.Count(pattern, "*") > 1 {
+				errs = append(errs, ValidationError{
+					OperationIndex: opIndex,
+					Field:          fieldPrefix + ".keys",
+					Message:        fmt.Sprintf("invalid key pattern %q: wildcard (*) is only allowed at the end of a pattern", pattern),
+				})
+			}
 		}
 	}
 
@@ -170,19 +163,29 @@ func validateRename(index int, op *Operation) []ValidationError {
 			Message:        "rename operation requires a layer path",
 		})
 	}
-	if op.From == "" {
+	if len(op.Renames) == 0 {
 		errs = append(errs, ValidationError{
 			OperationIndex: index,
-			Field:          "from",
-			Message:        "rename operation requires a 'from' address",
+			Field:          "renames",
+			Message:        "rename operation requires at least one rename entry",
 		})
 	}
-	if op.To == "" {
-		errs = append(errs, ValidationError{
-			OperationIndex: index,
-			Field:          "to",
-			Message:        "rename operation requires a 'to' address",
-		})
+	for i, entry := range op.Renames {
+		fieldPrefix := fmt.Sprintf("renames[%d]", i)
+		if entry.From == "" {
+			errs = append(errs, ValidationError{
+				OperationIndex: index,
+				Field:          fieldPrefix + ".from",
+				Message:        "rename entry requires a 'from' address",
+			})
+		}
+		if entry.To == "" {
+			errs = append(errs, ValidationError{
+				OperationIndex: index,
+				Field:          fieldPrefix + ".to",
+				Message:        "rename entry requires a 'to' address",
+			})
+		}
 	}
 
 	return errs
@@ -199,11 +202,11 @@ func validateRemove(index int, op *Operation) []ValidationError {
 			Message:        "remove operation requires a layer path",
 		})
 	}
-	if op.Address == "" {
+	if len(op.Addresses) == 0 {
 		errs = append(errs, ValidationError{
 			OperationIndex: index,
-			Field:          "address",
-			Message:        "remove operation requires an address",
+			Field:          "addresses",
+			Message:        "remove operation requires at least one address",
 		})
 	}
 
@@ -221,69 +224,28 @@ func validateImport(index int, op *Operation) []ValidationError {
 			Message:        "import operation requires a layer path",
 		})
 	}
-	if op.Address == "" {
+	if len(op.Imports) == 0 {
 		errs = append(errs, ValidationError{
 			OperationIndex: index,
-			Field:          "address",
-			Message:        "import operation requires an address",
+			Field:          "imports",
+			Message:        "import operation requires at least one import entry",
 		})
 	}
-	if op.ImportID == "" {
-		errs = append(errs, ValidationError{
-			OperationIndex: index,
-			Field:          "import_id",
-			Message:        "import operation requires an import_id",
-		})
-	}
-
-	return errs
-}
-
-// wildcardSourceKey identifies a unique wildcard move source for consistency checking.
-type wildcardSourceKey struct {
-	layer    string
-	baseAddr string
-}
-
-// validateWildcardPrefixConsistency checks that when multiple wildcard move
-// operations target the same source (layer + base address), all of them
-// specify a key_prefix. Mixing filtered and unfiltered wildcard moves for
-// the same source is not allowed because the removed block drops the entire
-// resource and unfiltered moves would overlap with filtered ones.
-func validateWildcardPrefixConsistency(ops []Operation) []ValidationError {
-	// Group wildcard move operations by their source identity.
-	groups := make(map[wildcardSourceKey][]int) // operation indices
-
-	for i, op := range ops {
-		if op.Type != OpMove || op.Source == nil {
-			continue
+	for i, entry := range op.Imports {
+		fieldPrefix := fmt.Sprintf("imports[%d]", i)
+		if entry.Address == "" {
+			errs = append(errs, ValidationError{
+				OperationIndex: index,
+				Field:          fieldPrefix + ".address",
+				Message:        "import entry requires an address",
+			})
 		}
-		if !strings.HasSuffix(op.Source.Address, "[*]") {
-			continue
-		}
-		base := strings.TrimSuffix(op.Source.Address, "[*]")
-		key := wildcardSourceKey{layer: op.Source.Layer, baseAddr: base}
-		groups[key] = append(groups[key], i)
-	}
-
-	var errs []ValidationError
-	for key, indices := range groups {
-		if len(indices) <= 1 {
-			continue // single operation targeting this source; no consistency needed
-		}
-
-		// Multiple operations target the same wildcard source: all must have key_prefix.
-		for _, idx := range indices {
-			if ops[idx].Source.KeyPrefix == "" {
-				errs = append(errs, ValidationError{
-					OperationIndex: idx,
-					Field:          "source.key_prefix",
-					Message: fmt.Sprintf(
-						"multiple operations target wildcard source %s[*] in layer %q; all must specify key_prefix",
-						key.baseAddr, key.layer,
-					),
-				})
-			}
+		if entry.ImportID == "" {
+			errs = append(errs, ValidationError{
+				OperationIndex: index,
+				Field:          fieldPrefix + ".import_id",
+				Message:        "import entry requires an import_id",
+			})
 		}
 	}
 

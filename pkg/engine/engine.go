@@ -80,9 +80,8 @@ func (e *Engine) ProcessFiles(ctx context.Context, paths []string) ([]string, er
 }
 
 // processMigration processes a single parsed migration file, generating
-// HCL blocks for each operation. For wildcard moves with key_prefix
-// filtering, it coordinates across operations to ensure completeness
-// and prevent duplicate removed blocks.
+// HCL blocks for each operation. For keyed moves, it coordinates across
+// operations to ensure completeness and prevent duplicate removed blocks.
 func (e *Engine) processMigration(ctx context.Context, mf *migration.MigrationFile) error {
 	tracker := newWildcardTracker()
 
@@ -117,148 +116,266 @@ func (e *Engine) processOperation(ctx context.Context, op *migration.Operation, 
 	}
 }
 
-// processMove handles move operations, which generate a removed block in the
-// source layer and an import block in the destination layer.
-// Supports both single-resource moves and wildcard expansion.
+// processMove handles move operations, iterating over each resource entry
+// and generating removed blocks in the source layer and import blocks in
+// the destination layer. Supports keyed moves with key matching and cross-
+// operation completeness tracking.
 func (e *Engine) processMove(ctx context.Context, op *migration.Operation, opIndex int, tracker *wildcardTracker) ([]generator.Block, error) {
-	srcLayer := op.Source.Layer
-	srcAddr := op.Source.Address
-	dstLayer := op.Destination.Layer
-	dstAddr := op.Destination.Address
-
-	if IsWildcard(srcAddr) {
-		return e.processMoveWildcard(ctx, op, srcLayer, srcAddr, dstLayer, dstAddr, opIndex, tracker)
-	}
-
-	return e.processMoveSingle(ctx, op, srcLayer, srcAddr, dstLayer, dstAddr)
-}
-
-// processMoveSingle handles a single (non-wildcard) move operation.
-func (e *Engine) processMoveSingle(
-	ctx context.Context,
-	op *migration.Operation,
-	srcLayer, srcAddr, dstLayer, dstAddr string,
-) ([]generator.Block, error) {
-	instance, err := e.resolver.ResolveSingleMove(ctx, srcLayer, srcAddr, dstAddr, op.ImportID)
-	if err != nil {
-		return nil, err
-	}
-
-	return []generator.Block{
-		&generator.RemovedBlock{
-			From:        srcAddr,
-			Destroy:     false,
-			Layer:       srcLayer,
-			Description: op.Description,
-		},
-		&generator.ImportBlock{
-			To:          instance.DestAddress,
-			ID:          instance.ImportID,
-			Layer:       dstLayer,
-			Description: op.Description,
-		},
-	}, nil
-}
-
-// processMoveWildcard handles a wildcard move operation, expanding matching
-// instances from state and generating import blocks in the destination layer.
-// It uses the tracker to coordinate with other operations targeting the same
-// source: deduplicating removed blocks, tracking claimed keys, and enabling
-// completeness verification for prefix-filtered moves.
-func (e *Engine) processMoveWildcard(
-	ctx context.Context,
-	op *migration.Operation,
-	srcLayer, srcAddr, dstLayer, dstAddr string,
-	opIndex int,
-	tracker *wildcardTracker,
-) ([]generator.Block, error) {
-	srcKey := wildcardSourceKey{layer: srcLayer, baseAddr: BaseAddress(srcAddr)}
-	keyPrefix := op.Source.KeyPrefix
-
-	// On first encounter of this source, load all keys for completeness tracking.
-	if _, exists := tracker.groups[srcKey]; !exists {
-		allKeys, err := e.resolver.LookupWildcardKeys(ctx, srcLayer, srcAddr)
-		if err != nil {
-			return nil, err
-		}
-		tracker.setAllKeys(srcKey, allKeys)
-	}
-
-	// Expand with optional prefix filter.
-	instances, err := e.resolver.ExpandWildcard(ctx, srcLayer, srcAddr, dstAddr, op.ImportID, keyPrefix)
-	if err != nil {
-		return nil, err
-	}
-
-	// Track prefix-filtered operations for completeness checking.
-	if keyPrefix != "" {
-		tracker.markPrefixFiltered(srcKey)
-		keys := make([]string, len(instances))
-		for i, inst := range instances {
-			keys[i] = inst.SourceResource.Key
-		}
-		if err := tracker.claimKeys(srcKey, keys, opIndex); err != nil {
-			return nil, err
-		}
-	}
+	srcLayer := op.SourceLayer
+	dstLayer := op.DestinationLayer
 
 	var blocks []generator.Block
 
-	// Only emit removed block once per source resource.
-	if tracker.shouldEmitRemoved(srcKey) {
-		blocks = append(blocks, &generator.RemovedBlock{
-			From:        BaseAddress(srcAddr),
-			Destroy:     false,
-			Layer:       srcLayer,
-			Description: op.Description,
-		})
-	}
+	for i, res := range op.Resources {
+		srcAddr := migration.FullAddress(op.AddressPrefix, res.Address)
+		dstBaseAddr := res.DestinationAddress
+		if dstBaseAddr == "" {
+			dstBaseAddr = res.Address
+		}
+		dstAddr := migration.FullAddress(op.AddressPrefix, dstBaseAddr)
 
-	for _, inst := range instances {
-		blocks = append(blocks, &generator.ImportBlock{
-			To:          inst.DestAddress,
-			ID:          inst.ImportID,
-			Layer:       dstLayer,
-			Description: op.Description,
-		})
+		resBlocks, err := e.processMoveResource(ctx, srcLayer, dstLayer, srcAddr, dstAddr, &res, opIndex, i, tracker, op.Description)
+		if err != nil {
+			return nil, fmt.Errorf("resource %q: %w", res.Address, err)
+		}
+		blocks = append(blocks, resBlocks...)
 	}
 
 	return blocks, nil
 }
 
-// processRename handles rename operations, which generate a moved block.
-func (e *Engine) processRename(op *migration.Operation) ([]generator.Block, error) {
-	return []generator.Block{
-		&generator.MovedBlock{
-			From:        op.From,
-			To:          op.To,
-			Layer:       op.Layer,
-			Description: op.Description,
-		},
-	}, nil
+// processMoveResource handles a single resource entry within a move operation.
+// If the resource has a keys map, it performs keyed expansion with pattern
+// matching. Otherwise, it moves the resource as-is (single or all for_each instances).
+func (e *Engine) processMoveResource(
+	ctx context.Context,
+	srcLayer, dstLayer, srcAddr, dstAddr string,
+	res *migration.ResourceMove,
+	opIndex, resIndex int,
+	tracker *wildcardTracker,
+	description string,
+) ([]generator.Block, error) {
+	if len(res.Keys) > 0 {
+		return e.processMoveKeyed(ctx, srcLayer, dstLayer, srcAddr, dstAddr, res, opIndex, tracker, description)
+	}
+
+	return e.processMoveSimple(ctx, srcLayer, dstLayer, srcAddr, dstAddr, res, tracker, description)
 }
 
-// processRemove handles remove operations, which generate a removed block.
+// processMoveSimple handles a resource move without a keys map.
+// It looks up the resource in state and generates appropriate blocks:
+//   - For for_each resources: expands all instances, imports each, removes the base resource
+//   - For single resources: removes and imports the single resource
+func (e *Engine) processMoveSimple(
+	ctx context.Context,
+	srcLayer, dstLayer, srcAddr, dstAddr string,
+	res *migration.ResourceMove,
+	tracker *wildcardTracker,
+	description string,
+) ([]generator.Block, error) {
+	// Look up all instances of this resource from state
+	resources, err := e.resolver.LookupResources(ctx, srcLayer, srcAddr)
+	if err != nil {
+		return nil, err
+	}
+
+	var blocks []generator.Block
+
+	// Check if this is a for_each resource (multiple instances or instances with keys)
+	isForEach := len(resources) > 1 || (len(resources) == 1 && resources[0].Key != "")
+
+	if isForEach {
+		// For_each resource without keys map: move all instances with same keys
+		srcKey := wildcardSourceKey{layer: srcLayer, baseAddr: srcAddr}
+
+		allKeys := make([]string, len(resources))
+		for i, r := range resources {
+			allKeys[i] = r.Key
+		}
+		tracker.setAllKeys(srcKey, allKeys)
+
+		if tracker.shouldEmitRemoved(srcKey) {
+			blocks = append(blocks, &generator.RemovedBlock{
+				From:        srcAddr,
+				Destroy:     false,
+				Layer:       srcLayer,
+				Description: description,
+			})
+		}
+
+		for _, r := range resources {
+			destFullAddr := fmt.Sprintf("%s[\"%s\"]", dstAddr, r.Key)
+			importID, err := e.resolver.ResolveImportID(r, res.ImportID)
+			if err != nil {
+				return nil, fmt.Errorf("resolving import ID for %q: %w", r.Address, err)
+			}
+			blocks = append(blocks, &generator.ImportBlock{
+				To:          destFullAddr,
+				ID:          importID,
+				Layer:       dstLayer,
+				Description: description,
+			})
+		}
+	} else {
+		// Single resource (non-for_each)
+		r := resources[0]
+		importID, err := e.resolver.ResolveImportID(r, res.ImportID)
+		if err != nil {
+			return nil, fmt.Errorf("resolving import ID for %q: %w", r.Address, err)
+		}
+
+		blocks = append(blocks,
+			&generator.RemovedBlock{
+				From:        srcAddr,
+				Destroy:     false,
+				Layer:       srcLayer,
+				Description: description,
+			},
+			&generator.ImportBlock{
+				To:          dstAddr,
+				ID:          importID,
+				Layer:       dstLayer,
+				Description: description,
+			},
+		)
+	}
+
+	return blocks, nil
+}
+
+// processMoveKeyed handles a resource move with a keys map, performing pattern
+// matching against state keys and generating import blocks for each match.
+// Uses the wildcard tracker for cross-operation coordination, overlap detection,
+// and completeness checking.
+func (e *Engine) processMoveKeyed(
+	ctx context.Context,
+	srcLayer, dstLayer, srcAddr, dstAddr string,
+	res *migration.ResourceMove,
+	opIndex int,
+	tracker *wildcardTracker,
+	description string,
+) ([]generator.Block, error) {
+	srcKey := wildcardSourceKey{layer: srcLayer, baseAddr: srcAddr}
+
+	// Look up all for_each instances from state
+	resources, err := e.resolver.LookupResources(ctx, srcLayer, srcAddr)
+	if err != nil {
+		return nil, err
+	}
+
+	// On first encounter of this source, register all keys with tracker
+	if _, exists := tracker.groups[srcKey]; !exists {
+		allKeys := make([]string, len(resources))
+		for i, r := range resources {
+			allKeys[i] = r.Key
+		}
+		tracker.setAllKeys(srcKey, allKeys)
+	}
+	tracker.markPrefixFiltered(srcKey)
+
+	// Build key matcher from the keys map
+	matcher, err := newKeyMatcher(res.Keys)
+	if err != nil {
+		return nil, fmt.Errorf("building key matcher: %w", err)
+	}
+
+	// Match state keys and generate import blocks
+	var blocks []generator.Block
+	var claimedKeys []string
+
+	for _, r := range resources {
+		destTemplate, matched := matcher.Match(r.Key)
+		if !matched {
+			continue // unmatched keys handled by completeness check
+		}
+
+		claimedKeys = append(claimedKeys, r.Key)
+
+		// Evaluate the destination key template
+		destKey, err := e.resolver.EvaluateTemplate(destTemplate, r)
+		if err != nil {
+			return nil, fmt.Errorf("evaluating destination key template for key %q: %w", r.Key, err)
+		}
+
+		// Construct full destination address
+		destFullAddr := fmt.Sprintf("%s[\"%s\"]", dstAddr, destKey)
+
+		// Resolve import ID
+		importID, err := e.resolver.ResolveImportID(r, res.ImportID)
+		if err != nil {
+			return nil, fmt.Errorf("resolving import ID for key %q: %w", r.Key, err)
+		}
+
+		blocks = append(blocks, &generator.ImportBlock{
+			To:          destFullAddr,
+			ID:          importID,
+			Layer:       dstLayer,
+			Description: description,
+		})
+	}
+
+	// Claim matched keys in tracker (detects overlaps)
+	if err := tracker.claimKeys(srcKey, claimedKeys, opIndex); err != nil {
+		return nil, err
+	}
+
+	// Emit removed block (deduplicated across operations)
+	if tracker.shouldEmitRemoved(srcKey) {
+		// Prepend removed block before import blocks
+		removedBlock := &generator.RemovedBlock{
+			From:        srcAddr,
+			Destroy:     false,
+			Layer:       srcLayer,
+			Description: description,
+		}
+		blocks = append([]generator.Block{removedBlock}, blocks...)
+	}
+
+	return blocks, nil
+}
+
+// processRename handles rename operations, generating moved blocks for each
+// rename entry within the operation.
+func (e *Engine) processRename(op *migration.Operation) ([]generator.Block, error) {
+	var blocks []generator.Block
+	for _, entry := range op.Renames {
+		blocks = append(blocks, &generator.MovedBlock{
+			From:        migration.FullAddress(op.AddressPrefix, entry.From),
+			To:          migration.FullAddress(op.AddressPrefix, entry.To),
+			Layer:       op.Layer,
+			Description: op.Description,
+		})
+	}
+	return blocks, nil
+}
+
+// processRemove handles remove operations, generating removed blocks for each
+// address in the operation.
 func (e *Engine) processRemove(op *migration.Operation) ([]generator.Block, error) {
-	return []generator.Block{
-		&generator.RemovedBlock{
-			From:        op.Address,
+	var blocks []generator.Block
+	for _, addr := range op.Addresses {
+		blocks = append(blocks, &generator.RemovedBlock{
+			From:        migration.FullAddress(op.AddressPrefix, addr),
 			Destroy:     op.DestroyValue(),
 			Layer:       op.Layer,
 			Description: op.Description,
-		},
-	}, nil
+		})
+	}
+	return blocks, nil
 }
 
-// processImport handles import operations, which generate an import block.
+// processImport handles import operations, generating import blocks for each
+// import entry in the operation.
 func (e *Engine) processImport(op *migration.Operation) ([]generator.Block, error) {
-	return []generator.Block{
-		&generator.ImportBlock{
-			To:          op.Address,
-			ID:          op.ImportID,
-			Provider:    op.Provider,
+	var blocks []generator.Block
+	for _, entry := range op.Imports {
+		blocks = append(blocks, &generator.ImportBlock{
+			To:          migration.FullAddress(op.AddressPrefix, entry.Address),
+			ID:          entry.ImportID,
+			Provider:    entry.Provider,
 			Layer:       op.Layer,
 			Description: op.Description,
-		},
-	}, nil
+		})
+	}
+	return blocks, nil
 }

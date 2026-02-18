@@ -25,13 +25,11 @@ go build -o tfmigrate .
 description: "Move web server from shared compute to dedicated app layer"
 operations:
   - type: move
-    source:
-      layer: "./layers/compute"
-      address: "aws_instance.web"
-    destination:
-      layer: "./layers/app"
-      address: "aws_instance.web"
-    import_id: "i-0abc123def456"
+    source_layer: "./layers/compute"
+    destination_layer: "./layers/app"
+    resources:
+      - address: "aws_instance.web"
+        import_id: "i-0abc123def456"
 ```
 
 2. Generate the HCL:
@@ -77,9 +75,6 @@ Pass one or more file paths or directories. Directories are scanned for `.yaml`/
 # Single file
 tfmigrate generate migrations/001_move.yaml
 
-# Multiple files (processed in argument order)
-tfmigrate generate migrations/001_move.yaml migrations/002_rename.yaml
-
 # Entire directory (files sorted by name)
 tfmigrate generate migrations/
 
@@ -109,315 +104,231 @@ Migration files are YAML documents with a description and a list of operations:
 
 ```yaml
 description: "Human-readable description of this migration"
-schema_version: "1"  # optional, for forward compatibility
+schema_version: "2"  # optional
 operations:
   - type: <move|rename|remove|import>
     # ... operation-specific fields
+```
+
+### Common Fields
+
+All operation types support an optional `address_prefix` field that is prepended (with a dot separator) to all resource addresses in the operation:
+
+```yaml
+- type: move
+  address_prefix: "module.identity_governance"
+  resources:
+    - address: "azuread_access_package.all"
+    # Full address: module.identity_governance.azuread_access_package.all
 ```
 
 ### Operation Types
 
 #### `move` — Cross-Layer Resource Move
 
-Moves a resource from one OpenTofu layer (root module) to another. Generates a `removed` block in the source layer and an `import` block in the destination layer.
+Moves resources between OpenTofu layers. Generates `removed` blocks in the source layer and `import` blocks in the destination layer.
 
 ```yaml
 - type: move
-  description: "Move web instance to app layer"
-  source:
-    layer: "./layers/compute"
-    address: "aws_instance.web"
-  destination:
-    layer: "./layers/app"
-    address: "aws_instance.web"
-  import_id: "i-0abc123def456"  # optional: auto-resolved from state if omitted
+  description: "Move resources to app layer"
+  source_layer: "./layers/compute"
+  destination_layer: "./layers/app"
+  address_prefix: "module.main"              # optional
+  resources:
+    - address: "aws_instance.web"
+      import_id: "i-0abc123def456"           # optional: auto-resolved from state if omitted
+    - address: "aws_instance.api"
 ```
 
-When `import_id` is omitted, tfmigrate reads the source layer's state (`tofu show -json`) and extracts the resource's `id` attribute automatically.
+When `import_id` is omitted, tfmigrate reads the source layer's state and extracts the resource's `id` attribute automatically.
+
+**`destination_address`** — When the destination base address differs from the source:
+
+```yaml
+resources:
+  - address: "module.old.resource.all"
+    destination_address: "module.new.resource.all"
+    keys:
+      key1: key1
+```
 
 #### `rename` — In-Layer Rename
 
-Renames a resource or module within a single layer. Generates a `moved` block.
+Renames resources or modules within a single layer. Generates `moved` blocks.
 
 ```yaml
 - type: rename
-  description: "Rename VPC module"
+  description: "Rename VPC module and subnet"
   layer: "./layers/networking"
-  from: "module.old_vpc"
-  to: "module.new_vpc"
+  address_prefix: "module.vpc"               # optional
+  renames:
+    - from: "aws_subnet.old"
+      to: "aws_subnet.new"
+    - from: "aws_route_table.legacy"
+      to: "aws_route_table.main"
 ```
 
 #### `remove` — Remove from State
 
-Removes a resource from state tracking. By default, the underlying infrastructure is preserved (`destroy = false`).
+Removes resources from state tracking. By default, the underlying infrastructure is preserved (`destroy = false`).
 
 ```yaml
 - type: remove
-  description: "Stop managing deprecated IAM role"
+  description: "Stop managing deprecated IAM resources"
   layer: "./layers/iam"
-  address: "aws_iam_role.deprecated"
-  destroy: false  # default; set to true to also destroy the resource
+  destroy: false                             # default; set to true to also destroy
+  addresses:
+    - "aws_iam_role.deprecated"
+    - "aws_iam_policy.old_policy"
 ```
 
-#### `import` — Import Existing Resource
+#### `import` — Import Existing Resources
 
-Imports an existing cloud resource into OpenTofu state. Generates an `import` block.
+Imports existing cloud resources into OpenTofu state. Generates `import` blocks.
 
 ```yaml
 - type: import
-  description: "Import existing RDS instance"
+  description: "Import existing databases"
   layer: "./layers/database"
-  address: "aws_db_instance.primary"
-  import_id: "my-database-identifier"
-  provider: "aws.useast1"  # optional provider alias
+  imports:
+    - address: "aws_db_instance.primary"
+      import_id: "my-database-identifier"
+      provider: "aws.useast1"                # optional provider alias
+    - address: "aws_db_instance.replica"
+      import_id: "my-replica-identifier"
 ```
 
-## Advanced Usage
+## Keyed Moves
 
-### Wildcard Expansion with `[*]`
-
-When a source address ends with `[*]`, tfmigrate expands it against the source layer's state to enumerate all `for_each` or `count` instances. Combined with Go templates, this enables bulk moves with key transformations.
+For `for_each` resources, use the `keys` map to specify how individual state keys are routed to destination keys.
 
 ```yaml
-description: "Re-key S3 buckets from composite keys to bucket names"
-operations:
-  - type: move
-    source:
-      layer: "./layers/data"
-      address: "aws_s3_bucket.data[*]"
-    destination:
-      layer: "./layers/storage"
-      address: 'aws_s3_bucket.data["{{ .Attributes.bucket }}"]'
-    import_id: "{{ .Attributes.id }}"
+- type: move
+  source_layer: "./layers/old"
+  destination_layer: "./layers/new"
+  resources:
+    - address: "azuread_access_package_catalog.all"
+      keys:
+        mrt_customer: customer_approval                  # exact key rename
+        mrt_outbound_provisioning: resource_tenant_access
+        mrt_privileged_access: privileged_access
+        mrt_vaw: vaw
 ```
 
-If the source state contains:
+### Key Pattern Types
 
-- `aws_s3_bucket.data["composite-abc-us-east-1"]` with `bucket = "my-bucket-abc"`
-- `aws_s3_bucket.data["composite-xyz-eu-west-1"]` with `bucket = "my-bucket-xyz"`
+| Pattern | Meaning | Example |
+|---|---|---|
+| `exact_key` | Matches exactly that for_each key | `mrt_customer: customer_approval` |
+| `prefix_*` | Matches all keys starting with `prefix_` | `"mrt_customer_*": '{{ .Key \| trimPrefix "mrt_customer_" }}'` |
+| `*` | Catch-all: matches all remaining unmatched keys | `"*": '{{ .Key }}'` |
 
-This generates:
+Values can be literal strings or Go template expressions. Match priority: exact > longest prefix > catch-all.
 
-**Source layer (single `removed` block for the base resource):**
-```hcl
-removed {
-  from = aws_s3_bucket.data
+### Completeness Rules
 
-  lifecycle {
-    destroy = false
-  }
-}
-```
+- When `keys` is present, **all state keys** must be matched. Unmatched keys cause an error.
+- Overlapping key claims across operations cause an error.
+- The same source resource can appear in multiple move operations with different destination layers. Keys are tracked across operations.
 
-**Destination layer (`import` blocks):**
-```hcl
-import {
-  to = aws_s3_bucket.data["my-bucket-abc"]
-  id = "composite-abc-us-east-1"
-}
-
-import {
-  to = aws_s3_bucket.data["my-bucket-xyz"]
-  id = "composite-xyz-eu-west-1"
-}
-```
-
-### Prefix-Filtered Wildcard Moves
-
-When a `for_each` resource has keys from different kinds of inputs (e.g., merged maps from multiple sources), you can use `key_prefix` on the source endpoint to route different key prefixes to different destinations. Multiple move operations can target the same wildcard source, each filtering by a different prefix.
+### Cross-Operation Key Splitting
 
 ```yaml
-description: "Split access assignments by department"
 operations:
   - type: move
-    source:
-      layer: "./layers/shared"
-      address: "aws_resource.assignments[*]"
-      key_prefix: "engineering_"
-    destination:
-      layer: "./layers/engineering"
-      address: 'aws_resource.assignments["{{ .Key | trimPrefix "engineering_" }}"]'
-    import_id: "{{ .Attributes.id }}"
-
+    source_layer: "./layers/shared"
+    destination_layer: "./layers/engineering"
+    resources:
+      - address: "aws_resource.assignments"
+        keys:
+          "eng_*": '{{ .Key | trimPrefix "eng_" }}'
   - type: move
-    source:
-      layer: "./layers/shared"
-      address: "aws_resource.assignments[*]"
-      key_prefix: "finance_"
-    destination:
-      layer: "./layers/finance"
-      address: 'aws_resource.assignments["{{ .Key | trimPrefix "finance_" }}"]'
-    import_id: "{{ .Attributes.id }}"
+    source_layer: "./layers/shared"
+    destination_layer: "./layers/finance"
+    resources:
+      - address: "aws_resource.assignments"
+        keys:
+          "fin_*": '{{ .Key | trimPrefix "fin_" }}'
 ```
 
-This generates a single `removed` block in the source layer and separate `import` blocks in each destination layer for the matching keys.
+### Without `keys` Map
 
-**Completeness and overlap rules:**
+When `keys` is omitted:
+- **Single resource**: one `removed` + one `import` block
+- **For_each resource**: expands all instances with the same keys
 
-- When `key_prefix` is used, **all keys** in the source state must be covered by at least one prefix-filtered operation. Uncovered keys cause an error to prevent data loss (since the `removed` block drops the entire resource).
-- If a key matches multiple operations' prefixes, that is an **overlap error**. Design prefixes to be mutually exclusive.
-- When multiple operations target the same wildcard source, **all** must specify `key_prefix` — mixing filtered and unfiltered is not allowed.
+## Go Template Reference
 
-### Go Template Context
-
-Templates in `address` and `import_id` fields receive a context with the following fields:
+Templates in key values and `import_id` fields have access to:
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `.Address` | `string` | Full source address (e.g., `aws_s3_bucket.data["key-1"]`) |
 | `.Type` | `string` | Resource type (e.g., `aws_s3_bucket`) |
 | `.Name` | `string` | Resource name (e.g., `data`) |
-| `.Index` | `any` | Raw for_each key (string) or count index (int) |
+| `.Index` | `any` | Raw for_each key or count index |
 | `.Key` | `string` | String representation of `.Index` |
 | `.Attributes` | `map` | All resource attributes from state |
 
 ### Template Functions
 
-The following custom functions are available in templates. All string functions accept the input as the last argument for pipe compatibility.
-
 | Function | Usage | Description |
 |----------|-------|-------------|
 | `replace` | `{{ .Key \| replace "-" "_" }}` | Replace all occurrences |
-| `replaceN` | `{{ .Key \| replaceN "-" "_" 1 }}` | Replace first N occurrences |
+| `replaceN` | `{{ .Key \| replaceN "-" "_" 1 }}` | Replace first N |
 | `trimPrefix` | `{{ .Key \| trimPrefix "prefix-" }}` | Remove prefix |
 | `trimSuffix` | `{{ .Key \| trimSuffix "-suffix" }}` | Remove suffix |
-| `trimSpace` | `{{ .Key \| trimSpace }}` | Remove leading/trailing whitespace |
+| `trimSpace` | `{{ .Key \| trimSpace }}` | Strip whitespace |
 | `lower` | `{{ .Key \| lower }}` | Lowercase |
 | `upper` | `{{ .Key \| upper }}` | Uppercase |
 | `split` | `{{ .Key \| split "-" }}` | Split into list |
-| `join` | `{{ .Key \| split "-" \| join "_" }}` | Join list with separator |
+| `join` | `{{ .Key \| split "-" \| join "_" }}` | Join list |
 | `at` | `{{ .Key \| split "/" \| at 1 }}` | Index into list (pipe-compatible) |
 | `hasPrefix` | `{{ if .Key \| hasPrefix "prod" }}...{{ end }}` | Test prefix |
 | `hasSuffix` | `{{ if .Key \| hasSuffix "-prod" }}...{{ end }}` | Test suffix |
-| `contains` | `{{ if .Key \| contains "special" }}...{{ end }}` | Test substring |
+| `contains` | `{{ if .Key \| contains "x" }}...{{ end }}` | Test substring |
 | `attr` | `{{ attr .Attributes "tags" "Name" }}` | Nested map lookup |
-| `default` | `{{ .Key \| default "fallback" }}` | Fallback for empty values |
+| `default` | `{{ .Key \| default "fallback" }}` | Fallback for empty |
 | `quote` | `{{ .Key \| quote }}` | Wrap in double quotes |
-| `printf` | `{{ printf "%s-%s" .Type .Name }}` | Formatted string |
-| `regexReplace` | `{{ .Key \| regexReplace "[^a-z0-9]+" "_" }}` | Regex-based replacement |
-| `sanitizeKey` | `{{ .Key \| sanitizeKey }}` | Lowercase + replace non-alphanumeric with `_` |
-| `formatKey` | `{{ formatKey "%s_%s" .Attributes.pkg .Attributes.role }}` | Format + sanitize in one step |
+| `printf` | `{{ printf "%s-%s" .Type .Name }}` | Format string |
+| `regexReplace` | `{{ .Key \| regexReplace "[^a-z]+" "_" }}` | Regex replacement |
+| `sanitizeKey` | `{{ .Key \| sanitizeKey }}` | Lowercase + non-alphanumeric → `_` |
+| `formatKey` | `{{ formatKey "%s_%s" .Attributes.a .Attributes.b }}` | Format + sanitize |
 
-### Complex Key Transformation Examples
+## Real-World Example
 
-**Replace hyphens with underscores in keys:**
-```yaml
-- type: move
-  source:
-    layer: "./layers/old"
-    address: "aws_security_group.rules[*]"
-  destination:
-    layer: "./layers/new"
-    address: 'aws_security_group.rules["{{ .Key | replace "-" "_" }}"]'
-```
-
-**Re-key using a nested tag value:**
-```yaml
-- type: move
-  source:
-    layer: "./layers/old"
-    address: "aws_instance.servers[*]"
-  destination:
-    layer: "./layers/new"
-    address: 'aws_instance.servers["{{ attr .Attributes "tags" "Name" }}"]'
-```
-
-**Conditional key transformation:**
-```yaml
-- type: move
-  source:
-    layer: "./layers/old"
-    address: "aws_s3_bucket.buckets[*]"
-  destination:
-    layer: "./layers/new"
-    address: 'aws_s3_bucket.buckets["{{ if .Key | hasPrefix "prod" }}production-{{ .Attributes.bucket }}{{ else }}{{ .Attributes.bucket }}{{ end }}"]'
-```
-
-**Use ARN as import ID instead of default `id` attribute:**
-```yaml
-- type: move
-  source:
-    layer: "./layers/old"
-    address: "aws_iam_role.roles[*]"
-  destination:
-    layer: "./layers/new"
-    address: 'aws_iam_role.roles["{{ .Attributes.name }}"]'
-  import_id: "{{ .Attributes.arn }}"
-```
-
-### Multiple Operations in One File
-
-A single migration file can contain multiple operations. When multiple operations target the same layer, their blocks are aggregated into a single output file.
+This example moves 4 resource types between layers with exact key renames, prefix patterns, and `address_prefix`:
 
 ```yaml
-description: "Restructure networking layer"
+description: "Identity Governance - Restructuring"
 operations:
-  - type: rename
-    description: "Rename VPC module"
-    layer: "./layers/networking"
-    from: "module.old_vpc"
-    to: "module.new_vpc"
+  - type: move
+    source_layer: ./blueprints/41-workplace
+    destination_layer: ./blueprints/61-identity-governance
+    address_prefix: module.identity_governance
+    resources:
+      - address: azuread_access_package_catalog.all
+        keys:
+          mrt_customer: customer_approval
+          mrt_outbound_provisioning: resource_tenant_access
+          mrt_privileged_access: privileged_access
+          mrt_vaw: vaw
 
-  - type: remove
-    description: "Remove legacy security group"
-    layer: "./layers/networking"
-    address: "aws_security_group.legacy"
+      - address: azuread_access_package.all
+        keys:
+          "mrt_customer_*": 'customer_approval_{{ .Key | trimPrefix "mrt_customer_" }}'
+          "mrt_privileged_access_*": 'privileged_access_{{ .Key | trimPrefix "mrt_privileged_access_" }}'
+          "mrt_outbound_provisioning_*": 'resource_tenant_access_{{ .Key | trimPrefix "mrt_outbound_provisioning_" }}'
+          vaw_access: vaw_access
 
-  - type: import
-    description: "Import new route table"
-    layer: "./layers/networking"
-    address: "aws_route_table.new"
-    import_id: "rtb-0abc123"
+      - address: azuread_access_package_resource_package_association.all
+        keys:
+          "mrt_customer_*": 'customer_approval_{{ .Key | trimPrefix "mrt_customer_" | split "_entra_group_" | at 0 }}_AadGroup_{{ .Attributes.catalog_resource_association_id | split "/" | at 1 }}'
+          "mrt_privileged_access_*": 'privileged_access_{{ .Key | trimPrefix "mrt_privileged_access_" | split "_entra_group_" | at 0 }}_AadGroup_{{ .Attributes.catalog_resource_association_id | split "/" | at 1 }}'
+          "mrt_outbound_provisioning_*": 'resource_tenant_access_{{ .Key | trimPrefix "mrt_outbound_provisioning_" | split "_entra_group_" | at 0 }}_AadGroup_{{ .Attributes.catalog_resource_association_id | split "/" | at 1 }}'
 ```
-
-This produces a single `./layers/networking/migrations.tf`:
-
-```hcl
-# Generated by tfmigrate - do not edit manually
-
-# Rename VPC module
-moved {
-  from = module.old_vpc
-  to   = module.new_vpc
-}
-
-# Remove legacy security group
-removed {
-  from = aws_security_group.legacy
-
-  lifecycle {
-    destroy = false
-  }
-}
-
-# Import new route table
-import {
-  to = aws_route_table.new
-  id = "rtb-0abc123"
-}
-```
-
-### Ordered Migration Sequences
-
-Name your migration files with a numeric prefix to control processing order:
-
-```
-migrations/
-  001_move_compute_resources.yaml
-  002_rename_networking_modules.yaml
-  003_import_new_database.yaml
-  004_cleanup_legacy_resources.yaml
-```
-
-```bash
-tfmigrate generate migrations/
-```
-
-Files are sorted lexicographically and processed in order. This ensures dependent migrations are applied in the correct sequence.
 
 ## Architecture
-
-tfmigrate is built with a modular package architecture:
 
 ```
 pkg/
@@ -425,16 +336,10 @@ pkg/
   state/       - OpenTofu state reading via terraform-exec
   template/    - Go template evaluation with custom functions
   generator/   - HCL block rendering and file output
-  engine/      - Pipeline orchestration
+  engine/      - Pipeline orchestration, key matching, wildcard tracking
 ```
-
-Each package has a well-defined responsibility and can be extended independently. The engine ties everything together: parse YAML, read state, resolve import IDs, expand wildcards, generate HCL blocks, and write output files.
 
 ## Requirements
 
 - Go 1.25+ (for building)
-- OpenTofu (`tofu`) in PATH (for state auto-resolution; not needed if all `import_id` values are explicit)
-
-## License
-
-See [LICENSE](LICENSE) for details.
+- OpenTofu (`tofu`) in PATH (for state auto-resolution)

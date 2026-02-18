@@ -41,10 +41,10 @@ type MigrationFile struct {
 
 // Operation represents a single migration operation.
 // The Type field determines which other fields are relevant:
-//   - move:   Source, Destination, ImportID (optional)
-//   - rename: Layer, From, To
-//   - remove: Layer, Address, Destroy (optional)
-//   - import: Layer, Address, ImportID, Provider (optional)
+//   - move:   SourceLayer, DestinationLayer, Resources
+//   - rename: Layer, Renames
+//   - remove: Layer, Addresses, Destroy (optional)
+//   - import: Layer, Imports
 type Operation struct {
 	// Type determines the kind of migration operation.
 	Type OperationType `yaml:"type"`
@@ -52,52 +52,83 @@ type Operation struct {
 	// Description is an optional human-readable description of this operation.
 	Description string `yaml:"description,omitempty"`
 
-	// Source identifies the resource and layer to move from (move operations).
-	Source *Endpoint `yaml:"source,omitempty"`
+	// AddressPrefix is an optional prefix prepended (with a dot separator) to
+	// all resource addresses in this operation. Useful for factoring out common
+	// module paths (e.g., "module.identity_governance").
+	AddressPrefix string `yaml:"address_prefix,omitempty"`
 
-	// Destination identifies the target resource and layer to move to (move operations).
-	Destination *Endpoint `yaml:"destination,omitempty"`
+	// SourceLayer is the filesystem path to the source Terraform root module (move operations).
+	SourceLayer string `yaml:"source_layer,omitempty"`
+
+	// DestinationLayer is the filesystem path to the destination Terraform root module (move operations).
+	DestinationLayer string `yaml:"destination_layer,omitempty"`
+
+	// Resources lists the resources to move between layers (move operations).
+	Resources []ResourceMove `yaml:"resources,omitempty"`
 
 	// Layer is the filesystem path to the Terraform root module (rename, remove, import operations).
 	Layer string `yaml:"layer,omitempty"`
 
-	// From is the original resource address (rename operations).
-	From string `yaml:"from,omitempty"`
+	// Renames lists the address renames to perform (rename operations).
+	Renames []RenameEntry `yaml:"renames,omitempty"`
 
-	// To is the new resource address (rename operations).
-	To string `yaml:"to,omitempty"`
+	// Addresses lists the resource addresses to remove from state (remove operations).
+	Addresses []string `yaml:"addresses,omitempty"`
 
-	// Address is the resource address (remove and import operations).
-	Address string `yaml:"address,omitempty"`
-
-	// Destroy controls whether the resource is destroyed when removed.
+	// Destroy controls whether resources are destroyed when removed.
 	// Defaults to false (safe removal from state only).
 	Destroy *bool `yaml:"destroy,omitempty"`
 
-	// ImportID is the provider-specific identifier for importing a resource.
-	// Can be a literal string or a Go template expression.
-	// For move operations, if omitted, it is auto-resolved from the source state.
-	ImportID string `yaml:"import_id,omitempty"`
-
-	// Provider is an optional provider alias override for import blocks.
-	Provider string `yaml:"provider,omitempty"`
+	// Imports lists the resources to import into state (import operations).
+	Imports []ImportEntry `yaml:"imports,omitempty"`
 }
 
-// Endpoint identifies a resource within a specific Terraform layer.
-type Endpoint struct {
-	// Layer is the filesystem path to the Terraform root module.
-	Layer string `yaml:"layer"`
-
-	// Address is the full Terraform resource address (e.g., "aws_instance.web",
-	// "module.vpc", or "aws_s3_bucket.data[*]" for wildcard expansion).
+// ResourceMove describes a resource to move between layers, optionally with
+// per-key routing for for_each resources.
+type ResourceMove struct {
+	// Address is the base resource address in the source layer.
+	// When AddressPrefix is set on the parent operation, it is prepended with a dot.
 	Address string `yaml:"address"`
 
-	// KeyPrefix filters wildcard expansions to only include for_each keys
-	// that start with this prefix. Only valid on source endpoints with a
-	// wildcard address (ending in [*]). When multiple move operations target
-	// the same wildcard source, each must specify a key_prefix and all keys
-	// in state must be covered by exactly one prefix.
-	KeyPrefix string `yaml:"key_prefix,omitempty"`
+	// DestinationAddress overrides the destination base address when it differs
+	// from the source Address. Defaults to Address if omitted.
+	// Also receives the AddressPrefix if set.
+	DestinationAddress string `yaml:"destination_address,omitempty"`
+
+	// Keys maps source for_each keys (or patterns) to destination keys (or templates).
+	// Key patterns:
+	//   - "exact_key"  → matches exactly that for_each key
+	//   - "prefix_*"   → matches all keys starting with "prefix_"
+	//   - "*"           → catch-all for remaining unmatched keys
+	// Values can be literal strings or Go template expressions.
+	// When present, ALL state keys must be covered (completeness enforced).
+	Keys map[string]string `yaml:"keys,omitempty"`
+
+	// ImportID is an optional provider-specific identifier for importing resources.
+	// Can be a literal string or a Go template expression.
+	// If omitted, auto-resolved from the source state's "id" attribute.
+	ImportID string `yaml:"import_id,omitempty"`
+}
+
+// RenameEntry describes a single address rename within a layer.
+type RenameEntry struct {
+	// From is the original resource address.
+	From string `yaml:"from"`
+
+	// To is the new resource address.
+	To string `yaml:"to"`
+}
+
+// ImportEntry describes a single resource to import into state.
+type ImportEntry struct {
+	// Address is the Terraform resource address to import to.
+	Address string `yaml:"address"`
+
+	// ImportID is the provider-specific identifier for the existing resource.
+	ImportID string `yaml:"import_id"`
+
+	// Provider is an optional provider alias override.
+	Provider string `yaml:"provider,omitempty"`
 }
 
 // DestroyValue returns the effective value of the Destroy field,
@@ -107,4 +138,12 @@ func (o *Operation) DestroyValue() bool {
 		return false
 	}
 	return *o.Destroy
+}
+
+// FullAddress prepends the address prefix (with a dot separator) if non-empty.
+func FullAddress(prefix, addr string) string {
+	if prefix == "" {
+		return addr
+	}
+	return prefix + "." + addr
 }

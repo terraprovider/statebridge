@@ -9,14 +9,61 @@ func TestValidate_ValidMoveOperation(t *testing.T) {
 		Description: "Valid move",
 		Operations: []Operation{
 			{
-				Type: OpMove,
-				Source: &Endpoint{
-					Layer:   "./src",
-					Address: "aws_instance.web",
+				Type:             OpMove,
+				SourceLayer:      "./src",
+				DestinationLayer: "./dst",
+				Resources: []ResourceMove{
+					{Address: "aws_instance.web"},
 				},
-				Destination: &Endpoint{
-					Layer:   "./dst",
-					Address: "aws_instance.web",
+			},
+		},
+	}
+
+	errs := Validate(mf)
+	if len(errs) != 0 {
+		t.Errorf("expected no errors, got %v", errs)
+	}
+}
+
+func TestValidate_ValidMoveWithKeys(t *testing.T) {
+	mf := &MigrationFile{
+		Description: "Valid move with keys",
+		Operations: []Operation{
+			{
+				Type:             OpMove,
+				SourceLayer:      "./src",
+				DestinationLayer: "./dst",
+				Resources: []ResourceMove{
+					{
+						Address: "aws_s3_bucket.data",
+						Keys: map[string]string{
+							"exact_key":  "new_key",
+							"prefix_*":   `{{ .Key | trimPrefix "prefix_" }}`,
+							"*":          "{{ .Key }}",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	errs := Validate(mf)
+	if len(errs) != 0 {
+		t.Errorf("expected no errors, got %v", errs)
+	}
+}
+
+func TestValidate_ValidMoveWithAddressPrefix(t *testing.T) {
+	mf := &MigrationFile{
+		Description: "Valid move with address prefix",
+		Operations: []Operation{
+			{
+				Type:             OpMove,
+				SourceLayer:      "./src",
+				DestinationLayer: "./dst",
+				AddressPrefix:    "module.identity_governance",
+				Resources: []ResourceMove{
+					{Address: "azuread_access_package_catalog.all"},
 				},
 			},
 		},
@@ -35,8 +82,9 @@ func TestValidate_ValidRenameOperation(t *testing.T) {
 			{
 				Type:  OpRename,
 				Layer: "./layers/net",
-				From:  "module.old",
-				To:    "module.new",
+				Renames: []RenameEntry{
+					{From: "module.old", To: "module.new"},
+				},
 			},
 		},
 	}
@@ -52,9 +100,9 @@ func TestValidate_ValidRemoveOperation(t *testing.T) {
 		Description: "Valid remove",
 		Operations: []Operation{
 			{
-				Type:    OpRemove,
-				Layer:   "./layers/legacy",
-				Address: "aws_iam_role.deprecated",
+				Type:      OpRemove,
+				Layer:     "./layers/legacy",
+				Addresses: []string{"aws_iam_role.deprecated"},
 			},
 		},
 	}
@@ -70,10 +118,11 @@ func TestValidate_ValidImportOperation(t *testing.T) {
 		Description: "Valid import",
 		Operations: []Operation{
 			{
-				Type:     OpImport,
-				Layer:    "./layers/db",
-				Address:  "aws_db_instance.primary",
-				ImportID: "my-db-id",
+				Type:  OpImport,
+				Layer: "./layers/db",
+				Imports: []ImportEntry{
+					{Address: "aws_db_instance.primary", ImportID: "my-db-id"},
+				},
 			},
 		},
 	}
@@ -88,9 +137,9 @@ func TestValidate_MissingDescription(t *testing.T) {
 	mf := &MigrationFile{
 		Operations: []Operation{
 			{
-				Type:    OpRemove,
-				Layer:   "./l",
-				Address: "aws_instance.x",
+				Type:      OpRemove,
+				Layer:     "./l",
+				Addresses: []string{"aws_instance.x"},
 			},
 		},
 	}
@@ -141,64 +190,134 @@ func TestValidate_MissingOperationType(t *testing.T) {
 	}
 }
 
-func TestValidate_MoveMissingSource(t *testing.T) {
+func TestValidate_MoveMissingSourceLayer(t *testing.T) {
 	mf := &MigrationFile{
 		Description: "Bad move",
 		Operations: []Operation{
 			{
-				Type: OpMove,
-				Destination: &Endpoint{
-					Layer:   "./dst",
-					Address: "aws_instance.web",
+				Type:             OpMove,
+				DestinationLayer: "./dst",
+				Resources: []ResourceMove{
+					{Address: "aws_instance.web"},
 				},
 			},
 		},
 	}
 
 	errs := Validate(mf)
-	if !hasError(errs, "source") {
-		t.Error("expected validation error for missing source")
+	if !hasError(errs, "source_layer") {
+		t.Error("expected validation error for missing source_layer")
 	}
 }
 
-func TestValidate_MoveMissingDestination(t *testing.T) {
-	mf := &MigrationFile{
-		Description: "Bad move",
-		Operations: []Operation{
-			{
-				Type: OpMove,
-				Source: &Endpoint{
-					Layer:   "./src",
-					Address: "aws_instance.web",
-				},
-			},
-		},
-	}
-
-	errs := Validate(mf)
-	if !hasError(errs, "destination") {
-		t.Error("expected validation error for missing destination")
-	}
-}
-
-func TestValidate_MoveEmptySourceFields(t *testing.T) {
+func TestValidate_MoveMissingDestinationLayer(t *testing.T) {
 	mf := &MigrationFile{
 		Description: "Bad move",
 		Operations: []Operation{
 			{
 				Type:        OpMove,
-				Source:      &Endpoint{},
-				Destination: &Endpoint{Layer: "./dst", Address: "aws_instance.web"},
+				SourceLayer: "./src",
+				Resources: []ResourceMove{
+					{Address: "aws_instance.web"},
+				},
 			},
 		},
 	}
 
 	errs := Validate(mf)
-	if !hasError(errs, "source.layer") {
-		t.Error("expected validation error for empty source.layer")
+	if !hasError(errs, "destination_layer") {
+		t.Error("expected validation error for missing destination_layer")
 	}
-	if !hasError(errs, "source.address") {
-		t.Error("expected validation error for empty source.address")
+}
+
+func TestValidate_MoveMissingResources(t *testing.T) {
+	mf := &MigrationFile{
+		Description: "Bad move",
+		Operations: []Operation{
+			{
+				Type:             OpMove,
+				SourceLayer:      "./src",
+				DestinationLayer: "./dst",
+			},
+		},
+	}
+
+	errs := Validate(mf)
+	if !hasError(errs, "resources") {
+		t.Error("expected validation error for missing resources")
+	}
+}
+
+func TestValidate_MoveResourceMissingAddress(t *testing.T) {
+	mf := &MigrationFile{
+		Description: "Bad move resource",
+		Operations: []Operation{
+			{
+				Type:             OpMove,
+				SourceLayer:      "./src",
+				DestinationLayer: "./dst",
+				Resources: []ResourceMove{
+					{Address: ""},
+				},
+			},
+		},
+	}
+
+	errs := Validate(mf)
+	if !hasError(errs, "resources[0].address") {
+		t.Error("expected validation error for missing resource address")
+	}
+}
+
+func TestValidate_InvalidKeyPattern_WildcardInMiddle(t *testing.T) {
+	mf := &MigrationFile{
+		Description: "Bad key pattern",
+		Operations: []Operation{
+			{
+				Type:             OpMove,
+				SourceLayer:      "./src",
+				DestinationLayer: "./dst",
+				Resources: []ResourceMove{
+					{
+						Address: "resource.all",
+						Keys: map[string]string{
+							"pre*fix": "value",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	errs := Validate(mf)
+	if !hasError(errs, "resources[0].keys") {
+		t.Error("expected validation error for wildcard in middle of key pattern")
+	}
+}
+
+func TestValidate_InvalidKeyPattern_MultipleWildcards(t *testing.T) {
+	mf := &MigrationFile{
+		Description: "Bad key pattern",
+		Operations: []Operation{
+			{
+				Type:             OpMove,
+				SourceLayer:      "./src",
+				DestinationLayer: "./dst",
+				Resources: []ResourceMove{
+					{
+						Address: "resource.all",
+						Keys: map[string]string{
+							"*prefix*": "value",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	errs := Validate(mf)
+	if !hasError(errs, "resources[0].keys") {
+		t.Error("expected validation error for multiple wildcards in key pattern")
 	}
 }
 
@@ -214,10 +333,28 @@ func TestValidate_RenameMissingFields(t *testing.T) {
 	if !hasError(errs, "layer") {
 		t.Error("expected validation error for missing layer")
 	}
-	if !hasError(errs, "from") {
+	if !hasError(errs, "renames") {
+		t.Error("expected validation error for missing renames")
+	}
+}
+
+func TestValidate_RenameEntryMissingFields(t *testing.T) {
+	mf := &MigrationFile{
+		Description: "Bad rename entry",
+		Operations: []Operation{
+			{
+				Type:    OpRename,
+				Layer:   "./layers/net",
+				Renames: []RenameEntry{{From: "", To: ""}},
+			},
+		},
+	}
+
+	errs := Validate(mf)
+	if !hasError(errs, "renames[0].from") {
 		t.Error("expected validation error for missing from")
 	}
-	if !hasError(errs, "to") {
+	if !hasError(errs, "renames[0].to") {
 		t.Error("expected validation error for missing to")
 	}
 }
@@ -234,8 +371,8 @@ func TestValidate_RemoveMissingFields(t *testing.T) {
 	if !hasError(errs, "layer") {
 		t.Error("expected validation error for missing layer")
 	}
-	if !hasError(errs, "address") {
-		t.Error("expected validation error for missing address")
+	if !hasError(errs, "addresses") {
+		t.Error("expected validation error for missing addresses")
 	}
 }
 
@@ -251,10 +388,28 @@ func TestValidate_ImportMissingFields(t *testing.T) {
 	if !hasError(errs, "layer") {
 		t.Error("expected validation error for missing layer")
 	}
-	if !hasError(errs, "address") {
-		t.Error("expected validation error for missing address")
+	if !hasError(errs, "imports") {
+		t.Error("expected validation error for missing imports")
 	}
-	if !hasError(errs, "import_id") {
+}
+
+func TestValidate_ImportEntryMissingFields(t *testing.T) {
+	mf := &MigrationFile{
+		Description: "Bad import entry",
+		Operations: []Operation{
+			{
+				Type:    OpImport,
+				Layer:   "./layers/db",
+				Imports: []ImportEntry{{Address: "", ImportID: ""}},
+			},
+		},
+	}
+
+	errs := Validate(mf)
+	if !hasError(errs, "imports[0].address") {
+		t.Error("expected validation error for missing import address")
+	}
+	if !hasError(errs, "imports[0].import_id") {
 		t.Error("expected validation error for missing import_id")
 	}
 }
@@ -269,7 +424,7 @@ func TestValidate_MultipleErrors(t *testing.T) {
 	}
 
 	errs := Validate(mf)
-	// At least: missing description + move missing source/dest + invalid type + rename missing fields
+	// At least: missing description + move missing fields + invalid type + rename missing fields
 	if len(errs) < 4 {
 		t.Errorf("expected at least 4 errors, got %d: %v", len(errs), errs)
 	}
@@ -284,8 +439,8 @@ func TestValidationError_Error(t *testing.T) {
 	}
 
 	// Operation-level error
-	e = ValidationError{OperationIndex: 2, Field: "source", Message: "missing"}
-	expected = "validation error in operation[2]: source: missing"
+	e = ValidationError{OperationIndex: 2, Field: "source_layer", Message: "missing"}
+	expected = "validation error in operation[2]: source_layer: missing"
 	if e.Error() != expected {
 		t.Errorf("expected %q, got %q", expected, e.Error())
 	}
@@ -299,153 +454,4 @@ func hasError(errs []ValidationError, field string) bool {
 		}
 	}
 	return false
-}
-
-func TestValidate_KeyPrefixOnNonWildcard(t *testing.T) {
-	mf := &MigrationFile{
-		Description: "Bad key_prefix",
-		Operations: []Operation{
-			{
-				Type: OpMove,
-				Source: &Endpoint{
-					Layer:     "./src",
-					Address:   "aws_instance.web",
-					KeyPrefix: "prod_",
-				},
-				Destination: &Endpoint{
-					Layer:   "./dst",
-					Address: "aws_instance.web",
-				},
-			},
-		},
-	}
-
-	errs := Validate(mf)
-	if !hasError(errs, "source.key_prefix") {
-		t.Error("expected validation error for key_prefix on non-wildcard address")
-	}
-}
-
-func TestValidate_KeyPrefixOnDestination(t *testing.T) {
-	mf := &MigrationFile{
-		Description: "Bad key_prefix on dest",
-		Operations: []Operation{
-			{
-				Type: OpMove,
-				Source: &Endpoint{
-					Layer:   "./src",
-					Address: "aws_resource.items[*]",
-				},
-				Destination: &Endpoint{
-					Layer:     "./dst",
-					Address:   "aws_resource.items",
-					KeyPrefix: "prod_",
-				},
-			},
-		},
-	}
-
-	errs := Validate(mf)
-	if !hasError(errs, "destination.key_prefix") {
-		t.Error("expected validation error for key_prefix on destination endpoint")
-	}
-}
-
-func TestValidate_KeyPrefixValid(t *testing.T) {
-	mf := &MigrationFile{
-		Description: "Valid key_prefix",
-		Operations: []Operation{
-			{
-				Type: OpMove,
-				Source: &Endpoint{
-					Layer:     "./src",
-					Address:   "aws_resource.items[*]",
-					KeyPrefix: "prod_",
-				},
-				Destination: &Endpoint{
-					Layer:   "./dst",
-					Address: `aws_resource.items["{{ .Key }}"]`,
-				},
-			},
-		},
-	}
-
-	errs := Validate(mf)
-	if len(errs) != 0 {
-		t.Errorf("expected no errors, got %v", errs)
-	}
-}
-
-func TestValidate_KeyPrefixConsistency_AllPrefixed(t *testing.T) {
-	mf := &MigrationFile{
-		Description: "Two prefixed moves",
-		Operations: []Operation{
-			{
-				Type: OpMove,
-				Source: &Endpoint{
-					Layer:     "./src",
-					Address:   "aws_resource.items[*]",
-					KeyPrefix: "eng_",
-				},
-				Destination: &Endpoint{
-					Layer:   "./dst1",
-					Address: `aws_resource.items["{{ .Key }}"]`,
-				},
-			},
-			{
-				Type: OpMove,
-				Source: &Endpoint{
-					Layer:     "./src",
-					Address:   "aws_resource.items[*]",
-					KeyPrefix: "fin_",
-				},
-				Destination: &Endpoint{
-					Layer:   "./dst2",
-					Address: `aws_resource.items["{{ .Key }}"]`,
-				},
-			},
-		},
-	}
-
-	errs := Validate(mf)
-	if len(errs) != 0 {
-		t.Errorf("expected no errors for two prefixed moves, got %v", errs)
-	}
-}
-
-func TestValidate_KeyPrefixConsistency_MixedFiltered(t *testing.T) {
-	mf := &MigrationFile{
-		Description: "Mixed prefix moves",
-		Operations: []Operation{
-			{
-				Type: OpMove,
-				Source: &Endpoint{
-					Layer:     "./src",
-					Address:   "aws_resource.items[*]",
-					KeyPrefix: "eng_",
-				},
-				Destination: &Endpoint{
-					Layer:   "./dst1",
-					Address: `aws_resource.items["{{ .Key }}"]`,
-				},
-			},
-			{
-				Type: OpMove,
-				Source: &Endpoint{
-					Layer:   "./src",
-					Address: "aws_resource.items[*]",
-					// Missing key_prefix — should error
-				},
-				Destination: &Endpoint{
-					Layer:   "./dst2",
-					Address: `aws_resource.items["{{ .Key }}"]`,
-				},
-			},
-		},
-	}
-
-	errs := Validate(mf)
-	if !hasError(errs, "source.key_prefix") {
-		t.Error("expected validation error for mixed prefixed/non-prefixed wildcard moves")
-	}
 }

@@ -6,8 +6,8 @@ import (
 	"strings"
 )
 
-// wildcardSourceKey identifies a unique wildcard move source by its layer
-// path and base resource address (without the [*] suffix).
+// wildcardSourceKey identifies a unique for_each move source by its layer
+// path and base resource address.
 type wildcardSourceKey struct {
 	layer    string
 	baseAddr string
@@ -28,14 +28,14 @@ type wildcardGroup struct {
 	removedEmitted bool
 
 	// prefixFiltered indicates that at least one operation in this group
-	// uses key_prefix filtering, which activates the completeness check.
+	// uses a keys map, which activates the completeness check.
 	prefixFiltered bool
 }
 
-// wildcardTracker coordinates multiple wildcard move operations that target
+// wildcardTracker coordinates multiple keyed move operations that target
 // the same source resource. It handles:
 //   - Deduplication of removed blocks (only one per source resource)
-//   - Key claim tracking to detect overlapping prefixes
+//   - Key claim tracking to detect overlapping key patterns
 //   - Completeness verification to ensure all state keys are covered
 type wildcardTracker struct {
 	groups map[wildcardSourceKey]*wildcardGroup
@@ -71,7 +71,7 @@ func (t *wildcardTracker) setAllKeys(key wildcardSourceKey, keys []string) {
 	}
 }
 
-// markPrefixFiltered flags that the given source uses prefix-based filtering,
+// markPrefixFiltered flags that the given source uses keyed moves,
 // which activates the completeness check for that source.
 func (t *wildcardTracker) markPrefixFiltered(key wildcardSourceKey) {
 	t.getOrCreateGroup(key).prefixFiltered = true

@@ -3,15 +3,14 @@ package engine
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/redtenant/tfmigrate/pkg/state"
 	tmpl "github.com/redtenant/tfmigrate/pkg/template"
 )
 
-// Resolver handles import ID resolution and wildcard expansion.
+// Resolver handles import ID resolution, template evaluation, and state lookups.
 // It uses a StateReader to look up resource information from Terraform state
-// and a template engine to evaluate address and import ID expressions.
+// and the template package to evaluate address and import ID expressions.
 type Resolver struct {
 	stateReader state.StateReader
 }
@@ -19,6 +18,57 @@ type Resolver struct {
 // NewResolver creates a Resolver with the given StateReader.
 func NewResolver(sr state.StateReader) *Resolver {
 	return &Resolver{stateReader: sr}
+}
+
+// LookupResources returns all for_each instances of a resource from state.
+// The baseAddr should be the resource address without any key suffix
+// (e.g., "aws_s3_bucket.data", not "aws_s3_bucket.data[*]").
+func (r *Resolver) LookupResources(
+	ctx context.Context,
+	layerPath string,
+	baseAddr string,
+) ([]*state.ResourceInfo, error) {
+	s, err := r.stateReader.ReadState(ctx, layerPath)
+	if err != nil {
+		return nil, fmt.Errorf("reading state for layer %q: %w", layerPath, err)
+	}
+
+	resources, err := state.LookupResourcesByPrefix(s, baseAddr)
+	if err != nil {
+		return nil, fmt.Errorf("looking up resources for %q: %w", baseAddr, err)
+	}
+
+	return resources, nil
+}
+
+// LookupResource returns a single (non-for_each) resource from state.
+func (r *Resolver) LookupResource(
+	ctx context.Context,
+	layerPath string,
+	address string,
+) (*state.ResourceInfo, error) {
+	s, err := r.stateReader.ReadState(ctx, layerPath)
+	if err != nil {
+		return nil, fmt.Errorf("reading state for layer %q: %w", layerPath, err)
+	}
+
+	resource, err := state.LookupResource(s, address)
+	if err != nil {
+		return nil, fmt.Errorf("looking up resource %q: %w", address, err)
+	}
+
+	return resource, nil
+}
+
+// EvaluateTemplate evaluates a Go template expression using the given resource
+// as context. Returns the rendered string. If the expression contains no
+// template directives ({{ }}), it is returned as-is.
+func (r *Resolver) EvaluateTemplate(expr string, resource *state.ResourceInfo) (string, error) {
+	if !tmpl.IsTemplate(expr) {
+		return expr, nil
+	}
+	ctx := buildTemplateContext(resource)
+	return tmpl.Evaluate(expr, ctx)
 }
 
 // ResolveImportID determines the import ID for a resource instance.
@@ -39,149 +89,6 @@ func (r *Resolver) ResolveImportID(resource *state.ResourceInfo, importIDExpr st
 	}
 
 	return importIDExpr, nil
-}
-
-// ExpandWildcard expands a wildcard source address (ending with [*]) against
-// state, resolves the destination address and import ID for each instance
-// using Go templates, and returns the expanded instances.
-// When keyPrefix is non-empty, only resources whose Key starts with the
-// prefix are included in the expansion.
-func (r *Resolver) ExpandWildcard(
-	ctx context.Context,
-	sourceLayerPath string,
-	sourceAddress string,
-	destAddressExpr string,
-	importIDExpr string,
-	keyPrefix string,
-) ([]ExpandedInstance, error) {
-	baseAddr := BaseAddress(sourceAddress)
-
-	s, err := r.stateReader.ReadState(ctx, sourceLayerPath)
-	if err != nil {
-		return nil, fmt.Errorf("reading state for layer %q: %w", sourceLayerPath, err)
-	}
-
-	resources, err := state.LookupResourcesByPrefix(s, baseAddr)
-	if err != nil {
-		return nil, fmt.Errorf("expanding wildcard %q: %w", sourceAddress, err)
-	}
-
-	// Filter by key prefix if specified.
-	if keyPrefix != "" {
-		var filtered []*state.ResourceInfo
-		for _, res := range resources {
-			if strings.HasPrefix(res.Key, keyPrefix) {
-				filtered = append(filtered, res)
-			}
-		}
-		resources = filtered
-	}
-
-	var instances []ExpandedInstance
-	for _, res := range resources {
-		tctx := buildTemplateContext(res)
-
-		destAddr, err := r.resolveAddress(destAddressExpr, tctx)
-		if err != nil {
-			return nil, fmt.Errorf("resolving destination address for %q: %w", res.Address, err)
-		}
-
-		importID, err := r.ResolveImportID(res, importIDExpr)
-		if err != nil {
-			return nil, fmt.Errorf("resolving import ID for %q: %w", res.Address, err)
-		}
-
-		instances = append(instances, ExpandedInstance{
-			SourceResource: res,
-			DestAddress:    destAddr,
-			ImportID:       importID,
-		})
-	}
-
-	return instances, nil
-}
-
-// LookupWildcardKeys returns all for_each keys from state for a wildcard
-// source address. This is used by the wildcard tracker to verify completeness
-// when prefix-filtered moves are used.
-func (r *Resolver) LookupWildcardKeys(
-	ctx context.Context,
-	sourceLayerPath string,
-	sourceAddress string,
-) ([]string, error) {
-	baseAddr := BaseAddress(sourceAddress)
-
-	s, err := r.stateReader.ReadState(ctx, sourceLayerPath)
-	if err != nil {
-		return nil, fmt.Errorf("reading state for layer %q: %w", sourceLayerPath, err)
-	}
-
-	resources, err := state.LookupResourcesByPrefix(s, baseAddr)
-	if err != nil {
-		return nil, fmt.Errorf("looking up keys for %q: %w", sourceAddress, err)
-	}
-
-	keys := make([]string, 0, len(resources))
-	for _, res := range resources {
-		keys = append(keys, res.Key)
-	}
-
-	return keys, nil
-}
-
-// ResolveSingleMove resolves a non-wildcard move operation, looking up the
-// source resource in state to extract its import ID if needed.
-func (r *Resolver) ResolveSingleMove(
-	ctx context.Context,
-	sourceLayerPath string,
-	sourceAddress string,
-	destAddress string,
-	importIDExpr string,
-) (*ExpandedInstance, error) {
-	s, err := r.stateReader.ReadState(ctx, sourceLayerPath)
-	if err != nil {
-		return nil, fmt.Errorf("reading state for layer %q: %w", sourceLayerPath, err)
-	}
-
-	resource, err := state.LookupResource(s, sourceAddress)
-	if err != nil {
-		// If import_id is explicitly provided, we don't need the resource in state
-		if importIDExpr != "" && !tmpl.IsTemplate(importIDExpr) {
-			return &ExpandedInstance{
-				SourceResource: &state.ResourceInfo{Address: sourceAddress},
-				DestAddress:    destAddress,
-				ImportID:       importIDExpr,
-			}, nil
-		}
-		return nil, fmt.Errorf("looking up resource %q in state: %w", sourceAddress, err)
-	}
-
-	tctx := buildTemplateContext(resource)
-
-	resolvedDest, err := r.resolveAddress(destAddress, tctx)
-	if err != nil {
-		return nil, fmt.Errorf("resolving destination address: %w", err)
-	}
-
-	importID, err := r.ResolveImportID(resource, importIDExpr)
-	if err != nil {
-		return nil, fmt.Errorf("resolving import ID: %w", err)
-	}
-
-	return &ExpandedInstance{
-		SourceResource: resource,
-		DestAddress:    resolvedDest,
-		ImportID:       importID,
-	}, nil
-}
-
-// resolveAddress evaluates an address expression, which may be a literal
-// or a Go template.
-func (r *Resolver) resolveAddress(addrExpr string, tctx *tmpl.TemplateContext) (string, error) {
-	if tmpl.IsTemplate(addrExpr) {
-		return tmpl.Evaluate(addrExpr, tctx)
-	}
-	return addrExpr, nil
 }
 
 // importIDFromState extracts the import ID from a resource's state attributes.
@@ -218,4 +125,17 @@ func buildTemplateContext(res *state.ResourceInfo) *tmpl.TemplateContext {
 		Key:        res.Key,
 		Attributes: res.Attributes,
 	}
+}
+
+// ExpandedInstance represents a single resource instance produced by expanding
+// a keyed resource against state.
+type ExpandedInstance struct {
+	// SourceResource is the resource info from the source state.
+	SourceResource *state.ResourceInfo
+
+	// DestAddress is the rendered destination address for this instance.
+	DestAddress string
+
+	// ImportID is the resolved import ID for this instance.
+	ImportID string
 }

@@ -25,117 +25,149 @@ Every migration file has this top-level structure:
 
 ```yaml
 description: "<required: what this migration does>"
-schema_version: "1"  # optional
+schema_version: "2"  # optional
 operations:
   - type: <move|rename|remove|import>
     # ... fields depend on type
 ```
 
+### Common Field: `address_prefix`
+
+All operation types support an optional `address_prefix` field that is prepended (with a dot `.` separator) to all resource addresses in the operation. Useful for factoring out common module paths:
+
+```yaml
+- type: move
+  address_prefix: "module.identity_governance"
+  resources:
+    - address: "azuread_access_package.all"
+    # Resolved address: module.identity_governance.azuread_access_package.all
+```
+
 ### Operation: `move`
 
-Moves a resource between two layers. Generates `removed` in source + `import` in destination.
+Moves resources between two layers. Generates `removed` in source + `import` in destination.
 
-Required fields: `source.layer`, `source.address`, `destination.layer`, `destination.address`
-Optional fields: `description`, `import_id` (auto-resolved from state if omitted), `source.key_prefix`
+Required fields: `source_layer`, `destination_layer`, `resources` (non-empty list)
+Each resource requires: `address`
+Optional fields: `description`, `address_prefix`, per-resource `destination_address`, `keys`, `import_id`
+
+**Simple move (single or non-for_each resource):**
 
 ```yaml
 - type: move
   description: "Move web server to app layer"
-  source:
-    layer: "./layers/compute"
-    address: "aws_instance.web"
-  destination:
-    layer: "./layers/app"
-    address: "aws_instance.web"
-  import_id: "i-0abc123def456"  # omit to auto-resolve from source state
+  source_layer: "./layers/compute"
+  destination_layer: "./layers/app"
+  resources:
+    - address: "aws_instance.web"
+      import_id: "i-0abc123def456"  # omit to auto-resolve from source state
 ```
 
-**Wildcard moves** — use `[*]` suffix on the source address to expand all for_each/count instances. Combine with Go templates in the destination address and import_id. A wildcard move generates a **single** `removed` block for the base resource address (without instance keys) in the source layer, plus individual `import` blocks per instance in the destination layer:
+**Keyed move (for_each resource with key mapping):**
 
 ```yaml
 - type: move
-  source:
-    layer: "./layers/old"
-    address: "aws_s3_bucket.data[*]"
-  destination:
-    layer: "./layers/new"
-    address: 'aws_s3_bucket.data["{{ .Attributes.bucket }}"]'
-  import_id: "{{ .Attributes.id }}"
+  source_layer: "./layers/old"
+  destination_layer: "./layers/new"
+  resources:
+    - address: "azuread_access_package_catalog.all"
+      keys:
+        mrt_customer: customer_approval               # exact key → exact key
+        mrt_outbound_provisioning: resource_tenant_access
+        mrt_privileged_access: privileged_access
+        mrt_vaw: vaw
 ```
 
-**Prefix-filtered wildcard moves** — use `source.key_prefix` to filter keys by prefix when multiple move operations split a single resource across destinations. All keys must be covered; overlap is an error:
+**Key pattern types:**
+
+| Pattern | Meaning | Example |
+|---|---|---|
+| `exact_key` | Matches exactly that for_each key | `mrt_customer: customer_approval` |
+| `prefix_*` | Matches all keys starting with `prefix_` | `"eng_*": '{{ .Key \| trimPrefix "eng_" }}'` |
+| `*` | Catch-all: matches all remaining keys | `"*": '{{ .Key }}'` |
+
+Match priority: exact > longest prefix > catch-all.
+
+**Completeness rules:**
+- When `keys` is present, ALL state keys must be matched. Unmatched keys cause an error.
+- Overlapping key claims across operations cause an error.
+- Same source resource can appear in multiple operations with different destination layers.
+
+**Without `keys` map:**
+- Single resource: generates one `removed` + one `import`
+- For_each resource: expands all instances with same keys
+
+**`destination_address`** — Override when the destination base address differs from source:
 
 ```yaml
-- type: move
-  source:
-    layer: "./layers/old"
-    address: "aws_resource.items[*]"
-    key_prefix: "engineering_"
-  destination:
-    layer: "./layers/engineering"
-    address: 'aws_resource.items["{{ .Key | trimPrefix "engineering_" }}"]'
-  import_id: "{{ .Attributes.id }}"
-- type: move
-  source:
-    layer: "./layers/old"
-    address: "aws_resource.items[*]"
-    key_prefix: "finance_"
-  destination:
-    layer: "./layers/finance"
-    address: 'aws_resource.items["{{ .Key | trimPrefix "finance_" }}"]'
-  import_id: "{{ .Attributes.id }}"
+resources:
+  - address: "module.old.resource.all"
+    destination_address: "module.new.resource.all"
+    keys:
+      key1: key1
 ```
 
 ### Operation: `rename`
 
-Renames a resource within a single layer. Generates a `moved` block.
+Renames resources within a single layer. Generates `moved` blocks.
 
-Required fields: `layer`, `from`, `to`
+Required fields: `layer`, `renames` (non-empty list)
+Each rename requires: `from`, `to`
 
 ```yaml
 - type: rename
-  description: "Rename VPC module"
+  description: "Rename VPC module and subnets"
   layer: "./layers/networking"
-  from: "module.old_vpc"
-  to: "module.new_vpc"
+  address_prefix: "module.vpc"               # optional
+  renames:
+    - from: "aws_subnet.old"
+      to: "aws_subnet.new"
+    - from: "aws_route_table.legacy"
+      to: "aws_route_table.main"
 ```
 
 ### Operation: `remove`
 
-Removes a resource from state. Generates a `removed` block. Default: `destroy = false` (keeps infrastructure).
+Removes resources from state. Generates `removed` blocks. Default: `destroy = false` (keeps infrastructure).
 
-Required fields: `layer`, `address`
-Optional fields: `description`, `destroy` (default: false)
+Required fields: `layer`, `addresses` (non-empty list)
+Optional fields: `destroy` (default: false)
 
 ```yaml
 - type: remove
-  description: "Stop managing deprecated role"
+  description: "Stop managing deprecated resources"
   layer: "./layers/iam"
-  address: "aws_iam_role.deprecated"
   destroy: false
+  addresses:
+    - "aws_iam_role.deprecated"
+    - "aws_iam_policy.old_policy"
 ```
 
 ### Operation: `import`
 
-Imports an existing resource into state. Generates an `import` block.
+Imports existing resources into state. Generates `import` blocks.
 
-Required fields: `layer`, `address`, `import_id`
-Optional fields: `description`, `provider`
+Required fields: `layer`, `imports` (non-empty list)
+Each import requires: `address`, `import_id`
+Optional per-import: `provider`
 
 ```yaml
 - type: import
-  description: "Import existing database"
+  description: "Import existing databases"
   layer: "./layers/database"
-  address: "aws_db_instance.primary"
-  import_id: "my-database-identifier"
-  provider: "aws.useast1"
+  imports:
+    - address: "aws_db_instance.primary"
+      import_id: "my-database-identifier"
+      provider: "aws.useast1"
+    - address: "aws_db_instance.replica"
+      import_id: "my-replica-identifier"
 ```
 
 ---
 
 ## Go Template Reference
 
-Templates can be used in `destination.address` and `import_id` fields for move operations. They are evaluated once per resource instance (relevant for wildcard `[*]` expansions).
+Templates can be used in `keys` map values and `import_id` fields. They are evaluated once per matched resource instance.
 
 ### Context Variables
 
@@ -174,7 +206,7 @@ All string functions are pipe-compatible (input comes last).
 **Regex:**
 - `{{ .Key | regexReplace "[^a-z0-9]+" "_" }}` — regex-based replacement
 
-**Key sanitization** (mirrors Terraform's `lower(replace(format(...), "/[^a-zA-Z0-9]+/", "_"))`):
+**Key sanitization:**
 - `{{ .Key | sanitizeKey }}` — lowercase + replace non-alphanumeric runs with `_` + trim edges
 - `{{ formatKey "%s_%s" .Attributes.pkg .Attributes.role }}` — `printf` + `sanitizeKey` in one step
 
@@ -193,33 +225,58 @@ Use these patterns to translate natural language into the correct YAML.
 
 ```yaml
 - type: move
-  source:
-    layer: "<layer A path>"
-    address: "<resource address>"
-  destination:
-    layer: "<layer B path>"
-    address: "<resource address>"
+  source_layer: "<layer A path>"
+  destination_layer: "<layer B path>"
+  resources:
+    - address: "<resource address>"
 ```
 
-If the user provides a specific import ID, include `import_id`. Otherwise omit it (auto-resolved from state).
+If the user provides a specific import ID, add `import_id` to the resource. Otherwise omit it (auto-resolved from state).
+
+### "Move multiple resources between layers"
+
+```yaml
+- type: move
+  source_layer: "<source>"
+  destination_layer: "<destination>"
+  address_prefix: "<common module path>"     # if resources share a prefix
+  resources:
+    - address: "<resource 1>"
+    - address: "<resource 2>"
+    - address: "<resource 3>"
+```
 
 ### "Rename X to Y in layer A"
 
 ```yaml
 - type: rename
   layer: "<layer A path>"
-  from: "<old address>"
-  to: "<new address>"
+  renames:
+    - from: "<old address>"
+      to: "<new address>"
 ```
 
-Works for resources (`aws_instance.old` → `aws_instance.new`), modules (`module.old` → `module.new`), and for_each key changes (`aws_instance.x["old-key"]` → `aws_instance.x["new-key"]`).
+Works for resources, modules, and for_each key changes.
+
+### "Multiple renames in one layer"
+
+```yaml
+- type: rename
+  layer: "<layer path>"
+  renames:
+    - from: "<old 1>"
+      to: "<new 1>"
+    - from: "<old 2>"
+      to: "<new 2>"
+```
 
 ### "Remove X from layer A" / "Stop managing X"
 
 ```yaml
 - type: remove
   layer: "<layer A path>"
-  address: "<resource address>"
+  addresses:
+    - "<resource address>"
 ```
 
 If the user says "delete" or "destroy", set `destroy: true`. If they say "remove from state" or "stop managing", use the default `destroy: false`.
@@ -229,67 +286,63 @@ If the user says "delete" or "destroy", set `destroy: true`. If they say "remove
 ```yaml
 - type: import
   layer: "<layer A path>"
-  address: "<resource address>"
-  import_id: "<cloud resource ID>"
+  imports:
+    - address: "<resource address>"
+      import_id: "<cloud resource ID>"
 ```
 
 The user must provide the import ID (ARN, resource ID, etc.) or you must ask for it.
 
-### "Re-key all X resources" / "Change the for_each key"
+### "Re-key for_each resources" / "Rename instance keys"
 
-Use wildcard `[*]` with a template:
+Use a keyed move with exact key mappings:
 
 ```yaml
 - type: move
-  source:
-    layer: "<layer path>"
-    address: "<resource>[*]"
-  destination:
-    layer: "<layer path>"        # can be the same layer
-    address: '<resource>["{{ <template expression> }}"]'
-  import_id: "{{ .Attributes.id }}"
+  source_layer: "<layer path>"
+  destination_layer: "<layer path>"          # can be the same layer
+  resources:
+    - address: "<resource>.all"
+      keys:
+        old_key_1: new_key_1
+        old_key_2: new_key_2
 ```
 
-### "Move everything of type X from A to B"
+### "Move all instances of a for_each resource"
 
-Use wildcard for all instances:
+Without a `keys` map, all instances are moved with the same keys:
 
 ```yaml
 - type: move
-  source:
-    layer: "<layer A>"
-    address: "<resource_type>.<name>[*]"
-  destination:
-    layer: "<layer B>"
-    address: '<resource_type>.<name>["{{ .Key }}"]'
+  source_layer: "<source>"
+  destination_layer: "<destination>"
+  resources:
+    - address: "<resource_type>.<name>"
 ```
 
 ### "Split resource by key prefix" / "Route different for_each keys to different layers"
 
-Use multiple wildcard moves with `key_prefix`:
+Use multiple move operations with prefix patterns:
 
 ```yaml
-- type: move
-  source:
-    layer: "<source layer>"
-    address: "<resource>[*]"
-    key_prefix: "<prefix_a>"
-  destination:
-    layer: "<layer A>"
-    address: '<resource>["{{ .Key | trimPrefix "<prefix_a>" }}"]'
-  import_id: "{{ .Attributes.id }}"
-- type: move
-  source:
-    layer: "<source layer>"
-    address: "<resource>[*]"
-    key_prefix: "<prefix_b>"
-  destination:
-    layer: "<layer B>"
-    address: '<resource>["{{ .Key | trimPrefix "<prefix_b>" }}"]'
-  import_id: "{{ .Attributes.id }}"
+operations:
+  - type: move
+    source_layer: "<source layer>"
+    destination_layer: "<layer A>"
+    resources:
+      - address: "<resource>.all"
+        keys:
+          "<prefix_a>_*": '{{ .Key | trimPrefix "<prefix_a>_" }}'
+  - type: move
+    source_layer: "<source layer>"
+    destination_layer: "<layer B>"
+    resources:
+      - address: "<resource>.all"
+        keys:
+          "<prefix_b>_*": '{{ .Key | trimPrefix "<prefix_b>_" }}'
 ```
 
-All keys in the source state must be covered by exactly one prefix. The user must provide the prefixes or you must ask for them.
+All keys in the source state must be collectively covered by the operations. The user must provide the prefixes or you must ask for them.
 
 ---
 
@@ -300,18 +353,16 @@ When generating YAML, ensure:
 1. `description` at the top level is always present
 2. `operations` list is non-empty
 3. Every operation has a `type` field
-4. `move` requires both `source` and `destination`, each with `layer` and `address`
-5. `rename` requires `layer`, `from`, and `to`
-6. `remove` requires `layer` and `address`
-7. `import` requires `layer`, `address`, and `import_id`
-8. Template expressions (`{{ }}`) are only valid in `destination.address` and `import_id` of move operations
-9. Wildcard `[*]` is only valid in `source.address` of move operations
-10. Layer paths are relative to where `tfmigrate generate` is run
-11. `key_prefix` is only valid on `source` endpoints of move operations with wildcard addresses (`[*]`)
-12. `key_prefix` is not allowed on `destination` endpoints
-13. When multiple move operations target the same wildcard source, all must specify `key_prefix` — mixing filtered and unfiltered is not allowed
-14. When `key_prefix` is used, all keys in the source state must be covered by at least one prefix (completeness check)
-15. A key matching multiple operations' prefixes is an overlap error
+4. `move` requires `source_layer`, `destination_layer`, and non-empty `resources` list
+5. Each resource requires `address`
+6. `keys` map entries: `*` only at the end of a pattern (e.g., `"prefix_*"`)
+7. `rename` requires `layer` and non-empty `renames` list; each entry requires `from` and `to`
+8. `remove` requires `layer` and non-empty `addresses` list
+9. `import` requires `layer` and non-empty `imports` list; each entry requires `address` and `import_id`
+10. Template expressions (`{{ }}`) are only valid in `keys` map values and `import_id` fields
+11. Layer paths are relative to where `tfmigrate generate` is run
+12. When `keys` is present, all state keys must be covered (completeness check)
+13. A key matching multiple operations is an overlap error
 
 ## File Naming Convention
 
@@ -354,6 +405,8 @@ Key source files for understanding the codebase:
 - `pkg/template/funcs.go` — available template functions
 - `pkg/template/template.go` — template evaluation logic
 - `pkg/engine/engine.go` — orchestration pipeline
-- `pkg/engine/resolver.go` — import ID resolution and wildcard expansion
+- `pkg/engine/keymatcher.go` — key pattern matching (exact, prefix, catch-all)
+- `pkg/engine/resolver.go` — import ID resolution and state lookups
+- `pkg/engine/tracker.go` — cross-operation key tracking and completeness checking
 - `pkg/generator/` — HCL block rendering (import, moved, removed)
 - `cmd/generate.go` — CLI entry point
