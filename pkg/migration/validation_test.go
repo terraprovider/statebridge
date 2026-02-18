@@ -300,3 +300,152 @@ func hasError(errs []ValidationError, field string) bool {
 	}
 	return false
 }
+
+func TestValidate_KeyPrefixOnNonWildcard(t *testing.T) {
+	mf := &MigrationFile{
+		Description: "Bad key_prefix",
+		Operations: []Operation{
+			{
+				Type: OpMove,
+				Source: &Endpoint{
+					Layer:     "./src",
+					Address:   "aws_instance.web",
+					KeyPrefix: "prod_",
+				},
+				Destination: &Endpoint{
+					Layer:   "./dst",
+					Address: "aws_instance.web",
+				},
+			},
+		},
+	}
+
+	errs := Validate(mf)
+	if !hasError(errs, "source.key_prefix") {
+		t.Error("expected validation error for key_prefix on non-wildcard address")
+	}
+}
+
+func TestValidate_KeyPrefixOnDestination(t *testing.T) {
+	mf := &MigrationFile{
+		Description: "Bad key_prefix on dest",
+		Operations: []Operation{
+			{
+				Type: OpMove,
+				Source: &Endpoint{
+					Layer:   "./src",
+					Address: "aws_resource.items[*]",
+				},
+				Destination: &Endpoint{
+					Layer:     "./dst",
+					Address:   "aws_resource.items",
+					KeyPrefix: "prod_",
+				},
+			},
+		},
+	}
+
+	errs := Validate(mf)
+	if !hasError(errs, "destination.key_prefix") {
+		t.Error("expected validation error for key_prefix on destination endpoint")
+	}
+}
+
+func TestValidate_KeyPrefixValid(t *testing.T) {
+	mf := &MigrationFile{
+		Description: "Valid key_prefix",
+		Operations: []Operation{
+			{
+				Type: OpMove,
+				Source: &Endpoint{
+					Layer:     "./src",
+					Address:   "aws_resource.items[*]",
+					KeyPrefix: "prod_",
+				},
+				Destination: &Endpoint{
+					Layer:   "./dst",
+					Address: `aws_resource.items["{{ .Key }}"]`,
+				},
+			},
+		},
+	}
+
+	errs := Validate(mf)
+	if len(errs) != 0 {
+		t.Errorf("expected no errors, got %v", errs)
+	}
+}
+
+func TestValidate_KeyPrefixConsistency_AllPrefixed(t *testing.T) {
+	mf := &MigrationFile{
+		Description: "Two prefixed moves",
+		Operations: []Operation{
+			{
+				Type: OpMove,
+				Source: &Endpoint{
+					Layer:     "./src",
+					Address:   "aws_resource.items[*]",
+					KeyPrefix: "eng_",
+				},
+				Destination: &Endpoint{
+					Layer:   "./dst1",
+					Address: `aws_resource.items["{{ .Key }}"]`,
+				},
+			},
+			{
+				Type: OpMove,
+				Source: &Endpoint{
+					Layer:     "./src",
+					Address:   "aws_resource.items[*]",
+					KeyPrefix: "fin_",
+				},
+				Destination: &Endpoint{
+					Layer:   "./dst2",
+					Address: `aws_resource.items["{{ .Key }}"]`,
+				},
+			},
+		},
+	}
+
+	errs := Validate(mf)
+	if len(errs) != 0 {
+		t.Errorf("expected no errors for two prefixed moves, got %v", errs)
+	}
+}
+
+func TestValidate_KeyPrefixConsistency_MixedFiltered(t *testing.T) {
+	mf := &MigrationFile{
+		Description: "Mixed prefix moves",
+		Operations: []Operation{
+			{
+				Type: OpMove,
+				Source: &Endpoint{
+					Layer:     "./src",
+					Address:   "aws_resource.items[*]",
+					KeyPrefix: "eng_",
+				},
+				Destination: &Endpoint{
+					Layer:   "./dst1",
+					Address: `aws_resource.items["{{ .Key }}"]`,
+				},
+			},
+			{
+				Type: OpMove,
+				Source: &Endpoint{
+					Layer:   "./src",
+					Address: "aws_resource.items[*]",
+					// Missing key_prefix — should error
+				},
+				Destination: &Endpoint{
+					Layer:   "./dst2",
+					Address: `aws_resource.items["{{ .Key }}"]`,
+				},
+			},
+		},
+	}
+
+	errs := Validate(mf)
+	if !hasError(errs, "source.key_prefix") {
+		t.Error("expected validation error for mixed prefixed/non-prefixed wildcard moves")
+	}
+}

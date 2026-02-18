@@ -157,6 +157,50 @@ operations:
 	}
 }
 
+func TestParseFile_WildcardWithKeyPrefix(t *testing.T) {
+	content := `
+description: "Prefix-filtered wildcard move"
+operations:
+  - type: move
+    source:
+      layer: "./layers/old"
+      address: "aws_resource.items[*]"
+      key_prefix: "engineering_"
+    destination:
+      layer: "./layers/engineering"
+      address: 'aws_resource.items["{{ .Key | trimPrefix "engineering_" }}"]'
+  - type: move
+    source:
+      layer: "./layers/old"
+      address: "aws_resource.items[*]"
+      key_prefix: "finance_"
+    destination:
+      layer: "./layers/finance"
+      address: 'aws_resource.items["{{ .Key | trimPrefix "finance_" }}"]'
+`
+	path := writeTestFile(t, "004_prefix.yaml", content)
+	parser := NewParser()
+
+	mf, err := parser.ParseFile(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(mf.Operations) != 2 {
+		t.Fatalf("expected 2 operations, got %d", len(mf.Operations))
+	}
+
+	op0 := mf.Operations[0]
+	if op0.Source.KeyPrefix != "engineering_" {
+		t.Errorf("op[0]: expected key_prefix %q, got %q", "engineering_", op0.Source.KeyPrefix)
+	}
+
+	op1 := mf.Operations[1]
+	if op1.Source.KeyPrefix != "finance_" {
+		t.Errorf("op[1]: expected key_prefix %q, got %q", "finance_", op1.Source.KeyPrefix)
+	}
+}
+
 func TestParseFile_InvalidYAML(t *testing.T) {
 	content := `
 description: "Bad YAML

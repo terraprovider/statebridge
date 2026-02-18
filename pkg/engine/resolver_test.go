@@ -123,6 +123,7 @@ func TestExpandWildcard(t *testing.T) {
 		"aws_s3_bucket.data[*]",
 		`aws_s3_bucket.data["{{ .Attributes.bucket }}"]`,
 		"{{ .Attributes.id }}",
+		"",
 	)
 
 	if err != nil {
@@ -165,6 +166,7 @@ func TestExpandWildcard_NoMatches(t *testing.T) {
 		"./layers/data",
 		"aws_s3_bucket.data[*]",
 		`aws_s3_bucket.data["{{ .Key }}"]`,
+		"",
 		"",
 	)
 
@@ -246,5 +248,98 @@ func TestResolveSingleMove_ResourceNotInState_NoID(t *testing.T) {
 	_, err := resolver.ResolveSingleMove(ctx, "./src", "aws_instance.web", "aws_instance.web", "")
 	if err == nil {
 		t.Fatal("expected error when resource not in state and no explicit ID")
+	}
+}
+
+func TestExpandWildcard_WithKeyPrefix(t *testing.T) {
+	mock := testutil.NewMockStateReader(map[string]*tfjson.State{
+		"./layers/old": testutil.BuildState(
+			testutil.NewResource(
+				`aws_resource.items["eng_admin"]`, "aws_resource", "items", "eng_admin",
+				map[string]interface{}{"id": "id-eng-admin"},
+			),
+			testutil.NewResource(
+				`aws_resource.items["eng_reader"]`, "aws_resource", "items", "eng_reader",
+				map[string]interface{}{"id": "id-eng-reader"},
+			),
+			testutil.NewResource(
+				`aws_resource.items["fin_admin"]`, "aws_resource", "items", "fin_admin",
+				map[string]interface{}{"id": "id-fin-admin"},
+			),
+			testutil.NewResource(
+				`aws_resource.items["fin_reader"]`, "aws_resource", "items", "fin_reader",
+				map[string]interface{}{"id": "id-fin-reader"},
+			),
+		),
+	})
+
+	resolver := NewResolver(mock)
+	ctx := context.Background()
+
+	// Only expand resources with key prefix "eng_"
+	instances, err := resolver.ExpandWildcard(
+		ctx,
+		"./layers/old",
+		"aws_resource.items[*]",
+		`aws_resource.items["{{ .Key }}"]`,
+		"{{ .Attributes.id }}",
+		"eng_",
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(instances) != 2 {
+		t.Fatalf("expected 2 instances matching prefix eng_, got %d", len(instances))
+	}
+
+	// Verify only eng_ keys are returned
+	for _, inst := range instances {
+		key := inst.SourceResource.Key
+		if key != "eng_admin" && key != "eng_reader" {
+			t.Errorf("unexpected key %q in prefix-filtered results", key)
+		}
+	}
+}
+
+func TestLookupWildcardKeys(t *testing.T) {
+	mock := testutil.NewMockStateReader(map[string]*tfjson.State{
+		"./layers/data": testutil.BuildState(
+			testutil.NewResource(
+				`aws_s3_bucket.data["alpha"]`, "aws_s3_bucket", "data", "alpha",
+				map[string]interface{}{"id": "id-alpha"},
+			),
+			testutil.NewResource(
+				`aws_s3_bucket.data["beta"]`, "aws_s3_bucket", "data", "beta",
+				map[string]interface{}{"id": "id-beta"},
+			),
+			testutil.NewResource(
+				`aws_s3_bucket.data["gamma"]`, "aws_s3_bucket", "data", "gamma",
+				map[string]interface{}{"id": "id-gamma"},
+			),
+		),
+	})
+
+	resolver := NewResolver(mock)
+	ctx := context.Background()
+
+	keys, err := resolver.LookupWildcardKeys(ctx, "./layers/data", "aws_s3_bucket.data[*]")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(keys) != 3 {
+		t.Fatalf("expected 3 keys, got %d: %v", len(keys), keys)
+	}
+
+	// Verify all expected keys are present
+	keySet := make(map[string]bool)
+	for _, k := range keys {
+		keySet[k] = true
+	}
+	for _, expected := range []string{"alpha", "beta", "gamma"} {
+		if !keySet[expected] {
+			t.Errorf("expected key %q not found in %v", expected, keys)
+		}
 	}
 }

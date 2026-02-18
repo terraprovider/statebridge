@@ -222,6 +222,42 @@ import {
 }
 ```
 
+### Prefix-Filtered Wildcard Moves
+
+When a `for_each` resource has keys from different kinds of inputs (e.g., merged maps from multiple sources), you can use `key_prefix` on the source endpoint to route different key prefixes to different destinations. Multiple move operations can target the same wildcard source, each filtering by a different prefix.
+
+```yaml
+description: "Split access assignments by department"
+operations:
+  - type: move
+    source:
+      layer: "./layers/shared"
+      address: "aws_resource.assignments[*]"
+      key_prefix: "engineering_"
+    destination:
+      layer: "./layers/engineering"
+      address: 'aws_resource.assignments["{{ .Key | trimPrefix "engineering_" }}"]'
+    import_id: "{{ .Attributes.id }}"
+
+  - type: move
+    source:
+      layer: "./layers/shared"
+      address: "aws_resource.assignments[*]"
+      key_prefix: "finance_"
+    destination:
+      layer: "./layers/finance"
+      address: 'aws_resource.assignments["{{ .Key | trimPrefix "finance_" }}"]'
+    import_id: "{{ .Attributes.id }}"
+```
+
+This generates a single `removed` block in the source layer and separate `import` blocks in each destination layer for the matching keys.
+
+**Completeness and overlap rules:**
+
+- When `key_prefix` is used, **all keys** in the source state must be covered by at least one prefix-filtered operation. Uncovered keys cause an error to prevent data loss (since the `removed` block drops the entire resource).
+- If a key matches multiple operations' prefixes, that is an **overlap error**. Design prefixes to be mutually exclusive.
+- When multiple operations target the same wildcard source, **all** must specify `key_prefix` — mixing filtered and unfiltered is not allowed.
+
 ### Go Template Context
 
 Templates in `address` and `import_id` fields receive a context with the following fields:

@@ -36,7 +36,7 @@ operations:
 Moves a resource between two layers. Generates `removed` in source + `import` in destination.
 
 Required fields: `source.layer`, `source.address`, `destination.layer`, `destination.address`
-Optional fields: `description`, `import_id` (auto-resolved from state if omitted)
+Optional fields: `description`, `import_id` (auto-resolved from state if omitted), `source.key_prefix`
 
 ```yaml
 - type: move
@@ -60,6 +60,29 @@ Optional fields: `description`, `import_id` (auto-resolved from state if omitted
   destination:
     layer: "./layers/new"
     address: 'aws_s3_bucket.data["{{ .Attributes.bucket }}"]'
+  import_id: "{{ .Attributes.id }}"
+```
+
+**Prefix-filtered wildcard moves** — use `source.key_prefix` to filter keys by prefix when multiple move operations split a single resource across destinations. All keys must be covered; overlap is an error:
+
+```yaml
+- type: move
+  source:
+    layer: "./layers/old"
+    address: "aws_resource.items[*]"
+    key_prefix: "engineering_"
+  destination:
+    layer: "./layers/engineering"
+    address: 'aws_resource.items["{{ .Key | trimPrefix "engineering_" }}"]'
+  import_id: "{{ .Attributes.id }}"
+- type: move
+  source:
+    layer: "./layers/old"
+    address: "aws_resource.items[*]"
+    key_prefix: "finance_"
+  destination:
+    layer: "./layers/finance"
+    address: 'aws_resource.items["{{ .Key | trimPrefix "finance_" }}"]'
   import_id: "{{ .Attributes.id }}"
 ```
 
@@ -240,6 +263,33 @@ Use wildcard for all instances:
     address: '<resource_type>.<name>["{{ .Key }}"]'
 ```
 
+### "Split resource by key prefix" / "Route different for_each keys to different layers"
+
+Use multiple wildcard moves with `key_prefix`:
+
+```yaml
+- type: move
+  source:
+    layer: "<source layer>"
+    address: "<resource>[*]"
+    key_prefix: "<prefix_a>"
+  destination:
+    layer: "<layer A>"
+    address: '<resource>["{{ .Key | trimPrefix "<prefix_a>" }}"]'
+  import_id: "{{ .Attributes.id }}"
+- type: move
+  source:
+    layer: "<source layer>"
+    address: "<resource>[*]"
+    key_prefix: "<prefix_b>"
+  destination:
+    layer: "<layer B>"
+    address: '<resource>["{{ .Key | trimPrefix "<prefix_b>" }}"]'
+  import_id: "{{ .Attributes.id }}"
+```
+
+All keys in the source state must be covered by exactly one prefix. The user must provide the prefixes or you must ask for them.
+
 ---
 
 ## Validation Rules
@@ -256,6 +306,11 @@ When generating YAML, ensure:
 8. Template expressions (`{{ }}`) are only valid in `destination.address` and `import_id` of move operations
 9. Wildcard `[*]` is only valid in `source.address` of move operations
 10. Layer paths are relative to where `tfmigrate generate` is run
+11. `key_prefix` is only valid on `source` endpoints of move operations with wildcard addresses (`[*]`)
+12. `key_prefix` is not allowed on `destination` endpoints
+13. When multiple move operations target the same wildcard source, all must specify `key_prefix` — mixing filtered and unfiltered is not allowed
+14. When `key_prefix` is used, all keys in the source state must be covered by at least one prefix (completeness check)
+15. A key matching multiple operations' prefixes is an overlap error
 
 ## File Naming Convention
 

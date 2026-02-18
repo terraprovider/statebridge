@@ -1,6 +1,9 @@
 package migration
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // ValidationError describes a specific validation failure in a migration file.
 type ValidationError struct {
@@ -49,6 +52,8 @@ func Validate(mf *MigrationFile) []ValidationError {
 	for i, op := range mf.Operations {
 		errs = append(errs, validateOperation(i, &op)...)
 	}
+
+	errs = append(errs, validateWildcardPrefixConsistency(mf.Operations)...)
 
 	return errs
 }
@@ -131,6 +136,24 @@ func validateMove(index int, op *Operation) []ValidationError {
 				Message:        "destination address is required",
 			})
 		}
+		if op.Destination.KeyPrefix != "" {
+			errs = append(errs, ValidationError{
+				OperationIndex: index,
+				Field:          "destination.key_prefix",
+				Message:        "key_prefix can only be set on source endpoints, not destinations",
+			})
+		}
+	}
+
+	// key_prefix is only valid on wildcard source addresses
+	if op.Source != nil && op.Source.KeyPrefix != "" {
+		if !strings.HasSuffix(op.Source.Address, "[*]") {
+			errs = append(errs, ValidationError{
+				OperationIndex: index,
+				Field:          "source.key_prefix",
+				Message:        "key_prefix can only be used with wildcard addresses (ending with [*])",
+			})
+		}
 	}
 
 	return errs
@@ -211,6 +234,57 @@ func validateImport(index int, op *Operation) []ValidationError {
 			Field:          "import_id",
 			Message:        "import operation requires an import_id",
 		})
+	}
+
+	return errs
+}
+
+// wildcardSourceKey identifies a unique wildcard move source for consistency checking.
+type wildcardSourceKey struct {
+	layer    string
+	baseAddr string
+}
+
+// validateWildcardPrefixConsistency checks that when multiple wildcard move
+// operations target the same source (layer + base address), all of them
+// specify a key_prefix. Mixing filtered and unfiltered wildcard moves for
+// the same source is not allowed because the removed block drops the entire
+// resource and unfiltered moves would overlap with filtered ones.
+func validateWildcardPrefixConsistency(ops []Operation) []ValidationError {
+	// Group wildcard move operations by their source identity.
+	groups := make(map[wildcardSourceKey][]int) // operation indices
+
+	for i, op := range ops {
+		if op.Type != OpMove || op.Source == nil {
+			continue
+		}
+		if !strings.HasSuffix(op.Source.Address, "[*]") {
+			continue
+		}
+		base := strings.TrimSuffix(op.Source.Address, "[*]")
+		key := wildcardSourceKey{layer: op.Source.Layer, baseAddr: base}
+		groups[key] = append(groups[key], i)
+	}
+
+	var errs []ValidationError
+	for key, indices := range groups {
+		if len(indices) <= 1 {
+			continue // single operation targeting this source; no consistency needed
+		}
+
+		// Multiple operations target the same wildcard source: all must have key_prefix.
+		for _, idx := range indices {
+			if ops[idx].Source.KeyPrefix == "" {
+				errs = append(errs, ValidationError{
+					OperationIndex: idx,
+					Field:          "source.key_prefix",
+					Message: fmt.Sprintf(
+						"multiple operations target wildcard source %s[*] in layer %q; all must specify key_prefix",
+						key.baseAddr, key.layer,
+					),
+				})
+			}
+		}
 	}
 
 	return errs

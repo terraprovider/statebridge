@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/redtenant/tfmigrate/pkg/state"
 	tmpl "github.com/redtenant/tfmigrate/pkg/template"
@@ -43,12 +44,15 @@ func (r *Resolver) ResolveImportID(resource *state.ResourceInfo, importIDExpr st
 // ExpandWildcard expands a wildcard source address (ending with [*]) against
 // state, resolves the destination address and import ID for each instance
 // using Go templates, and returns the expanded instances.
+// When keyPrefix is non-empty, only resources whose Key starts with the
+// prefix are included in the expansion.
 func (r *Resolver) ExpandWildcard(
 	ctx context.Context,
 	sourceLayerPath string,
 	sourceAddress string,
 	destAddressExpr string,
 	importIDExpr string,
+	keyPrefix string,
 ) ([]ExpandedInstance, error) {
 	baseAddr := BaseAddress(sourceAddress)
 
@@ -60,6 +64,17 @@ func (r *Resolver) ExpandWildcard(
 	resources, err := state.LookupResourcesByPrefix(s, baseAddr)
 	if err != nil {
 		return nil, fmt.Errorf("expanding wildcard %q: %w", sourceAddress, err)
+	}
+
+	// Filter by key prefix if specified.
+	if keyPrefix != "" {
+		var filtered []*state.ResourceInfo
+		for _, res := range resources {
+			if strings.HasPrefix(res.Key, keyPrefix) {
+				filtered = append(filtered, res)
+			}
+		}
+		resources = filtered
 	}
 
 	var instances []ExpandedInstance
@@ -84,6 +99,34 @@ func (r *Resolver) ExpandWildcard(
 	}
 
 	return instances, nil
+}
+
+// LookupWildcardKeys returns all for_each keys from state for a wildcard
+// source address. This is used by the wildcard tracker to verify completeness
+// when prefix-filtered moves are used.
+func (r *Resolver) LookupWildcardKeys(
+	ctx context.Context,
+	sourceLayerPath string,
+	sourceAddress string,
+) ([]string, error) {
+	baseAddr := BaseAddress(sourceAddress)
+
+	s, err := r.stateReader.ReadState(ctx, sourceLayerPath)
+	if err != nil {
+		return nil, fmt.Errorf("reading state for layer %q: %w", sourceLayerPath, err)
+	}
+
+	resources, err := state.LookupResourcesByPrefix(s, baseAddr)
+	if err != nil {
+		return nil, fmt.Errorf("looking up keys for %q: %w", sourceAddress, err)
+	}
+
+	keys := make([]string, 0, len(resources))
+	for _, res := range resources {
+		keys = append(keys, res.Key)
+	}
+
+	return keys, nil
 }
 
 // ResolveSingleMove resolves a non-wildcard move operation, looking up the

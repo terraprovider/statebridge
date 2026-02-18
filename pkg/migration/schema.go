@@ -91,6 +91,13 @@ type Endpoint struct {
 	// Address is the full Terraform resource address (e.g., "aws_instance.web",
 	// "module.vpc", or "aws_s3_bucket.data[*]" for wildcard expansion).
 	Address string `yaml:"address"`
+
+	// KeyPrefix filters wildcard expansions to only include for_each keys
+	// that start with this prefix. Only valid on source endpoints with a
+	// wildcard address (ending in [*]). When multiple move operations target
+	// the same wildcard source, each must specify a key_prefix and all keys
+	// in state must be covered by exactly one prefix.
+	KeyPrefix string `yaml:"key_prefix,omitempty"`
 }
 
 // DestroyValue returns the effective value of the Destroy field,
