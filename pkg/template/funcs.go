@@ -48,6 +48,11 @@ func FuncMap() template.FuncMap {
 			return strings.Join(elems, sep)
 		},
 
+		// Index into a string slice. Pipe-compatible alternative to the
+		// built-in index function (which takes collection first).
+		// Usage: {{ .Key | split "/" | at 1 }}
+		"at": atFunc,
+
 		// String testing.
 		// Usage: {{ if hasPrefix .Key "prod" }}...{{ end }}
 		"hasPrefix": func(prefix, s string) bool {
@@ -127,6 +132,17 @@ func defaultFunc(fallback string, val string) string {
 		return fallback
 	}
 	return val
+}
+
+// atFunc returns the element at position i from a string slice.
+// The index is the first parameter for pipe compatibility:
+//
+//	{{ .Key | split "/" | at 1 }}
+func atFunc(i int, s []string) (string, error) {
+	if i < 0 || i >= len(s) {
+		return "", fmt.Errorf("at: index %d out of range for slice of length %d", i, len(s))
+	}
+	return s[i], nil
 }
 
 // nonAlphanumRegex matches one or more non-alphanumeric characters.

@@ -93,6 +93,53 @@ func TestEvaluate_SplitJoinFunctions(t *testing.T) {
 	}
 }
 
+func TestEvaluate_AtFunction(t *testing.T) {
+	ctx := &TemplateContext{
+		Attributes: map[string]interface{}{
+			"catalog_resource_association_id": "subscription/abc-123/resourceGroup/my-rg",
+		},
+	}
+
+	result, err := Evaluate(`{{ .Attributes.catalog_resource_association_id | split "/" | at 1 }}`, ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result != "abc-123" {
+		t.Errorf("expected %q, got %q", "abc-123", result)
+	}
+}
+
+func TestEvaluate_AtFunction_InAddress(t *testing.T) {
+	ctx := &TemplateContext{
+		Attributes: map[string]interface{}{
+			"catalog_resource_association_id": "subscription/abc-123/resourceGroup/my-rg",
+		},
+	}
+
+	result, err := Evaluate(
+		`customer_approval_customer_approval_{{ .Attributes.catalog_resource_association_id | split "/" | at 1 }}`,
+		ctx,
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	expected := "customer_approval_customer_approval_abc-123"
+	if result != expected {
+		t.Errorf("expected %q, got %q", expected, result)
+	}
+}
+
+func TestEvaluate_AtFunction_OutOfRange(t *testing.T) {
+	ctx := &TemplateContext{
+		Key: "a-b",
+	}
+
+	_, err := Evaluate(`{{ .Key | split "-" | at 5 }}`, ctx)
+	if err == nil {
+		t.Fatal("expected error for out-of-range index")
+	}
+}
+
 func TestEvaluate_DefaultFunction(t *testing.T) {
 	ctx := &TemplateContext{
 		Key: "",

@@ -161,6 +161,7 @@ All string functions are pipe-compatible (input comes last).
 - `{{ .Key | lower }}` — lowercase
 - `{{ .Key | upper }}` — uppercase
 - `{{ .Key | split "-" | join "_" }}` — split then rejoin
+- `{{ .Key | split "/" | at 1 }}` — split then index into result (pipe-compatible)
 
 **Testing:**
 - `{{ if .Key | hasPrefix "prod" }}...{{ end }}`

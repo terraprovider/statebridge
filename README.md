@@ -286,6 +286,7 @@ The following custom functions are available in templates. All string functions 
 | `upper` | `{{ .Key \| upper }}` | Uppercase |
 | `split` | `{{ .Key \| split "-" }}` | Split into list |
 | `join` | `{{ .Key \| split "-" \| join "_" }}` | Join list with separator |
+| `at` | `{{ .Key \| split "/" \| at 1 }}` | Index into list (pipe-compatible) |
 | `hasPrefix` | `{{ if .Key \| hasPrefix "prod" }}...{{ end }}` | Test prefix |
 | `hasSuffix` | `{{ if .Key \| hasSuffix "-prod" }}...{{ end }}` | Test suffix |
 | `contains` | `{{ if .Key \| contains "special" }}...{{ end }}` | Test substring |
