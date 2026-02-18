@@ -1,0 +1,43 @@
+version: 2
+
+builds:
+  - env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X "github.com/redtenant/tfmigrate/cmd.Tag={{.RawVersion}}" -X "github.com/redtenant/tfmigrate/cmd.Commit={{.ShortCommit}}" -X "github.com/redtenant/tfmigrate/cmd.BuildDate={{.Date}}"
+    flags:
+      - -trimpath
+      - "-mod=readonly"
+
+archives:
+  - formats:
+      - tar.gz
+      - zip
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: "checksums.txt"
+
+signs:
+  - cmd: cosign
+    artifacts: checksum
+    signature: "${artifact}.sigstore.json"
+    args: [ "sign-blob", "--bundle=${signature}", "${artifact}", "--yes" ]
+
+sboms:
+  - artifacts: archive
+    cmd: syft
+
+changelog:
+  use: github-native
+
+release:
+  prerelease: auto
+  draft: true
