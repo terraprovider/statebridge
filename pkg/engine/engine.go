@@ -16,6 +16,10 @@ type Config struct {
 	// StateReader reads Terraform/OpenTofu state for layers.
 	StateReader state.StateReader
 
+	// TofuPath is the path to the tofu binary.
+	// Required when migration files use the init feature.
+	TofuPath string
+
 	// DryRun if true prints output but does not write files.
 	DryRun bool
 
@@ -70,6 +74,15 @@ func (e *Engine) ProcessFiles(ctx context.Context, paths []string) ([]string, er
 				msgs = append(msgs, ve.Error())
 			}
 			return nil, fmt.Errorf("validation errors in %q:\n  %s", mf.FilePath, strings.Join(msgs, "\n  "))
+		}
+
+		// When init config is present, wrap the state reader with an
+		// init-on-failure reader for this migration file.
+		if mf.Init != nil {
+			initReader := state.NewInitStateReader(e.config.StateReader, e.config.TofuPath, mf.Init.Args)
+			e.resolver = NewResolver(initReader)
+		} else {
+			e.resolver = NewResolver(e.config.StateReader)
 		}
 
 		proceed, err := e.evaluateCondition(ctx, mf)

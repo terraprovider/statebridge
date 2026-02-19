@@ -59,20 +59,24 @@ func init() {
 }
 
 func runGenerate(cmd *cobra.Command, args []string) error {
-	// Create state reader
+	// Resolve the tofu binary path
+	var tofuPath string
 	var stateReader state.StateReader
-	var err error
 
 	if flagTofuPath != "" {
-		stateReader = state.NewTofuStateReaderWithPath(flagTofuPath)
+		tofuPath = flagTofuPath
+		stateReader = state.NewTofuStateReaderWithPath(tofuPath)
 	} else {
-		stateReader, err = state.NewTofuStateReader()
-		if err != nil {
+		reader, lookupErr := state.NewTofuStateReader()
+		if lookupErr != nil {
 			// tofu not found is acceptable in dry-run mode or when state
 			// lookup is not needed; we'll fail later if state is actually needed
-			fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
+			fmt.Fprintf(os.Stderr, "Warning: %v\n", lookupErr)
 			fmt.Fprintf(os.Stderr, "State auto-resolution will not be available. Use explicit import_id values.\n")
 			stateReader = &noopStateReader{}
+		} else {
+			tofuPath = reader.TofuPath
+			stateReader = reader
 		}
 	}
 
@@ -81,6 +85,7 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 
 	cfg := engine.Config{
 		StateReader:    cachedReader,
+		TofuPath:       tofuPath,
 		DryRun:         flagDryRun,
 		OutputFilename: flagOutputFilename,
 	}
