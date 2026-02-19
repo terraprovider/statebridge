@@ -330,6 +330,43 @@ condition:
         - "aws_instance.web"
 ```
 
+## Auto-Init
+
+In CI environments, layer backends are often not pre-initialized. The optional `init` block configures automatic `tofu init` when a state read fails, then retries the read.
+
+```yaml
+description: "Move resources between layers"
+init:
+  args:
+    - "-backend-config=bucket=my-state-bucket"
+    - "-backend-config=key=terraform.tfstate"
+    - "-reconfigure"
+operations:
+  - type: move
+    source_layer: "./layers/compute"
+    destination_layer: "./layers/app"
+    resources:
+      - address: "aws_instance.web"
+```
+
+### Behavior
+
+- `init` is optional. When absent, state read errors propagate as before.
+- Init runs **lazily** — only when `tofu show` fails for a layer.
+- Init runs **once per layer** per migration file to avoid redundant calls.
+- `args` are passed directly to `tofu init` as extra arguments. Common values:
+  - `-backend-config=key=value` — backend configuration
+  - `-reconfigure` — reconfigure backend without migrating state
+  - `-upgrade` — upgrade provider plugins
+- If `args` is empty or omitted, `tofu init` runs with no extra arguments.
+- If `tofu init` fails, the error propagates immediately.
+
+### Bare Init (no extra args)
+
+```yaml
+init: {}
+```
+
 ## Go Template Reference
 
 Templates in key values and `import_id` fields have access to:

@@ -36,6 +36,12 @@ type MigrationFile struct {
 	// file is silently skipped with an informational log message.
 	Condition *Condition `yaml:"condition,omitempty"`
 
+	// Init configures automatic layer initialization. When present, any layer
+	// whose state cannot be read triggers a `tofu init` with the given arguments
+	// before retrying the state read. Useful in CI where backends are not
+	// pre-initialized.
+	Init *InitConfig `yaml:"init,omitempty"`
+
 	// Operations is the ordered list of migration operations to perform.
 	Operations []Operation `yaml:"operations"`
 
@@ -68,6 +74,15 @@ type ResourceCheck struct {
 	// A fully-qualified address (e.g., "aws_instance.web[\"key\"]") matches
 	// only that specific instance.
 	Addresses []string `yaml:"addresses"`
+}
+
+// InitConfig configures automatic `tofu init` for layers that are not yet
+// initialized. Init is triggered lazily — only when a state read fails.
+type InitConfig struct {
+	// Args is a list of extra arguments passed to `tofu init`.
+	// Common values include "-backend-config=key=value" and "-reconfigure".
+	// If empty or omitted, `tofu init` runs with no extra arguments.
+	Args []string `yaml:"args,omitempty"`
 }
 
 // Operation represents a single migration operation.

@@ -568,6 +568,89 @@ operations:
 	}
 }
 
+func TestParseFile_WithInit(t *testing.T) {
+	content := `
+description: "Move with init"
+init:
+  args:
+    - "-backend-config=bucket=my-bucket"
+    - "-reconfigure"
+operations:
+  - type: remove
+    layer: "./l"
+    addresses:
+      - "aws_instance.x"
+`
+	path := writeTestFile(t, "003_init.yaml", content)
+	parser := NewParser()
+
+	mf, err := parser.ParseFile(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if mf.Init == nil {
+		t.Fatal("expected init to be parsed")
+	}
+	if len(mf.Init.Args) != 2 {
+		t.Fatalf("expected 2 init args, got %d", len(mf.Init.Args))
+	}
+	if mf.Init.Args[0] != "-backend-config=bucket=my-bucket" {
+		t.Errorf("expected first arg %q, got %q", "-backend-config=bucket=my-bucket", mf.Init.Args[0])
+	}
+	if mf.Init.Args[1] != "-reconfigure" {
+		t.Errorf("expected second arg %q, got %q", "-reconfigure", mf.Init.Args[1])
+	}
+}
+
+func TestParseFile_WithInitNoArgs(t *testing.T) {
+	content := `
+description: "Move with bare init"
+init: {}
+operations:
+  - type: remove
+    layer: "./l"
+    addresses:
+      - "aws_instance.x"
+`
+	path := writeTestFile(t, "004_init_bare.yaml", content)
+	parser := NewParser()
+
+	mf, err := parser.ParseFile(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if mf.Init == nil {
+		t.Fatal("expected init to be parsed (even with no args)")
+	}
+	if len(mf.Init.Args) != 0 {
+		t.Errorf("expected 0 init args, got %d", len(mf.Init.Args))
+	}
+}
+
+func TestParseFile_WithoutInit(t *testing.T) {
+	content := `
+description: "No init"
+operations:
+  - type: remove
+    layer: "./l"
+    addresses:
+      - "aws_instance.x"
+`
+	path := writeTestFile(t, "005_no_init.yaml", content)
+	parser := NewParser()
+
+	mf, err := parser.ParseFile(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if mf.Init != nil {
+		t.Errorf("expected nil init, got %+v", mf.Init)
+	}
+}
+
 func TestFullAddress(t *testing.T) {
 	tests := []struct {
 		prefix, addr, want string

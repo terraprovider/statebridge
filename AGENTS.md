@@ -35,6 +35,10 @@ condition:           # optional: skip file if checks fail
     - layer: "<layer path>"
       addresses:
         - "<resource address>"
+init:                # optional: auto-init layers on state read failure
+  args:
+    - "-backend-config=bucket=my-bucket"
+    - "-reconfigure"
 operations:
   - type: <move|rename|remove|import>
     # ... fields depend on type
@@ -60,6 +64,23 @@ condition:
     - layer: "./layers/app"
       addresses:
         - "aws_instance.web"
+```
+
+### Auto-Init
+
+Optional. Configures automatic `tofu init` when a layer's state cannot be read (common in CI where backends are not pre-initialized).
+
+- `args`: list of extra arguments passed to `tofu init` (e.g., `-backend-config=key=value`, `-reconfigure`)
+- Init runs lazily — only when `tofu show` fails for a layer
+- Init runs once per layer per migration file
+- If `args` is empty or omitted, `tofu init` runs with no extra arguments
+- If `tofu init` fails, the error propagates
+
+```yaml
+init:
+  args:
+    - "-backend-config=bucket=my-state-bucket"
+    - "-reconfigure"
 ```
 
 ### Common Field: `address_prefix`
@@ -420,6 +441,25 @@ condition:
         - "<resource address>"
 ```
 
+### "Run in CI where backends aren't initialized" / "Auto-init layers"
+
+Add an `init` block with the backend configuration:
+
+```yaml
+description: "Move resources (CI-safe)"
+init:
+  args:
+    - "-backend-config=bucket=my-state-bucket"
+    - "-backend-config=key=terraform.tfstate"
+    - "-reconfigure"
+operations:
+  - type: move
+    source_layer: "<source layer>"
+    destination_layer: "<destination layer>"
+    resources:
+      - address: "<resource address>"
+```
+
 ---
 
 ## Validation Rules
@@ -442,6 +482,7 @@ When generating YAML, ensure:
 14. `condition` is optional; if present, each resource check requires `layer` (non-empty) and `addresses` (non-empty list of non-empty strings)
 15. `resources_exist`: all listed addresses must exist in the specified layer's state for the migration to proceed
 16. `resources_not_exist`: none of the listed addresses may exist in the specified layer's state
+17. `init` is optional; `args` accepts any list of strings to pass to `tofu init`
 
 ## File Naming Convention
 
