@@ -1,32 +1,28 @@
 package generator
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
-const defaultMigrationFilename = "migrations.tf"
-
-// Writer collects HCL blocks and writes them grouped by layer directory.
+// Writer collects HCL blocks and writes them grouped by layer and source
+// migration file. Each (layer, source file) pair produces a separate output
+// file with deterministic block ordering and content-addressed naming.
 type Writer struct {
 	blocks []Block
 
 	// DryRun controls whether files are actually written to disk.
 	// When true, content is generated but not written.
 	DryRun bool
-
-	// OutputFilename overrides the default output filename within each layer dir.
-	// Defaults to "migrations.tf".
-	OutputFilename string
 }
 
 // NewWriter creates a Writer with default settings.
 func NewWriter() *Writer {
-	return &Writer{
-		OutputFilename: defaultMigrationFilename,
-	}
+	return &Writer{}
 }
 
 // AddBlock adds a single block to the writer's collection.
@@ -39,45 +35,67 @@ func (w *Writer) AddBlocks(blocks []Block) {
 	w.blocks = append(w.blocks, blocks...)
 }
 
-// GroupedByLayer returns blocks grouped by their target layer path.
-// The order of blocks within each group is preserved.
-func (w *Writer) GroupedByLayer() map[string][]Block {
-	grouped := make(map[string][]Block)
+// groupKey uniquely identifies a (layer, source file) pair.
+type groupKey struct {
+	Layer      string
+	SourceFile string
+}
+
+// groupedByLayerAndSource returns blocks grouped by (layer, source file).
+func (w *Writer) groupedByLayerAndSource() map[groupKey][]Block {
+	grouped := make(map[groupKey][]Block)
 	for _, b := range w.blocks {
-		layer := b.LayerPath()
-		grouped[layer] = append(grouped[layer], b)
+		key := groupKey{Layer: b.LayerPath(), SourceFile: b.SourceFile()}
+		grouped[key] = append(grouped[key], b)
 	}
 	return grouped
 }
 
-// RenderLayer generates the full HCL content for all blocks targeting a given layer.
-func (w *Writer) RenderLayer(layerPath string) string {
-	grouped := w.GroupedByLayer()
-	blocks, ok := grouped[layerPath]
-	if !ok {
-		return ""
+// sortedGroupKeys returns group keys in deterministic order:
+// sorted by layer path first, then by source file path.
+func sortedGroupKeys(groups map[groupKey][]Block) []groupKey {
+	keys := make([]groupKey, 0, len(groups))
+	for k := range groups {
+		keys = append(keys, k)
 	}
-	return renderBlocks(blocks)
+	sort.Slice(keys, func(i, j int) bool {
+		if keys[i].Layer != keys[j].Layer {
+			return keys[i].Layer < keys[j].Layer
+		}
+		return keys[i].SourceFile < keys[j].SourceFile
+	})
+	return keys
 }
 
-// RenderAll generates the full HCL content for all layers, returned as a map
-// of layer path to rendered HCL content.
+// RenderAll generates the full HCL content for all (layer, source file) groups.
+// Returns a map of output file path to rendered content.
 func (w *Writer) RenderAll() map[string]string {
 	result := make(map[string]string)
-	for layer, blocks := range w.GroupedByLayer() {
-		result[layer] = renderBlocks(blocks)
+	groups := w.groupedByLayerAndSource()
+
+	for _, key := range sortedGroupKeys(groups) {
+		blocks := groups[key]
+		SortBlocks(blocks)
+		content := renderBlocks(blocks)
+		outPath := filepath.Join(key.Layer, outputFilename(key.SourceFile, content))
+		result[outPath] = content
 	}
 	return result
 }
 
 // WriteAll writes all collected blocks to their respective layer directories.
-// Each layer gets a single file containing all its blocks.
-// Returns the list of file paths written and any error encountered.
+// Each (layer, source migration file) pair gets its own output file with
+// deterministic block ordering and a content-addressed filename.
+// Returns the sorted list of file paths written and any error encountered.
 func (w *Writer) WriteAll() ([]string, error) {
 	var written []string
+	groups := w.groupedByLayerAndSource()
 
-	for layer, content := range w.RenderAll() {
-		outPath := filepath.Join(layer, w.outputFilename())
+	for _, key := range sortedGroupKeys(groups) {
+		blocks := groups[key]
+		SortBlocks(blocks)
+		content := renderBlocks(blocks)
+		outPath := filepath.Join(key.Layer, outputFilename(key.SourceFile, content))
 
 		if w.DryRun {
 			written = append(written, outPath)
@@ -93,25 +111,34 @@ func (w *Writer) WriteAll() ([]string, error) {
 	return written, nil
 }
 
-// outputFilename returns the effective output filename.
-func (w *Writer) outputFilename() string {
-	if w.OutputFilename != "" {
-		return w.OutputFilename
-	}
-	return defaultMigrationFilename
+// outputFilename generates the content-addressed output filename:
+// migration.<yaml_stem>.<sha256_8hex>.tf
+func outputFilename(sourceFile, content string) string {
+	stem := yamlStem(sourceFile)
+	hash := sha256.Sum256([]byte(content))
+	return fmt.Sprintf("migration.%s.%x.tf", stem, hash[:4])
 }
 
-// renderBlocks generates HCL content from a list of blocks, including a header
-// and optional per-block comments.
+// yamlStem extracts the filename without extension from a path.
+// e.g., "/path/to/0001_move.yaml" → "0001_move"
+func yamlStem(path string) string {
+	base := filepath.Base(path)
+	ext := filepath.Ext(base)
+	if ext != "" {
+		base = strings.TrimSuffix(base, ext)
+	}
+	return base
+}
+
+// renderBlocks generates HCL content from a sorted list of blocks,
+// including a header and optional per-block comments.
 func renderBlocks(blocks []Block) string {
 	var sb strings.Builder
 
 	sb.WriteString("# Generated by tfmigrate - do not edit manually\n")
 
-	for i, b := range blocks {
-		if i > 0 || true {
-			sb.WriteString("\n")
-		}
+	for _, b := range blocks {
+		sb.WriteString("\n")
 		if comment := b.Comment(); comment != "" {
 			sb.WriteString(fmt.Sprintf("# %s\n", comment))
 		}

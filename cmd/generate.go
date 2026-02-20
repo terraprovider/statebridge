@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sort"
 
 	tfjson "github.com/hashicorp/terraform-json"
 	"github.com/spf13/cobra"
@@ -13,9 +14,8 @@ import (
 )
 
 var (
-	flagDryRun         bool
-	flagOutputFilename string
-	flagTofuPath       string
+	flagDryRun   bool
+	flagTofuPath string
 )
 
 // generateCmd represents the generate command.
@@ -52,8 +52,6 @@ func init() {
 
 	generateCmd.Flags().BoolVar(&flagDryRun, "dry-run", false,
 		"Print generated HCL to stdout instead of writing files")
-	generateCmd.Flags().StringVar(&flagOutputFilename, "output-filename", "",
-		"Override output filename within each layer (default: migrations.tf)")
 	generateCmd.Flags().StringVar(&flagTofuPath, "tofu-path", "",
 		"Override path to the tofu binary (default: auto-detect from PATH)")
 }
@@ -84,10 +82,9 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 	cachedReader := state.NewCachedStateReader(stateReader)
 
 	cfg := engine.Config{
-		StateReader:    cachedReader,
-		TofuPath:       tofuPath,
-		DryRun:         flagDryRun,
-		OutputFilename: flagOutputFilename,
+		StateReader: cachedReader,
+		TofuPath:    tofuPath,
+		DryRun:      flagDryRun,
 	}
 
 	eng := engine.New(cfg)
@@ -99,11 +96,18 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 	}
 
 	if flagDryRun {
-		// In dry-run mode, print the rendered content for each layer
+		// In dry-run mode, print the rendered content for each output file
 		w := eng.Writer()
-		for layer, content := range w.RenderAll() {
-			fmt.Fprintf(os.Stdout, "# Layer: %s\n", layer)
-			fmt.Fprintln(os.Stdout, content)
+		rendered := w.RenderAll()
+		// Sort paths for deterministic output
+		paths := make([]string, 0, len(rendered))
+		for p := range rendered {
+			paths = append(paths, p)
+		}
+		sort.Strings(paths)
+		for _, p := range paths {
+			fmt.Fprintf(os.Stdout, "# File: %s\n", p)
+			fmt.Fprintln(os.Stdout, rendered[p])
 		}
 	} else {
 		for _, f := range files {

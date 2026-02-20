@@ -18,6 +18,9 @@ type RemovedBlock struct {
 
 	// Description is an optional human-readable description.
 	Description string
+
+	// Source is the migration YAML file path that created this block.
+	Source string
 }
 
 // Render returns the HCL representation of the removed block.
@@ -39,4 +42,14 @@ func (b *RemovedBlock) LayerPath() string {
 // Comment returns the block's description.
 func (b *RemovedBlock) Comment() string {
 	return b.Description
+}
+
+// SourceFile returns the migration YAML file that created this block.
+func (b *RemovedBlock) SourceFile() string {
+	return b.Source
+}
+
+// SortAddress returns the removed resource address for sorting.
+func (b *RemovedBlock) SortAddress() string {
+	return b.From
 }

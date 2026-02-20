@@ -16,6 +16,9 @@ type MovedBlock struct {
 
 	// Description is an optional human-readable description.
 	Description string
+
+	// Source is the migration YAML file path that created this block.
+	Source string
 }
 
 // Render returns the HCL representation of the moved block.
@@ -34,4 +37,14 @@ func (b *MovedBlock) LayerPath() string {
 // Comment returns the block's description.
 func (b *MovedBlock) Comment() string {
 	return b.Description
+}
+
+// SourceFile returns the migration YAML file that created this block.
+func (b *MovedBlock) SourceFile() string {
+	return b.Source
+}
+
+// SortAddress returns the move source address for sorting.
+func (b *MovedBlock) SortAddress() string {
+	return b.From
 }

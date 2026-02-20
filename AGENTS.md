@@ -499,6 +499,22 @@ Examples:
 
 When generating files, check for existing migrations and use the next available number.
 
+## Output File Naming
+
+Each migration YAML file produces a separate `.tf` file per layer with a content-addressed filename:
+
+```
+<layer>/migration.<yaml_stem>.<sha256_8hex>.tf
+```
+
+For example, `001_move_web.yaml` → `./layers/app/migration.001_move_web.a1b2c3d4.tf`
+
+Blocks within each output file are sorted deterministically:
+1. `removed` blocks first, then `moved`, then `import`
+2. Within each type, sorted alphabetically by address
+
+The SHA-256 hash ensures filenames change when content changes but remain stable across identical runs.
+
 ## Running After Generation
 
 After creating a migration file, the user runs:
