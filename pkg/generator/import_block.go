@@ -20,6 +20,9 @@ type ImportBlock struct {
 
 	// Description is an optional human-readable description.
 	Description string
+
+	// Source is the migration YAML file path that created this block.
+	Source string
 }
 
 // Render returns the HCL representation of the import block.
@@ -45,4 +48,14 @@ func (b *ImportBlock) LayerPath() string {
 // Comment returns the block's description.
 func (b *ImportBlock) Comment() string {
 	return b.Description
+}
+
+// SourceFile returns the migration YAML file that created this block.
+func (b *ImportBlock) SourceFile() string {
+	return b.Source
+}
+
+// SortAddress returns the import target address for sorting.
+func (b *ImportBlock) SortAddress() string {
+	return b.To
 }

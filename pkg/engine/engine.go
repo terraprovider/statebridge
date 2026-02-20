@@ -22,27 +22,22 @@ type Config struct {
 
 	// DryRun if true prints output but does not write files.
 	DryRun bool
-
-	// OutputFilename overrides the default migration HCL filename.
-	OutputFilename string
 }
 
 // Engine orchestrates the full migration pipeline: parse YAML, read state,
 // resolve imports, expand wildcards, generate HCL, and write output files.
 type Engine struct {
-	config   Config
-	writer   *generator.Writer
-	resolver *Resolver
-	parser   *migration.Parser
+	config            Config
+	writer            *generator.Writer
+	resolver          *Resolver
+	parser            *migration.Parser
+	currentSourceFile string
 }
 
 // New creates a new Engine with the given configuration.
 func New(cfg Config) *Engine {
 	w := generator.NewWriter()
 	w.DryRun = cfg.DryRun
-	if cfg.OutputFilename != "" {
-		w.OutputFilename = cfg.OutputFilename
-	}
 
 	return &Engine{
 		config:   cfg,
@@ -105,6 +100,7 @@ func (e *Engine) ProcessFiles(ctx context.Context, paths []string) ([]string, er
 // HCL blocks for each operation. For keyed moves, it coordinates across
 // operations to ensure completeness and prevent duplicate removed blocks.
 func (e *Engine) processMigration(ctx context.Context, mf *migration.MigrationFile) error {
+	e.currentSourceFile = mf.FilePath
 	tracker := newWildcardTracker()
 
 	for i, op := range mf.Operations {
@@ -222,6 +218,7 @@ func (e *Engine) processMoveSimple(
 				Destroy:     false,
 				Layer:       srcLayer,
 				Description: description,
+				Source:      e.currentSourceFile,
 			})
 		}
 
@@ -236,6 +233,7 @@ func (e *Engine) processMoveSimple(
 				ID:          importID,
 				Layer:       dstLayer,
 				Description: description,
+				Source:      e.currentSourceFile,
 			})
 		}
 	} else {
@@ -252,12 +250,14 @@ func (e *Engine) processMoveSimple(
 				Destroy:     false,
 				Layer:       srcLayer,
 				Description: description,
+				Source:      e.currentSourceFile,
 			},
 			&generator.ImportBlock{
 				To:          dstAddr,
 				ID:          importID,
 				Layer:       dstLayer,
 				Description: description,
+				Source:      e.currentSourceFile,
 			},
 		)
 	}
@@ -366,6 +366,7 @@ func (e *Engine) processRename(op *migration.Operation) ([]generator.Block, erro
 			To:          migration.FullAddress(op.AddressPrefix, entry.To),
 			Layer:       op.Layer,
 			Description: op.Description,
+			Source:      e.currentSourceFile,
 		})
 	}
 	return blocks, nil
@@ -381,6 +382,7 @@ func (e *Engine) processRemove(op *migration.Operation) ([]generator.Block, erro
 			Destroy:     op.DestroyValue(),
 			Layer:       op.Layer,
 			Description: op.Description,
+			Source:      e.currentSourceFile,
 		})
 	}
 	return blocks, nil
@@ -397,6 +399,7 @@ func (e *Engine) processImport(op *migration.Operation) ([]generator.Block, erro
 			Provider:    entry.Provider,
 			Layer:       op.Layer,
 			Description: op.Description,
+			Source:      e.currentSourceFile,
 		})
 	}
 	return blocks, nil

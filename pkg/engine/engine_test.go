@@ -12,6 +12,31 @@ import (
 	"github.com/redtenant/tfmigrate/internal/testutil"
 )
 
+// findLayerFile returns the first output file path whose directory matches the
+// given layer. Returns empty string if not found.
+func findLayerFile(files []string, layer string) string {
+	for _, f := range files {
+		if strings.HasPrefix(f, layer+string(filepath.Separator)) || strings.HasPrefix(f, layer+"/") {
+			return f
+		}
+	}
+	return ""
+}
+
+// readLayerFile reads the content of the output file in the given layer.
+func readLayerFile(t *testing.T, files []string, layer string) string {
+	t.Helper()
+	f := findLayerFile(files, layer)
+	if f == "" {
+		t.Fatalf("no output file found for layer %q in %v", layer, files)
+	}
+	content, err := os.ReadFile(f)
+	if err != nil {
+		t.Fatalf("reading output file %q: %v", f, err)
+	}
+	return string(content)
+}
+
 func TestEngine_ProcessFiles_SimpleMove(t *testing.T) {
 	dir := t.TempDir()
 	srcLayer := filepath.Join(dir, "layers", "compute")
@@ -58,7 +83,20 @@ operations:
 		t.Fatalf("expected 2 files, got %d: %v", len(files), files)
 	}
 
-	srcContent, err := os.ReadFile(filepath.Join(srcLayer, "migrations.tf"))
+	// Find source and destination files from returned paths
+	var srcFile, dstFile string
+	for _, f := range files {
+		if strings.HasPrefix(f, srcLayer) {
+			srcFile = f
+		} else if strings.HasPrefix(f, dstLayer) {
+			dstFile = f
+		}
+	}
+	if srcFile == "" || dstFile == "" {
+		t.Fatalf("expected one file per layer, got: %v", files)
+	}
+
+	srcContent, err := os.ReadFile(srcFile)
 	if err != nil {
 		t.Fatalf("reading source migration file: %v", err)
 	}
@@ -69,7 +107,7 @@ operations:
 		t.Error("expected resource address in source layer")
 	}
 
-	dstContent, err := os.ReadFile(filepath.Join(dstLayer, "migrations.tf"))
+	dstContent, err := os.ReadFile(dstFile)
 	if err != nil {
 		t.Fatalf("reading destination migration file: %v", err)
 	}
@@ -262,25 +300,19 @@ operations:
 		t.Fatalf("expected 2 files, got %d: %v", len(files), files)
 	}
 
-	srcContent, err := os.ReadFile(filepath.Join(srcLayer, "migrations.tf"))
-	if err != nil {
-		t.Fatalf("reading source: %v", err)
-	}
-	if strings.Count(string(srcContent), "removed {") != 1 {
+	srcContent := readLayerFile(t, files, srcLayer)
+	if strings.Count(srcContent, "removed {") != 1 {
 		t.Errorf("expected 1 removed block, got:\n%s", srcContent)
 	}
 
-	dstContent, err := os.ReadFile(filepath.Join(dstLayer, "migrations.tf"))
-	if err != nil {
-		t.Fatalf("reading destination: %v", err)
-	}
-	if strings.Count(string(dstContent), "import {") != 2 {
+	dstContent := readLayerFile(t, files, dstLayer)
+	if strings.Count(dstContent, "import {") != 2 {
 		t.Errorf("expected 2 import blocks, got:\n%s", dstContent)
 	}
-	if !strings.Contains(string(dstContent), `aws_s3_bucket.data["key-a"]`) {
+	if !strings.Contains(dstContent, `aws_s3_bucket.data["key-a"]`) {
 		t.Error("expected key-a in destination")
 	}
-	if !strings.Contains(string(dstContent), `aws_s3_bucket.data["key-b"]`) {
+	if !strings.Contains(dstContent, `aws_s3_bucket.data["key-b"]`) {
 		t.Error("expected key-b in destination")
 	}
 }
@@ -342,31 +374,25 @@ operations:
 		t.Fatalf("expected 2 files, got %d: %v", len(files), files)
 	}
 
-	srcContent, err := os.ReadFile(filepath.Join(srcLayer, "migrations.tf"))
-	if err != nil {
-		t.Fatalf("reading source: %v", err)
-	}
-	if strings.Count(string(srcContent), "removed {") != 1 {
+	srcContent := readLayerFile(t, files, srcLayer)
+	if strings.Count(srcContent, "removed {") != 1 {
 		t.Errorf("expected 1 removed block, got:\n%s", srcContent)
 	}
 
-	dstContent, err := os.ReadFile(filepath.Join(dstLayer, "migrations.tf"))
-	if err != nil {
-		t.Fatalf("reading destination: %v", err)
-	}
-	if strings.Count(string(dstContent), "import {") != 3 {
+	dstContent := readLayerFile(t, files, dstLayer)
+	if strings.Count(dstContent, "import {") != 3 {
 		t.Errorf("expected 3 import blocks, got:\n%s", dstContent)
 	}
 	// exact_key → new_exact
-	if !strings.Contains(string(dstContent), `aws_resource.items["new_exact"]`) {
+	if !strings.Contains(dstContent, `aws_resource.items["new_exact"]`) {
 		t.Error("expected exact key renamed to new_exact")
 	}
 	// prefix_alpha → alpha
-	if !strings.Contains(string(dstContent), `aws_resource.items["alpha"]`) {
+	if !strings.Contains(dstContent, `aws_resource.items["alpha"]`) {
 		t.Error("expected prefix_alpha trimmed to alpha")
 	}
 	// prefix_beta → beta
-	if !strings.Contains(string(dstContent), `aws_resource.items["beta"]`) {
+	if !strings.Contains(dstContent, `aws_resource.items["beta"]`) {
 		t.Error("expected prefix_beta trimmed to beta")
 	}
 }
@@ -426,15 +452,12 @@ operations:
 		t.Fatalf("expected 2 files, got %d: %v", len(files), files)
 	}
 
-	dstContent, err := os.ReadFile(filepath.Join(dstLayer, "migrations.tf"))
-	if err != nil {
-		t.Fatalf("reading destination: %v", err)
-	}
+	dstContent := readLayerFile(t, files, dstLayer)
 	// Address prefix should be applied: module.ig.azuread_access_package_catalog.all["customer_approval"]
-	if !strings.Contains(string(dstContent), `module.ig.azuread_access_package_catalog.all["customer_approval"]`) {
+	if !strings.Contains(dstContent, `module.ig.azuread_access_package_catalog.all["customer_approval"]`) {
 		t.Errorf("expected address prefix applied to destination, got:\n%s", dstContent)
 	}
-	if !strings.Contains(string(dstContent), `module.ig.azuread_access_package_catalog.all["vaw"]`) {
+	if !strings.Contains(dstContent, `module.ig.azuread_access_package_catalog.all["vaw"]`) {
 		t.Errorf("expected address prefix applied to vaw destination, got:\n%s", dstContent)
 	}
 }
@@ -506,27 +529,18 @@ operations:
 		t.Fatalf("expected 3 files (source + 2 destinations), got %d: %v", len(files), files)
 	}
 
-	srcContent, err := os.ReadFile(filepath.Join(srcLayer, "migrations.tf"))
-	if err != nil {
-		t.Fatalf("reading source: %v", err)
-	}
-	if strings.Count(string(srcContent), "removed {") != 1 {
+	srcContent := readLayerFile(t, files, srcLayer)
+	if strings.Count(srcContent, "removed {") != 1 {
 		t.Errorf("expected exactly 1 removed block in source, got:\n%s", srcContent)
 	}
 
-	engContent, err := os.ReadFile(filepath.Join(engLayer, "migrations.tf"))
-	if err != nil {
-		t.Fatalf("reading engineering layer: %v", err)
-	}
-	if strings.Count(string(engContent), "import {") != 2 {
+	engContent := readLayerFile(t, files, engLayer)
+	if strings.Count(engContent, "import {") != 2 {
 		t.Errorf("expected 2 import blocks in engineering, got:\n%s", engContent)
 	}
 
-	finContent, err := os.ReadFile(filepath.Join(finLayer, "migrations.tf"))
-	if err != nil {
-		t.Fatalf("reading finance layer: %v", err)
-	}
-	if strings.Count(string(finContent), "import {") != 2 {
+	finContent := readLayerFile(t, files, finLayer)
+	if strings.Count(finContent, "import {") != 2 {
 		t.Errorf("expected 2 import blocks in finance, got:\n%s", finContent)
 	}
 }
@@ -859,24 +873,18 @@ operations:
 
 	engine := New(Config{StateReader: mock})
 
-	_, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
+	files, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	srcContent, err := os.ReadFile(filepath.Join(srcLayer, "migrations.tf"))
-	if err != nil {
-		t.Fatalf("reading source: %v", err)
-	}
-	if !strings.Contains(string(srcContent), "module.old.resource.all") {
+	srcContent := readLayerFile(t, files, srcLayer)
+	if !strings.Contains(srcContent, "module.old.resource.all") {
 		t.Error("expected source address in removed block")
 	}
 
-	dstContent, err := os.ReadFile(filepath.Join(dstLayer, "migrations.tf"))
-	if err != nil {
-		t.Fatalf("reading destination: %v", err)
-	}
-	if !strings.Contains(string(dstContent), `module.new.resource.all["key1"]`) {
+	dstContent := readLayerFile(t, files, dstLayer)
+	if !strings.Contains(dstContent, `module.new.resource.all["key1"]`) {
 		t.Errorf("expected destination_address override in import, got:\n%s", dstContent)
 	}
 }

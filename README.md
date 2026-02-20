@@ -38,9 +38,9 @@ operations:
 tfmigrate generate migrations/001_move_web_server.yaml
 ```
 
-3. This produces two files:
+3. This produces two files (one per layer, named with a content hash):
 
-**`./layers/compute/migrations.tf`**
+**`./layers/compute/migration.001_move.a1b2c3d4.tf`**
 ```hcl
 removed {
   from = aws_instance.web
@@ -51,7 +51,7 @@ removed {
 }
 ```
 
-**`./layers/app/migrations.tf`**
+**`./layers/app/migration.001_move.e5f6a7b8.tf`**
 ```hcl
 import {
   to = aws_instance.web
@@ -87,7 +87,6 @@ tfmigrate generate migrations/001_move.yaml other_migrations/
 | Flag | Description |
 |------|-------------|
 | `--dry-run` | Print generated HCL to stdout without writing files |
-| `--output-filename <name>` | Override output filename (default: `migrations.tf`) |
 | `--tofu-path <path>` | Override path to the `tofu` binary (default: auto-detect from PATH) |
 
 ### Dry Run
@@ -97,6 +96,23 @@ Preview what would be generated without writing any files:
 ```bash
 tfmigrate generate --dry-run migrations/
 ```
+
+### Output File Naming
+
+Each migration YAML file produces a separate `.tf` file per layer, with a content-addressed filename:
+
+```
+<layer>/migration.<yaml_stem>.<sha256_8hex>.tf
+```
+
+For example, `migrations/001_move_web.yaml` generating blocks for two layers produces:
+- `./layers/compute/migration.001_move_web.a1b2c3d4.tf`
+- `./layers/app/migration.001_move_web.e5f6a7b8.tf`
+
+The 8-character SHA-256 hash is computed from the rendered HCL content, ensuring:
+- Filenames change when content changes (cache-busting)
+- Identical content always produces the same filename (deterministic)
+- Block ordering within each file is stable (sorted by type, then by address)
 
 ## Migration File Format
 
