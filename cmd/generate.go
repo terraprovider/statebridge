@@ -9,13 +9,16 @@ import (
 	tfjson "github.com/hashicorp/terraform-json"
 	"github.com/spf13/cobra"
 
+	"github.com/redtenant/tfmigrate/pkg/auth"
 	"github.com/redtenant/tfmigrate/pkg/engine"
 	"github.com/redtenant/tfmigrate/pkg/state"
+	"github.com/redtenant/tfmigrate/pkg/upload"
 )
 
 var (
 	flagDryRun   bool
 	flagTofuPath string
+	flagUpload   bool
 )
 
 // generateCmd represents the generate command.
@@ -42,7 +45,10 @@ Examples:
   tfmigrate generate migrations/001_move.yaml migrations/002_rename.yaml
 
   # Dry run: preview generated HCL without writing files
-  tfmigrate generate --dry-run migrations/`,
+  tfmigrate generate --dry-run migrations/
+
+  # Generate and upload to Azure Blob Storage
+  tfmigrate generate --upload migrations/`,
 	Args: cobra.MinimumNArgs(1),
 	RunE: runGenerate,
 }
@@ -54,9 +60,15 @@ func init() {
 		"Print generated HCL to stdout instead of writing files")
 	generateCmd.Flags().StringVar(&flagTofuPath, "tofu-path", "",
 		"Override path to the tofu binary (default: auto-detect from PATH)")
+	generateCmd.Flags().BoolVar(&flagUpload, "upload", false,
+		"Upload generated files to Azure Blob Storage after generation")
 }
 
 func runGenerate(cmd *cobra.Command, args []string) error {
+	if flagUpload && flagDryRun {
+		return fmt.Errorf("--upload and --dry-run cannot be used together")
+	}
+
 	// Resolve the tofu binary path
 	var tofuPath string
 	var stateReader state.StateReader
@@ -115,7 +127,42 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	if flagUpload {
+		if err := runUploadAfterGenerate(ctx, eng); err != nil {
+			return fmt.Errorf("uploading migration files: %w", err)
+		}
+	}
+
 	return nil
+}
+
+// runUploadAfterGenerate handles uploading generated files to Azure Blob Storage
+// after the generate pipeline completes.
+func runUploadAfterGenerate(ctx context.Context, eng *engine.Engine) error {
+	credCfg, err := auth.NewCredentialConfiguration(
+		auth.WithDefaultEnvironmentVariables(),
+	)
+	if err != nil {
+		return fmt.Errorf("configuring Azure credentials: %w", err)
+	}
+
+	cred, err := credCfg.AzCore()
+	if err != nil {
+		return fmt.Errorf("creating Azure credential: %w", err)
+	}
+
+	// Collect init args from all processed migration files
+	var initArgs []string
+	for _, mf := range eng.MigrationFiles() {
+		if mf.Init != nil {
+			initArgs = append(initArgs, mf.Init.Args...)
+		}
+	}
+
+	mgr := upload.NewManager(cred, initArgs)
+	rendered := eng.Writer().RenderAll()
+
+	return mgr.UploadRendered(ctx, rendered)
 }
 
 // noopStateReader is used as a fallback when the tofu binary is not found.

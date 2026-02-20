@@ -32,6 +32,7 @@ type Engine struct {
 	resolver          *Resolver
 	parser            *migration.Parser
 	currentSourceFile string
+	migrationFiles    []*migration.MigrationFile
 }
 
 // New creates a new Engine with the given configuration.
@@ -53,6 +54,11 @@ func (e *Engine) Writer() *generator.Writer {
 	return e.writer
 }
 
+// MigrationFiles returns the parsed migration files from the last ProcessFiles call.
+func (e *Engine) MigrationFiles() []*migration.MigrationFile {
+	return e.migrationFiles
+}
+
 // ProcessFiles parses and processes a list of migration file paths (or directories),
 // generates HCL blocks, and writes them to the appropriate layer directories.
 // Returns the list of generated file paths.
@@ -61,6 +67,8 @@ func (e *Engine) ProcessFiles(ctx context.Context, paths []string) ([]string, er
 	if err != nil {
 		return nil, fmt.Errorf("parsing migration files: %w", err)
 	}
+
+	e.migrationFiles = files
 
 	for _, mf := range files {
 		if errs := migration.Validate(mf); len(errs) > 0 {
