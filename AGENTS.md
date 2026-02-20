@@ -526,11 +526,80 @@ tfmigrate generate --dry-run migrations/
 # Generate the HCL files
 tfmigrate generate migrations/
 
+# Generate and upload to Azure Blob Storage in one step
+tfmigrate generate --upload migrations/
+
 # Then in each affected layer:
 cd <layer-path>
 tofu plan    # verify the migration
 tofu apply   # execute it
 ```
+
+## Uploading Migrations to Azure Blob Storage
+
+Generated migration files can be persisted to Azure Blob Storage using either the `--upload` flag on `generate` or the standalone `upload` command.
+
+### Generate and Upload
+
+```bash
+tfmigrate generate --upload migrations/
+```
+
+Runs the full pipeline, writes files to disk, then uploads each generated `.tf` file to `migrations/<filename>` in the Azure Blob Storage container configured in that layer's backend. Cannot be combined with `--dry-run`.
+
+### Standalone Upload
+
+```bash
+tfmigrate upload [layer-dirs...] [flags]
+```
+
+Uploads pre-generated `migration.*.tf` files from layer directories. Useful when generation and upload are separate CI steps.
+
+**Flags:**
+
+| Flag | Description |
+|------|-------------|
+| `--backend-config` | Backend config override in `key=value` format (repeatable) |
+| `--migration-file` | Migration YAML to read init args from for backend config discovery |
+
+**Examples:**
+
+```bash
+# Upload from specific layers
+tfmigrate upload ./layers/compute ./layers/networking
+
+# Override backend config
+tfmigrate upload --backend-config=storage_account_name=myacct ./layers/compute
+
+# Read init args from migration YAML
+tfmigrate upload --migration-file=migrations/001_move.yaml ./layers/compute
+```
+
+### Backend Configuration Discovery
+
+The upload target (storage account + container) is resolved per layer:
+
+1. Parse `.tf` files in the layer directory for `terraform { backend "azurerm" { ... } }`
+2. Extract `-backend-config=key=value` pairs from init args (YAML `init.args` or `--backend-config` flags)
+3. Merge: init args override inline HCL values
+
+Required fields: `storage_account_name`, `container_name`.
+
+### Version Cleanup
+
+Before uploading, existing blobs matching `migrations/migration.<yaml_stem>.*.tf` are checked. Old versions (different content hash) are deleted automatically. Messages are printed to stderr:
+
+```
+Removed old version: migrations/migration.001_move.oldold00.tf
+Uploaded: migrations/migration.001_move.newnew99.tf
+```
+
+### Authentication
+
+Uses `pkg/auth` for Azure credentials via environment variables:
+- `ARM_CLIENT_ID`, `ARM_TENANT_ID`, `ARM_CLIENT_SECRET` (service principal)
+- `ARM_USE_CLI` (Azure CLI)
+- `ARM_USE_MSI` (managed identity)
 
 ## Project Structure
 
@@ -545,4 +614,9 @@ Key source files for understanding the codebase:
 - `pkg/engine/resolver.go` — import ID resolution and state lookups
 - `pkg/engine/tracker.go` — cross-operation key tracking and completeness checking
 - `pkg/generator/` — HCL block rendering (import, moved, removed)
-- `cmd/generate.go` — CLI entry point
+- `pkg/auth/` — Azure credential management (azcore, azidentity, hashicorp graph)
+- `pkg/upload/backend.go` — backend config discovery (HCL parsing + init arg merging)
+- `pkg/upload/uploader.go` — Azure Blob Storage operations (BlobUploader interface)
+- `pkg/upload/upload.go` — upload orchestration (Manager, version cleanup)
+- `cmd/generate.go` — CLI entry point for generate command (with `--upload` flag)
+- `cmd/upload.go` — CLI entry point for standalone upload command

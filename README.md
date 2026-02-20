@@ -88,6 +88,7 @@ tfmigrate generate migrations/001_move.yaml other_migrations/
 |------|-------------|
 | `--dry-run` | Print generated HCL to stdout without writing files |
 | `--tofu-path <path>` | Override path to the `tofu` binary (default: auto-detect from PATH) |
+| `--upload` | Upload generated files to Azure Blob Storage after generation |
 
 ### Dry Run
 
@@ -96,6 +97,72 @@ Preview what would be generated without writing any files:
 ```bash
 tfmigrate generate --dry-run migrations/
 ```
+
+### Upload to Azure Blob Storage
+
+Generated migration files can be uploaded to Azure Blob Storage, using the backend configuration from each layer's Terraform files and/or init args.
+
+#### Generate and upload in one step
+
+```bash
+tfmigrate generate --upload migrations/
+```
+
+This runs the full generation pipeline and then uploads each generated `.tf` file to the `migrations/` directory in the Azure Blob Storage container configured in that layer's backend. The `--upload` flag cannot be combined with `--dry-run`.
+
+#### Upload pre-generated files
+
+Use the standalone `upload` command to upload migration files that were already generated to disk:
+
+```bash
+tfmigrate upload ./layers/compute ./layers/networking
+```
+
+Each layer directory is scanned for `migration.*.tf` files and uploaded to the storage container discovered from the layer's backend configuration.
+
+##### Upload Flags
+
+| Flag | Description |
+|------|-------------|
+| `--backend-config` | Backend config overrides in `key=value` format (repeatable) |
+| `--migration-file` | Migration YAML file to read init args from for backend config discovery |
+
+```bash
+# Override backend config values
+tfmigrate upload --backend-config=storage_account_name=myacct ./layers/compute
+
+# Read init args from a migration YAML for backend config discovery
+tfmigrate upload --migration-file=migrations/001_move.yaml ./layers/compute
+```
+
+#### Backend Configuration Discovery
+
+The upload target (storage account and container) is resolved per layer by:
+
+1. Parsing `.tf` files in the layer directory for a `backend "azurerm"` block
+2. Extracting `-backend-config=key=value` pairs from init args (YAML `init.args` or `--backend-config` flags)
+3. Merging: init args override inline HCL values
+
+Required backend fields: `storage_account_name`, `container_name`.
+
+#### Version Cleanup
+
+Before uploading, the tool checks for existing blobs matching the same migration stem (e.g., `migrations/migration.001_move.*.tf`). Old versions with a different content hash are automatically deleted. A message is printed to stderr for each removal:
+
+```
+Removed old version: migrations/migration.001_move.oldold00.tf
+Uploaded: migrations/migration.001_move.newnew99.tf
+```
+
+The storage account is expected to have blob versioning enabled, so deleted versions remain recoverable through Azure's versioning.
+
+#### Authentication
+
+Upload commands authenticate using Azure SDK credentials configured through environment variables. The following are supported via the `pkg/auth` package:
+
+- `ARM_CLIENT_ID`, `ARM_TENANT_ID`, `ARM_CLIENT_SECRET` (service principal)
+- `ARM_USE_CLI` (Azure CLI credential)
+- `ARM_USE_MSI` (managed identity)
 
 ### Output File Naming
 
@@ -463,6 +530,8 @@ pkg/
   template/    - Go template evaluation with custom functions
   generator/   - HCL block rendering and file output
   engine/      - Pipeline orchestration, key matching, wildcard tracking
+  auth/        - Azure credential management (azcore, azidentity)
+  upload/      - Azure Blob Storage upload for generated migrations
 ```
 
 ## Requirements
