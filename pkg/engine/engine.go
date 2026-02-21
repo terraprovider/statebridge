@@ -99,6 +99,11 @@ func (e *Engine) ProcessFiles(ctx context.Context, paths []string) ([]string, er
 		if err := e.processMigration(ctx, mf); err != nil {
 			return nil, fmt.Errorf("processing %q: %w", mf.FilePath, err)
 		}
+
+		// Store metadata (conditions, init args) for this migration file.
+		// The Writer uses this at render time to embed metadata comments
+		// in the generated .tf files.
+		e.writer.SetFileMetadata(mf.FilePath, buildFileMetadata(mf))
 	}
 
 	return e.writer.WriteAll()
@@ -449,4 +454,54 @@ func (e *Engine) evaluateCondition(ctx context.Context, mf *migration.MigrationF
 	}
 
 	return true, nil
+}
+
+// buildFileMetadata creates a MigrationMetadata from a parsed MigrationFile.
+// The Resources field is left empty here; it will be populated by the Writer
+// at render time from the blocks in each (layer, sourceFile) group.
+func buildFileMetadata(mf *migration.MigrationFile) *generator.MigrationMetadata {
+	meta := &generator.MigrationMetadata{}
+
+	if mf.Condition != nil {
+		meta.Conditions = convertCondition(mf.Condition)
+	}
+
+	if mf.Init != nil && len(mf.Init.Args) > 0 {
+		meta.InitArgs = make([]string, len(mf.Init.Args))
+		copy(meta.InitArgs, mf.Init.Args)
+	}
+
+	return meta
+}
+
+// convertCondition converts a migration.Condition to a generator.MetadataCondition.
+func convertCondition(cond *migration.Condition) *generator.MetadataCondition {
+	if cond == nil {
+		return nil
+	}
+
+	mc := &generator.MetadataCondition{}
+
+	for _, check := range cond.ResourcesExist {
+		addrsCopy := make([]string, len(check.Addresses))
+		copy(addrsCopy, check.Addresses)
+		mc.ResourcesExist = append(mc.ResourcesExist, generator.MetadataResourceCheck{
+			Layer:     check.Layer,
+			Addresses: addrsCopy,
+		})
+	}
+
+	for _, check := range cond.ResourcesNotExist {
+		addrsCopy := make([]string, len(check.Addresses))
+		copy(addrsCopy, check.Addresses)
+		mc.ResourcesNotExist = append(mc.ResourcesNotExist, generator.MetadataResourceCheck{
+			Layer:     check.Layer,
+			Addresses: addrsCopy,
+		})
+	}
+
+	if len(mc.ResourcesExist) == 0 && len(mc.ResourcesNotExist) == 0 {
+		return nil
+	}
+	return mc
 }

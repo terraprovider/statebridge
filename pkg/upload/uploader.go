@@ -3,6 +3,7 @@ package upload
 import (
 	"context"
 	"fmt"
+	"io"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob"
@@ -18,6 +19,9 @@ type BlobUploader interface {
 
 	// DeleteBlob deletes a single blob by name.
 	DeleteBlob(ctx context.Context, blobName string) error
+
+	// DownloadBlob downloads a blob's content by name.
+	DownloadBlob(ctx context.Context, blobName string) ([]byte, error)
 }
 
 // AzureBlobUploader implements BlobUploader using the Azure Blob Storage SDK.
@@ -77,4 +81,19 @@ func (u *AzureBlobUploader) DeleteBlob(ctx context.Context, blobName string) err
 		return fmt.Errorf("deleting blob %q from container %q: %w", blobName, u.containerName, err)
 	}
 	return nil
+}
+
+// DownloadBlob downloads a blob's content by name.
+func (u *AzureBlobUploader) DownloadBlob(ctx context.Context, blobName string) ([]byte, error) {
+	resp, err := u.client.DownloadStream(ctx, u.containerName, blobName, nil)
+	if err != nil {
+		return nil, fmt.Errorf("downloading blob %q from container %q: %w", blobName, u.containerName, err)
+	}
+	defer resp.Body.Close()
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("reading blob %q content: %w", blobName, err)
+	}
+	return data, nil
 }

@@ -15,16 +15,18 @@ import (
 
 // mockBlobUploader records all operations for verification.
 type mockBlobUploader struct {
-	mu       sync.Mutex
-	uploaded map[string][]byte   // blobName -> content
-	deleted  []string            // blob names deleted (in order)
-	blobs    map[string][]string // prefix -> blob names returned by ListBlobs
+	mu        sync.Mutex
+	uploaded  map[string][]byte   // blobName -> content
+	deleted   []string            // blob names deleted (in order)
+	blobs     map[string][]string // prefix -> blob names returned by ListBlobs
+	blobData  map[string][]byte   // blobName -> content for DownloadBlob
 }
 
 func newMockUploader() *mockBlobUploader {
 	return &mockBlobUploader{
 		uploaded: make(map[string][]byte),
 		blobs:    make(map[string][]string),
+		blobData: make(map[string][]byte),
 	}
 }
 
@@ -66,6 +68,27 @@ func (m *mockBlobUploader) DeleteBlob(_ context.Context, blobName string) error 
 	defer m.mu.Unlock()
 	m.deleted = append(m.deleted, blobName)
 	return nil
+}
+
+func (m *mockBlobUploader) DownloadBlob(_ context.Context, blobName string) ([]byte, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	data, ok := m.blobData[blobName]
+	if !ok {
+		// Also check uploaded content (uploaded blobs become downloadable)
+		data, ok = m.uploaded[blobName]
+		if !ok {
+			return nil, fmt.Errorf("blob %q not found", blobName)
+		}
+	}
+	return append([]byte{}, data...), nil
+}
+
+// setBlobData configures the mock to return specific content for a blob download.
+func (m *mockBlobUploader) setBlobData(blobName string, content []byte) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.blobData[blobName] = content
 }
 
 // setBlobs configures the mock to return specific blobs for a prefix.
