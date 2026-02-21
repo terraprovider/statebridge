@@ -151,6 +151,119 @@ func RelativizeCondition(cond *MetadataCondition, layerPath string) *MetadataCon
 	return result
 }
 
+// InferConditions derives download-time conditions from the block types in a
+// group. The rules are:
+//   - RemovedBlock: resources_exist for From (skip if already removed)
+//   - ImportBlock:  resources_not_exist for To (skip if already imported)
+//   - MovedBlock:   resources_exist for From AND resources_not_exist for To
+//
+// All conditions use layer "." (the owning layer at download time).
+// Returns nil if blocks is empty.
+func InferConditions(blocks []Block) *MetadataCondition {
+	if len(blocks) == 0 {
+		return nil
+	}
+
+	existSet := make(map[string]bool)
+	notExistSet := make(map[string]bool)
+
+	for _, b := range blocks {
+		switch blk := b.(type) {
+		case *RemovedBlock:
+			existSet[blk.From] = true
+		case *ImportBlock:
+			notExistSet[blk.To] = true
+		case *MovedBlock:
+			existSet[blk.From] = true
+			notExistSet[blk.To] = true
+		}
+	}
+
+	var result MetadataCondition
+
+	if len(existSet) > 0 {
+		result.ResourcesExist = []MetadataResourceCheck{{
+			Layer:     ".",
+			Addresses: sortedKeys(existSet),
+		}}
+	}
+	if len(notExistSet) > 0 {
+		result.ResourcesNotExist = []MetadataResourceCheck{{
+			Layer:     ".",
+			Addresses: sortedKeys(notExistSet),
+		}}
+	}
+
+	if len(result.ResourcesExist) == 0 && len(result.ResourcesNotExist) == 0 {
+		return nil
+	}
+	return &result
+}
+
+// MergeConditions combines two MetadataCondition values, grouping checks by
+// layer and deduplicating addresses. Returns nil if both inputs are nil or
+// the result is empty.
+func MergeConditions(a, b *MetadataCondition) *MetadataCondition {
+	if a == nil && b == nil {
+		return nil
+	}
+	if a == nil {
+		return b
+	}
+	if b == nil {
+		return a
+	}
+
+	existByLayer := make(map[string]map[string]bool)
+	notExistByLayer := make(map[string]map[string]bool)
+
+	collectChecks := func(checks []MetadataResourceCheck, target map[string]map[string]bool) {
+		for _, check := range checks {
+			if target[check.Layer] == nil {
+				target[check.Layer] = make(map[string]bool)
+			}
+			for _, addr := range check.Addresses {
+				target[check.Layer][addr] = true
+			}
+		}
+	}
+
+	collectChecks(a.ResourcesExist, existByLayer)
+	collectChecks(b.ResourcesExist, existByLayer)
+	collectChecks(a.ResourcesNotExist, notExistByLayer)
+	collectChecks(b.ResourcesNotExist, notExistByLayer)
+
+	result := &MetadataCondition{}
+
+	for _, layer := range sortedKeys(existByLayer) {
+		result.ResourcesExist = append(result.ResourcesExist, MetadataResourceCheck{
+			Layer:     layer,
+			Addresses: sortedKeys(existByLayer[layer]),
+		})
+	}
+	for _, layer := range sortedKeys(notExistByLayer) {
+		result.ResourcesNotExist = append(result.ResourcesNotExist, MetadataResourceCheck{
+			Layer:     layer,
+			Addresses: sortedKeys(notExistByLayer[layer]),
+		})
+	}
+
+	if len(result.ResourcesExist) == 0 && len(result.ResourcesNotExist) == 0 {
+		return nil
+	}
+	return result
+}
+
+// sortedKeys returns the keys of a map[string]bool in sorted order.
+func sortedKeys[V any](m map[string]V) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
 // pathsEqual compares two filesystem paths after cleaning.
 func pathsEqual(a, b string) bool {
 	return strings.TrimRight(a, "/") == strings.TrimRight(b, "/")

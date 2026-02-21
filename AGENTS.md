@@ -42,7 +42,7 @@ operations:
 
 ### File-Level Condition
 
-Optional. Controls whether the entire migration file is processed. If any check fails, the file is silently skipped.
+Optional. Adds explicit conditions that are merged with auto-inferred conditions (see below). Controls whether the migration file is processed at generation time.
 
 - `resources_exist`: ALL addresses must be found in the layer's state
 - `resources_not_exist`: NONE of the addresses must be found in the layer's state
@@ -61,6 +61,18 @@ condition:
       addresses:
         - "aws_instance.web"
 ```
+
+### Auto-Inferred Conditions
+
+Conditions are automatically inferred from block types and embedded in generated `.tf` metadata. This makes migrations idempotent by default without requiring explicit `condition:` blocks.
+
+| Block type | Inferred condition | Rationale |
+|------------|-------------------|-----------|
+| `removed`  | `resources_exist` for `from` | Skip if resource already gone |
+| `import`   | `resources_not_exist` for `to` | Skip if already imported |
+| `moved`    | `resources_exist` for `from` + `resources_not_exist` for `to` | Skip if rename already done |
+
+Inferred conditions always use layer `"."` (the owning layer). Explicit YAML conditions are merged additively with inferred ones (addresses deduplicated per layer).
 
 ### Common Field: `address_prefix`
 
@@ -375,15 +387,21 @@ operations:
 
 All keys in the source state must be collectively covered by the operations. The user must provide the prefixes or you must ask for them.
 
-### "Only run this migration if resources still exist in source" / "Make migration idempotent"
+### "Make migration idempotent"
 
-Add a `condition` block to check that the source resources still exist:
+Migrations are idempotent by default thanks to auto-inferred conditions. No explicit `condition` block is needed — the generated files automatically include `resources_exist`/`resources_not_exist` checks derived from the block types.
+
+For cross-layer checks or custom logic, add an explicit `condition` block (merged with inferred):
 
 ```yaml
-description: "Move web server (idempotent)"
+description: "Move web server (with cross-layer check)"
 condition:
   resources_exist:
     - layer: "<source layer>"
+      addresses:
+        - "<resource address>"
+  resources_not_exist:
+    - layer: "<destination layer>"
       addresses:
         - "<resource address>"
 operations:
@@ -392,32 +410,6 @@ operations:
     destination_layer: "<destination layer>"
     resources:
       - address: "<resource address>"
-```
-
-### "Only run if not already migrated" / "Skip if already imported"
-
-Check that resources don't exist in the destination yet:
-
-```yaml
-condition:
-  resources_not_exist:
-    - layer: "<destination layer>"
-      addresses:
-        - "<resource address>"
-```
-
-Combine both checks for maximum safety:
-
-```yaml
-condition:
-  resources_exist:
-    - layer: "<source layer>"
-      addresses:
-        - "<resource address>"
-  resources_not_exist:
-    - layer: "<destination layer>"
-      addresses:
-        - "<resource address>"
 ```
 
 ### "Run in CI where backends aren't initialized" / "Auto-init layers"
@@ -614,9 +606,9 @@ Downloads applicable migration files from the layer's blob container to the curr
 
 1. Discovers backend config from `.tf` files in cwd (+ `--backend-config` overrides)
 2. Lists `migrations/migration.*.tf` blobs in the layer's container
-3. Downloads each blob and parses embedded metadata
-4. For conditions with `layer == "."`: initializes backend (if `--backend-config` provided), reads state, evaluates conditions
-5. For cross-layer conditions: warns and treats as met (other layer state unavailable)
+3. Cleans up all existing `migration.*.tf` files in the target directory (blob storage is source of truth)
+4. Downloads each blob and parses embedded metadata
+5. Evaluates auto-inferred + explicit conditions: for `layer == "."`, reads state and checks; for cross-layer conditions, warns and treats as met
 6. Writes only applicable files; skipped files print a message to stderr
 
 ## Plan and Apply Commands
@@ -659,7 +651,7 @@ import {
 ```
 
 **Fields:**
-- `conditions` — from the migration YAML, with the owning layer replaced by `"."` for portability
+- `conditions` — auto-inferred from block types (`resources_exist` for removed/moved, `resources_not_exist` for import/moved), merged with any explicit YAML conditions. The owning layer is represented as `"."` for portability.
 - `resources` — all resource addresses touched by blocks in the file (used for `-target` flags)
 
 The metadata is produced by the generator during `ProcessFiles()` and embedded by the `Writer` at render time. The `download`, `plan`, and `apply` commands parse it using `generator.ParseMetadataComment()`.
