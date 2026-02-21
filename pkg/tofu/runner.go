@@ -4,6 +4,7 @@ package tofu
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -26,7 +27,8 @@ func NewRunner(tofuPath, workDir string) *Runner {
 
 // Plan runs tofu plan with optional -target flags.
 // Stdout and stderr are streamed directly to the terminal.
-func (r *Runner) Plan(ctx context.Context, targets []string, extraArgs []string) error {
+// Returns the tofu exit code and any execution error.
+func (r *Runner) Plan(ctx context.Context, targets []string, extraArgs []string) (int, error) {
 	args := []string{"plan"}
 	for _, t := range targets {
 		args = append(args, fmt.Sprintf("-target=%s", t))
@@ -37,7 +39,8 @@ func (r *Runner) Plan(ctx context.Context, targets []string, extraArgs []string)
 
 // Apply runs tofu apply -auto-approve with optional -target flags.
 // Stdout and stderr are streamed directly to the terminal.
-func (r *Runner) Apply(ctx context.Context, targets []string, extraArgs []string) error {
+// Returns the tofu exit code and any execution error.
+func (r *Runner) Apply(ctx context.Context, targets []string, extraArgs []string) (int, error) {
 	args := []string{"apply", "-auto-approve"}
 	for _, t := range targets {
 		args = append(args, fmt.Sprintf("-target=%s", t))
@@ -47,7 +50,10 @@ func (r *Runner) Apply(ctx context.Context, targets []string, extraArgs []string
 }
 
 // run executes a tofu command with the given arguments, streaming stdout/stderr.
-func (r *Runner) run(ctx context.Context, args []string) error {
+// Returns the process exit code and any error. If tofu exits with a non-zero
+// code, the exit code is returned with a nil error (the caller decides how to
+// handle it). A non-nil error indicates a failure to start the process.
+func (r *Runner) run(ctx context.Context, args []string) (int, error) {
 	cmd := exec.CommandContext(ctx, r.tofuPath, args...)
 	cmd.Dir = r.workDir
 	cmd.Stdout = os.Stdout
@@ -55,9 +61,13 @@ func (r *Runner) run(ctx context.Context, args []string) error {
 	cmd.Stdin = os.Stdin
 
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("tofu %s: %w", args[0], err)
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			return exitErr.ExitCode(), nil
+		}
+		return 1, fmt.Errorf("tofu %s: %w", args[0], err)
 	}
-	return nil
+	return 0, nil
 }
 
 // ScanMigrationTargets scans a directory for migration.*.tf files, parses

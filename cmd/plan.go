@@ -67,8 +67,9 @@ func runPlan(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("scanning migration targets: %w", err)
 	}
 
-	if len(targets) == 0 {
-		return fmt.Errorf("no migration files with metadata found in current directory")
+	if len(targets) == 0 && !flagPlanNoTarget {
+		fmt.Fprintln(os.Stderr, "No migration files found, nothing to plan.")
+		return nil
 	}
 
 	if !flagPlanNoTarget {
@@ -91,7 +92,14 @@ func runPlan(cmd *cobra.Command, args []string) error {
 	runner := tofu.NewRunner(tofuPath, cwd)
 	ctx := context.Background()
 
-	return runner.Plan(ctx, targets, extraArgs)
+	exitCode, err := runner.Plan(ctx, targets, extraArgs)
+	if err != nil {
+		return err
+	}
+	if exitCode != 0 {
+		return &ExitCodeError{Code: exitCode}
+	}
+	return nil
 }
 
 // resolveTofuPath returns the tofu binary path from a flag or PATH lookup.

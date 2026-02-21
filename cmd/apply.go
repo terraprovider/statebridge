@@ -66,8 +66,9 @@ func runApply(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("scanning migration targets: %w", err)
 	}
 
-	if len(targets) == 0 {
-		return fmt.Errorf("no migration files with metadata found in current directory")
+	if len(targets) == 0 && !flagApplyNoTarget {
+		fmt.Fprintln(os.Stderr, "No migration files found, nothing to apply.")
+		return nil
 	}
 
 	if !flagApplyNoTarget {
@@ -90,5 +91,12 @@ func runApply(cmd *cobra.Command, args []string) error {
 	runner := tofu.NewRunner(tofuPath, cwd)
 	ctx := context.Background()
 
-	return runner.Apply(ctx, targets, extraArgs)
+	exitCode, err := runner.Apply(ctx, targets, extraArgs)
+	if err != nil {
+		return err
+	}
+	if exitCode != 0 {
+		return &ExitCodeError{Code: exitCode}
+	}
+	return nil
 }
