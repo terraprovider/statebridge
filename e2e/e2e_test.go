@@ -21,6 +21,7 @@ func TestMain(m *testing.M) {
 // TestE2E_MoveResource tests moving a single resource (VNet) from the shared
 // layer to the networking layer.
 func TestE2E_MoveResource(t *testing.T) {
+	t.Parallel()
 	rootDir, prefix, vars := setupTestProject(t)
 
 	sharedDir := filepath.Join(rootDir, "layers", "shared")
@@ -39,16 +40,16 @@ func TestE2E_MoveResource(t *testing.T) {
 	// Verify VNet exists in shared state
 	assertResourceInState(t, sharedDir, "azurerm_virtual_network.main")
 
-	// Write migration YAML
-	migDir := writeMigration(t, rootDir, "001_move_vnet.yaml", `
+	// Write migration YAML with absolute layer paths
+	migDir := writeMigration(t, rootDir, "001_move_vnet.yaml", fmt.Sprintf(`
 description: "Move VNet from shared to networking"
 operations:
   - type: move
-    source_layer: "./layers/shared"
-    destination_layer: "./layers/networking"
+    source_layer: "%s"
+    destination_layer: "%s"
     resources:
       - address: "azurerm_virtual_network.main"
-`)
+`, sharedDir, networkingDir))
 
 	// Add the VNet resource definition to the networking layer
 	updateTfFile(t, networkingDir, "main.tf", fmt.Sprintf(`
@@ -108,7 +109,7 @@ resource "azurerm_resource_group" "importable" {
 `)
 
 	// Run the migration engine
-	files := runGenerate(t, rootDir, []string{migDir})
+	files := runGenerate(t, []string{migDir})
 	if len(files) == 0 {
 		t.Fatal("expected generated migration files, got none")
 	}
@@ -135,6 +136,7 @@ resource "azurerm_resource_group" "importable" {
 // TestE2E_KeyedMove tests moving for_each resources (storage accounts) from
 // the shared layer to the app layer with key remapping.
 func TestE2E_KeyedMove(t *testing.T) {
+	t.Parallel()
 	rootDir, prefix, vars := setupTestProject(t)
 
 	sharedDir := filepath.Join(rootDir, "layers", "shared")
@@ -153,20 +155,20 @@ func TestE2E_KeyedMove(t *testing.T) {
 		assertResourceInState(t, sharedDir, fmt.Sprintf(`azurerm_storage_account.accounts["%s"]`, key))
 	}
 
-	// Write keyed move migration YAML
-	migDir := writeMigration(t, rootDir, "001_move_storage.yaml", `
+	// Write keyed move migration YAML with absolute layer paths
+	migDir := writeMigration(t, rootDir, "001_move_storage.yaml", fmt.Sprintf(`
 description: "Move storage accounts with key remapping"
 operations:
   - type: move
-    source_layer: "./layers/shared"
-    destination_layer: "./layers/app"
+    source_layer: "%s"
+    destination_layer: "%s"
     resources:
       - address: "azurerm_storage_account.accounts"
         keys:
           alpha: app_alpha
           beta: app_beta
           gamma: app_gamma
-`)
+`, sharedDir, appDir))
 
 	// Add storage account resource to the app layer with new keys
 	updateTfFile(t, appDir, "main.tf", fmt.Sprintf(`
@@ -230,7 +232,7 @@ resource "azurerm_resource_group" "importable" {
 `)
 
 	// Run the migration engine
-	files := runGenerate(t, rootDir, []string{migDir})
+	files := runGenerate(t, []string{migDir})
 	if len(files) == 0 {
 		t.Fatal("expected generated migration files, got none")
 	}
@@ -257,6 +259,7 @@ resource "azurerm_resource_group" "importable" {
 
 // TestE2E_RenameResource tests renaming a resource within a single layer.
 func TestE2E_RenameResource(t *testing.T) {
+	t.Parallel()
 	rootDir, _, vars := setupTestProject(t)
 
 	sharedDir := filepath.Join(rootDir, "layers", "shared")
@@ -271,16 +274,16 @@ func TestE2E_RenameResource(t *testing.T) {
 	// Verify resource exists under old name
 	assertResourceInState(t, sharedDir, "azurerm_resource_group.importable")
 
-	// Write rename migration YAML
-	migDir := writeMigration(t, rootDir, "001_rename_rg.yaml", `
+	// Write rename migration YAML with absolute layer path
+	migDir := writeMigration(t, rootDir, "001_rename_rg.yaml", fmt.Sprintf(`
 description: "Rename importable resource group"
 operations:
   - type: rename
-    layer: "./layers/shared"
+    layer: "%s"
     renames:
       - from: "azurerm_resource_group.importable"
         to: "azurerm_resource_group.secondary"
-`)
+`, sharedDir))
 
 	// Update shared layer config to use the new name
 	updateTfFile(t, sharedDir, "main.tf", `
@@ -325,7 +328,7 @@ resource "azurerm_resource_group" "secondary" {
 `)
 
 	// Run the migration engine
-	files := runGenerate(t, rootDir, []string{migDir})
+	files := runGenerate(t, []string{migDir})
 	if len(files) == 0 {
 		t.Fatal("expected generated migration files, got none")
 	}
@@ -347,6 +350,7 @@ resource "azurerm_resource_group" "secondary" {
 // infrastructure) and then importing it back. These are tested together since
 // import requires a resource that exists in Azure but not in state.
 func TestE2E_RemoveAndImport(t *testing.T) {
+	t.Parallel()
 	rootDir, prefix, vars := setupTestProject(t)
 
 	sharedDir := filepath.Join(rootDir, "layers", "shared")
@@ -364,15 +368,15 @@ func TestE2E_RemoveAndImport(t *testing.T) {
 
 	// --- Phase 1: Remove ---
 
-	// Write remove migration YAML
-	migDir := writeMigration(t, rootDir, "001_remove_rg.yaml", `
+	// Write remove migration YAML with absolute layer path
+	migDir := writeMigration(t, rootDir, "001_remove_rg.yaml", fmt.Sprintf(`
 description: "Stop managing importable RG"
 operations:
   - type: remove
-    layer: "./layers/shared"
+    layer: "%s"
     addresses:
       - "azurerm_resource_group.importable"
-`)
+`, sharedDir))
 
 	// Remove the resource definition from shared layer
 	updateTfFile(t, sharedDir, "main.tf", `
@@ -412,7 +416,7 @@ resource "azurerm_virtual_network" "main" {
 `)
 
 	// Run the migration engine for remove
-	files := runGenerate(t, rootDir, []string{migDir})
+	files := runGenerate(t, []string{migDir})
 	if len(files) == 0 {
 		t.Fatal("expected generated migration files for remove, got none")
 	}
@@ -434,18 +438,18 @@ resource "azurerm_virtual_network" "main" {
 	migrationsDir := filepath.Join(rootDir, "migrations")
 	os.RemoveAll(migrationsDir)
 
-	// Write import migration YAML
+	// Write import migration YAML with absolute layer path
 	rgName := prefix + "-e2e-importable"
 	importID := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s", subscriptionID, rgName)
-	migDir = writeMigration(t, rootDir, "002_import_rg.yaml", formatMigrationYAML(`
+	migDir = writeMigration(t, rootDir, "002_import_rg.yaml", fmt.Sprintf(`
 description: "Import existing resource group"
 operations:
   - type: import
-    layer: "./layers/shared"
+    layer: "%s"
     imports:
       - address: "azurerm_resource_group.importable"
         import_id: "%s"
-`, importID))
+`, sharedDir, importID))
 
 	// Add the resource definition back to shared layer
 	updateTfFile(t, sharedDir, "main.tf", `
@@ -490,7 +494,7 @@ resource "azurerm_resource_group" "importable" {
 `)
 
 	// Run the migration engine for import
-	files = runGenerate(t, rootDir, []string{migDir})
+	files = runGenerate(t, []string{migDir})
 	if len(files) == 0 {
 		t.Fatal("expected generated migration files for import, got none")
 	}
@@ -510,6 +514,7 @@ resource "azurerm_resource_group" "importable" {
 // TestE2E_ConditionSkip tests that the condition system correctly skips
 // migrations when preconditions are not met.
 func TestE2E_ConditionSkip(t *testing.T) {
+	t.Parallel()
 	rootDir, _, vars := setupTestProject(t)
 
 	sharedDir := filepath.Join(rootDir, "layers", "shared")
@@ -523,22 +528,22 @@ func TestE2E_ConditionSkip(t *testing.T) {
 
 	// Write a migration with a condition that should NOT be met
 	// (resource that doesn't exist in state)
-	migDir := writeMigration(t, rootDir, "001_conditional.yaml", `
+	migDir := writeMigration(t, rootDir, "001_conditional.yaml", fmt.Sprintf(`
 description: "Should be skipped due to unmet condition"
 condition:
   resources_exist:
-    - layer: "./layers/shared"
+    - layer: "%s"
       addresses:
         - "azurerm_resource_group.nonexistent"
 operations:
   - type: remove
-    layer: "./layers/shared"
+    layer: "%s"
     addresses:
       - "azurerm_resource_group.importable"
-`)
+`, sharedDir, sharedDir))
 
 	// Run the migration engine — should produce no files since condition is not met
-	files := runGenerate(t, rootDir, []string{migDir})
+	files := runGenerate(t, []string{migDir})
 	if len(files) != 0 {
 		t.Errorf("expected no generated files (condition not met), got %d: %v", len(files), files)
 	}
@@ -547,20 +552,20 @@ operations:
 	assertResourceInState(t, sharedDir, "azurerm_resource_group.importable")
 
 	// Now test with a condition that IS met — second migration in same dir
-	writeMigration(t, rootDir, "002_conditional_met.yaml", `
+	writeMigration(t, rootDir, "002_conditional_met.yaml", fmt.Sprintf(`
 description: "Should proceed — condition is met"
 condition:
   resources_exist:
-    - layer: "./layers/shared"
+    - layer: "%s"
       addresses:
         - "azurerm_resource_group.importable"
 operations:
   - type: rename
-    layer: "./layers/shared"
+    layer: "%s"
     renames:
       - from: "azurerm_resource_group.importable"
         to: "azurerm_resource_group.secondary"
-`)
+`, sharedDir, sharedDir))
 
 	// Update shared layer to match the rename
 	updateTfFile(t, sharedDir, "main.tf", `
@@ -608,7 +613,7 @@ resource "azurerm_resource_group" "secondary" {
 	cleanupMigrationFiles(t, sharedDir)
 
 	// This time only the second migration (002) should generate output
-	files = runGenerate(t, rootDir, []string{migDir})
+	files = runGenerate(t, []string{migDir})
 	if len(files) == 0 {
 		t.Fatal("expected generated migration files for conditional rename, got none")
 	}

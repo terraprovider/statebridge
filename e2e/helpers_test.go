@@ -227,24 +227,11 @@ func writeMigration(t *testing.T, dir, name, content string) string {
 }
 
 // runGenerate runs the tfmigrate engine to process migration files and generate HCL.
-// workDir is the root directory (parent of layers/), migrationPaths are paths to
-// YAML files or directories. Returns the list of generated file paths.
-func runGenerate(t *testing.T, workDir string, migrationPaths []string) []string {
+// migrationPaths are absolute paths to YAML files or directories containing them.
+// Layer paths in the YAML must be absolute for parallel test safety.
+// Returns the list of generated file paths.
+func runGenerate(t *testing.T, migrationPaths []string) []string {
 	t.Helper()
-
-	// Change to workDir so relative layer paths resolve correctly
-	origDir, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("getting working directory: %v", err)
-	}
-	if err := os.Chdir(workDir); err != nil {
-		t.Fatalf("changing to work dir %s: %v", workDir, err)
-	}
-	defer func() {
-		if err := os.Chdir(origDir); err != nil {
-			t.Fatalf("restoring working directory: %v", err)
-		}
-	}()
 
 	reader, err := state.NewTofuStateReaderFromPath(nil)
 	if err != nil {
