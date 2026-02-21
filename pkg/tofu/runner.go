@@ -37,18 +37,6 @@ func (r *Runner) Plan(ctx context.Context, targets []string, extraArgs []string)
 	return r.run(ctx, args)
 }
 
-// Apply runs tofu apply -auto-approve with optional -target flags.
-// Stdout and stderr are streamed directly to the terminal.
-// Returns the tofu exit code and any execution error.
-func (r *Runner) Apply(ctx context.Context, targets []string, extraArgs []string) (int, error) {
-	args := []string{"apply", "-auto-approve"}
-	for _, t := range targets {
-		args = append(args, fmt.Sprintf("-target=%s", t))
-	}
-	args = append(args, extraArgs...)
-	return r.run(ctx, args)
-}
-
 // run executes a tofu command with the given arguments, streaming stdout/stderr.
 // Returns the process exit code and any error. If tofu exits with a non-zero
 // code, the exit code is returned with a nil error (the caller decides how to
@@ -72,7 +60,7 @@ func (r *Runner) run(ctx context.Context, args []string) (int, error) {
 
 // ScanMigrationTargets scans a directory for migration.*.tf files, parses
 // metadata from each, and returns the deduplicated sorted list of resource
-// addresses. This is used by plan and apply commands to determine -target flags.
+// addresses. This is used by the plan command to determine -target flags.
 func ScanMigrationTargets(dir string) ([]string, error) {
 	pattern := filepath.Join(dir, "migration.*.tf")
 	matches, err := filepath.Glob(pattern)
