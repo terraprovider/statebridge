@@ -224,3 +224,208 @@ func TestMetadataNoConditions(t *testing.T) {
 		t.Errorf("expected 1 resource, got %d", len(parsed.Resources))
 	}
 }
+
+func TestInferConditionsMixed(t *testing.T) {
+	blocks := []Block{
+		&RemovedBlock{From: "azurerm_rg.example", Layer: "/src", Source: "test.yaml"},
+		&ImportBlock{To: "azurerm_rg.example", Layer: "/dst", Source: "test.yaml"},
+		&ImportBlock{To: "azurerm_vnet.main", Layer: "/dst", Source: "test.yaml"},
+	}
+
+	cond := InferConditions(blocks)
+	if cond == nil {
+		t.Fatal("expected non-nil conditions")
+	}
+
+	// RemovedBlock → resources_exist
+	if len(cond.ResourcesExist) != 1 {
+		t.Fatalf("expected 1 resources_exist check, got %d", len(cond.ResourcesExist))
+	}
+	if cond.ResourcesExist[0].Layer != "." {
+		t.Errorf("resources_exist layer = %q, want %q", cond.ResourcesExist[0].Layer, ".")
+	}
+	if len(cond.ResourcesExist[0].Addresses) != 1 || cond.ResourcesExist[0].Addresses[0] != "azurerm_rg.example" {
+		t.Errorf("resources_exist addresses = %v, want [azurerm_rg.example]", cond.ResourcesExist[0].Addresses)
+	}
+
+	// ImportBlocks → resources_not_exist (sorted, deduplicated)
+	if len(cond.ResourcesNotExist) != 1 {
+		t.Fatalf("expected 1 resources_not_exist check, got %d", len(cond.ResourcesNotExist))
+	}
+	if cond.ResourcesNotExist[0].Layer != "." {
+		t.Errorf("resources_not_exist layer = %q, want %q", cond.ResourcesNotExist[0].Layer, ".")
+	}
+	wantNotExist := []string{"azurerm_rg.example", "azurerm_vnet.main"}
+	if len(cond.ResourcesNotExist[0].Addresses) != len(wantNotExist) {
+		t.Fatalf("resources_not_exist addresses = %v, want %v", cond.ResourcesNotExist[0].Addresses, wantNotExist)
+	}
+	for i, addr := range cond.ResourcesNotExist[0].Addresses {
+		if addr != wantNotExist[i] {
+			t.Errorf("resources_not_exist[%d] = %q, want %q", i, addr, wantNotExist[i])
+		}
+	}
+}
+
+func TestInferConditionsEmpty(t *testing.T) {
+	cond := InferConditions(nil)
+	if cond != nil {
+		t.Errorf("expected nil for empty blocks, got %+v", cond)
+	}
+}
+
+func TestInferConditionsImportOnly(t *testing.T) {
+	blocks := []Block{
+		&ImportBlock{To: "azurerm_rg.example", Layer: "/dst", Source: "test.yaml"},
+	}
+	cond := InferConditions(blocks)
+	if cond == nil {
+		t.Fatal("expected non-nil conditions")
+	}
+	if len(cond.ResourcesExist) != 0 {
+		t.Errorf("expected no resources_exist, got %d", len(cond.ResourcesExist))
+	}
+	if len(cond.ResourcesNotExist) != 1 {
+		t.Fatalf("expected 1 resources_not_exist check, got %d", len(cond.ResourcesNotExist))
+	}
+	if cond.ResourcesNotExist[0].Addresses[0] != "azurerm_rg.example" {
+		t.Errorf("got %q", cond.ResourcesNotExist[0].Addresses[0])
+	}
+}
+
+func TestInferConditionsMovedBlock(t *testing.T) {
+	blocks := []Block{
+		&MovedBlock{From: "azurerm_vnet.old", To: "azurerm_vnet.new", Layer: "/layer", Source: "test.yaml"},
+	}
+	cond := InferConditions(blocks)
+	if cond == nil {
+		t.Fatal("expected non-nil conditions")
+	}
+
+	// MovedBlock → resources_exist for From
+	if len(cond.ResourcesExist) != 1 {
+		t.Fatalf("expected 1 resources_exist, got %d", len(cond.ResourcesExist))
+	}
+	if cond.ResourcesExist[0].Addresses[0] != "azurerm_vnet.old" {
+		t.Errorf("resources_exist addr = %q, want azurerm_vnet.old", cond.ResourcesExist[0].Addresses[0])
+	}
+
+	// MovedBlock → resources_not_exist for To
+	if len(cond.ResourcesNotExist) != 1 {
+		t.Fatalf("expected 1 resources_not_exist, got %d", len(cond.ResourcesNotExist))
+	}
+	if cond.ResourcesNotExist[0].Addresses[0] != "azurerm_vnet.new" {
+		t.Errorf("resources_not_exist addr = %q, want azurerm_vnet.new", cond.ResourcesNotExist[0].Addresses[0])
+	}
+}
+
+func TestInferConditionsDeduplication(t *testing.T) {
+	// Same address from multiple blocks should be deduplicated
+	blocks := []Block{
+		&RemovedBlock{From: "azurerm_rg.x", Layer: "/layer", Source: "test.yaml"},
+		&RemovedBlock{From: "azurerm_rg.x", Layer: "/layer", Source: "test.yaml"},
+		&ImportBlock{To: "azurerm_rg.x", Layer: "/layer", Source: "test.yaml"},
+		&ImportBlock{To: "azurerm_rg.x", Layer: "/layer", Source: "test.yaml"},
+	}
+	cond := InferConditions(blocks)
+	if cond == nil {
+		t.Fatal("expected non-nil")
+	}
+	if len(cond.ResourcesExist[0].Addresses) != 1 {
+		t.Errorf("expected 1 deduplicated address, got %d", len(cond.ResourcesExist[0].Addresses))
+	}
+	if len(cond.ResourcesNotExist[0].Addresses) != 1 {
+		t.Errorf("expected 1 deduplicated address, got %d", len(cond.ResourcesNotExist[0].Addresses))
+	}
+}
+
+func TestMergeConditions(t *testing.T) {
+	a := &MetadataCondition{
+		ResourcesExist: []MetadataResourceCheck{
+			{Layer: ".", Addresses: []string{"azurerm_rg.a", "azurerm_rg.b"}},
+		},
+	}
+	b := &MetadataCondition{
+		ResourcesExist: []MetadataResourceCheck{
+			{Layer: ".", Addresses: []string{"azurerm_rg.b", "azurerm_rg.c"}},
+		},
+		ResourcesNotExist: []MetadataResourceCheck{
+			{Layer: ".", Addresses: []string{"azurerm_vnet.x"}},
+		},
+	}
+
+	result := MergeConditions(a, b)
+	if result == nil {
+		t.Fatal("expected non-nil")
+	}
+
+	// resources_exist should merge and deduplicate: a, b, c
+	if len(result.ResourcesExist) != 1 {
+		t.Fatalf("expected 1 resources_exist check, got %d", len(result.ResourcesExist))
+	}
+	wantExist := []string{"azurerm_rg.a", "azurerm_rg.b", "azurerm_rg.c"}
+	if len(result.ResourcesExist[0].Addresses) != len(wantExist) {
+		t.Fatalf("addresses = %v, want %v", result.ResourcesExist[0].Addresses, wantExist)
+	}
+	for i, addr := range result.ResourcesExist[0].Addresses {
+		if addr != wantExist[i] {
+			t.Errorf("addr[%d] = %q, want %q", i, addr, wantExist[i])
+		}
+	}
+
+	// resources_not_exist from b only
+	if len(result.ResourcesNotExist) != 1 {
+		t.Fatalf("expected 1 resources_not_exist, got %d", len(result.ResourcesNotExist))
+	}
+	if result.ResourcesNotExist[0].Addresses[0] != "azurerm_vnet.x" {
+		t.Errorf("got %q", result.ResourcesNotExist[0].Addresses[0])
+	}
+}
+
+func TestMergeConditionsMultiLayer(t *testing.T) {
+	a := &MetadataCondition{
+		ResourcesExist: []MetadataResourceCheck{
+			{Layer: ".", Addresses: []string{"azurerm_rg.local"}},
+		},
+	}
+	b := &MetadataCondition{
+		ResourcesExist: []MetadataResourceCheck{
+			{Layer: "./other", Addresses: []string{"azurerm_rg.remote"}},
+		},
+	}
+
+	result := MergeConditions(a, b)
+	if result == nil {
+		t.Fatal("expected non-nil")
+	}
+	if len(result.ResourcesExist) != 2 {
+		t.Fatalf("expected 2 resources_exist checks (2 layers), got %d", len(result.ResourcesExist))
+	}
+	// Sorted by layer: "." before "./other"
+	if result.ResourcesExist[0].Layer != "." {
+		t.Errorf("first check layer = %q", result.ResourcesExist[0].Layer)
+	}
+	if result.ResourcesExist[1].Layer != "./other" {
+		t.Errorf("second check layer = %q", result.ResourcesExist[1].Layer)
+	}
+}
+
+func TestMergeConditionsOneNil(t *testing.T) {
+	cond := &MetadataCondition{
+		ResourcesExist: []MetadataResourceCheck{
+			{Layer: ".", Addresses: []string{"azurerm_rg.x"}},
+		},
+	}
+
+	if result := MergeConditions(nil, cond); result != cond {
+		t.Error("nil + cond should return cond")
+	}
+	if result := MergeConditions(cond, nil); result != cond {
+		t.Error("cond + nil should return cond")
+	}
+}
+
+func TestMergeConditionsBothNil(t *testing.T) {
+	if result := MergeConditions(nil, nil); result != nil {
+		t.Error("nil + nil should return nil")
+	}
+}

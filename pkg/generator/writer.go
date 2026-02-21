@@ -171,8 +171,8 @@ func (w *Writer) cleanupOldVersions(layerDir, filename string) error {
 }
 
 // buildGroupMetadata constructs complete metadata for a (layer, sourceFile) group.
-// It looks up stored metadata by sourceFile, computes resource addresses from blocks,
-// and relativizes condition layer paths.
+// It infers conditions from block types, merges with any explicit conditions from
+// the YAML, computes resource addresses from blocks, and relativizes layer paths.
 func (w *Writer) buildGroupMetadata(key groupKey, blocks []Block) *MigrationMetadata {
 	stored := w.fileMetadata[key.SourceFile]
 
@@ -187,9 +187,13 @@ func (w *Writer) buildGroupMetadata(key groupKey, blocks []Block) *MigrationMeta
 		Resources: resources,
 	}
 
+	// Infer conditions from block types and merge with explicit YAML conditions
+	inferred := InferConditions(blocks)
+	var explicit *MetadataCondition
 	if stored != nil {
-		meta.Conditions = RelativizeCondition(stored.Conditions, key.Layer)
+		explicit = RelativizeCondition(stored.Conditions, key.Layer)
 	}
+	meta.Conditions = MergeConditions(inferred, explicit)
 
 	return meta
 }

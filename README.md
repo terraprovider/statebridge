@@ -270,7 +270,7 @@ import {
 ```
 
 The metadata contains:
-- **conditions**: Condition checks from the migration YAML (layer paths relativized to `"."` for the owning layer)
+- **conditions**: Auto-inferred conditions from block types (e.g., `resources_exist` for removed/moved blocks, `resources_not_exist` for import/moved blocks), merged with any explicit conditions from the migration YAML. Layer paths are relativized to `"."` for the owning layer.
 - **resources**: All resource addresses touched by blocks in the file (used for `-target` flags)
 
 ### Output File Naming
@@ -451,7 +451,23 @@ When `keys` is omitted:
 
 ## Conditions
 
-Migration files support an optional `condition` block that controls whether the entire file is processed. If any condition check fails, the migration is silently skipped with an informational log message. This makes migrations idempotent — safe to re-run even after partial completion.
+Conditions control whether a generated migration file is applied at download time. They are evaluated against the layer's current Terraform state.
+
+### Auto-Inferred Conditions
+
+By default, conditions are automatically inferred from the block types in each generated `.tf` file:
+
+| Block type | Inferred condition | Rationale |
+|------------|-------------------|-----------|
+| `removed`  | `resources_exist` for `from` address | Skip if resource already gone |
+| `import`   | `resources_not_exist` for `to` address | Skip if resource already imported |
+| `moved`    | `resources_exist` for `from` AND `resources_not_exist` for `to` | Skip if rename already applied |
+
+This makes all migrations idempotent by default — safe to re-run even after partial completion. For cross-layer moves (which decompose into `removed` + `import` blocks), each layer's file gets the correct condition automatically.
+
+### Explicit Conditions (Optional Override)
+
+Migration files also support an optional `condition` block that is merged (additively) with inferred conditions. Use this for cross-layer checks or custom logic that cannot be derived from the operations:
 
 ```yaml
 description: "Move web server to app layer"
@@ -485,42 +501,6 @@ All condition checks are ANDed — every check must pass for the migration to pr
 
 - A base address (e.g., `aws_instance.web`) matches if **any** for_each instance exists in state
 - A fully-qualified address (e.g., `aws_instance.web["key"]`) matches only that specific instance
-
-### Common Patterns
-
-**Only migrate if resources still exist in source** (idempotent re-runs):
-
-```yaml
-condition:
-  resources_exist:
-    - layer: "./layers/compute"
-      addresses:
-        - "aws_instance.web"
-```
-
-**Only migrate if not already imported into destination**:
-
-```yaml
-condition:
-  resources_not_exist:
-    - layer: "./layers/app"
-      addresses:
-        - "aws_instance.web"
-```
-
-**Combine both** (source still has it AND destination doesn't):
-
-```yaml
-condition:
-  resources_exist:
-    - layer: "./layers/compute"
-      addresses:
-        - "aws_instance.web"
-  resources_not_exist:
-    - layer: "./layers/app"
-      addresses:
-        - "aws_instance.web"
-```
 
 ## Go Template Reference
 
