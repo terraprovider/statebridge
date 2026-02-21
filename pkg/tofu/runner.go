@@ -4,58 +4,64 @@ package tofu
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 
+	tfexec "github.com/hashicorp/terraform-exec/tfexec"
 	"github.com/redtenant/tfmigrate/pkg/generator"
 )
 
 // Runner executes tofu commands in a working directory.
 type Runner struct {
-	tofuPath string
-	workDir  string
+	tf *tfexec.Terraform
 }
 
-// NewRunner creates a Runner for the given tofu binary and working directory.
-func NewRunner(tofuPath, workDir string) *Runner {
-	return &Runner{tofuPath: tofuPath, workDir: workDir}
+// PlanOpts holds typed options for the plan command, replacing raw extra args.
+type PlanOpts struct {
+	Out         string
+	Vars        []string
+	VarFiles    []string
+	Lock        *bool
+	LockTimeout string
 }
 
-// Plan runs tofu plan with optional -target flags.
-// Stdout and stderr are streamed directly to the terminal.
-// Returns the tofu exit code and any execution error.
-func (r *Runner) Plan(ctx context.Context, targets []string, extraArgs []string) (int, error) {
-	args := []string{"plan"}
+// NewRunner creates a Runner backed by terraform-exec for the given tofu
+// binary and working directory.
+func NewRunner(tofuPath, workDir string) (*Runner, error) {
+	tf, err := tfexec.NewTerraform(workDir, tofuPath)
+	if err != nil {
+		return nil, fmt.Errorf("initializing terraform-exec: %w", err)
+	}
+	tf.SetStdout(os.Stdout)
+	tf.SetStderr(os.Stderr)
+	return &Runner{tf: tf}, nil
+}
+
+// Plan runs tofu plan with optional -target flags and typed options.
+// Returns true if the plan detects changes, false otherwise.
+func (r *Runner) Plan(ctx context.Context, targets []string, opts PlanOpts) (bool, error) {
+	var planOpts []tfexec.PlanOption
 	for _, t := range targets {
-		args = append(args, fmt.Sprintf("-target=%s", t))
+		planOpts = append(planOpts, tfexec.Target(t))
 	}
-	args = append(args, extraArgs...)
-	return r.run(ctx, args)
-}
-
-// run executes a tofu command with the given arguments, streaming stdout/stderr.
-// Returns the process exit code and any error. If tofu exits with a non-zero
-// code, the exit code is returned with a nil error (the caller decides how to
-// handle it). A non-nil error indicates a failure to start the process.
-func (r *Runner) run(ctx context.Context, args []string) (int, error) {
-	cmd := exec.CommandContext(ctx, r.tofuPath, args...)
-	cmd.Dir = r.workDir
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	cmd.Stdin = os.Stdin
-
-	if err := cmd.Run(); err != nil {
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
-			return exitErr.ExitCode(), nil
-		}
-		return 1, fmt.Errorf("tofu %s: %w", args[0], err)
+	if opts.Out != "" {
+		planOpts = append(planOpts, tfexec.Out(opts.Out))
 	}
-	return 0, nil
+	for _, v := range opts.Vars {
+		planOpts = append(planOpts, tfexec.Var(v))
+	}
+	for _, vf := range opts.VarFiles {
+		planOpts = append(planOpts, tfexec.VarFile(vf))
+	}
+	if opts.Lock != nil {
+		planOpts = append(planOpts, tfexec.Lock(*opts.Lock))
+	}
+	if opts.LockTimeout != "" {
+		planOpts = append(planOpts, tfexec.LockTimeout(opts.LockTimeout))
+	}
+	return r.tf.Plan(ctx, planOpts...)
 }
 
 // ScanMigrationTargets scans a directory for migration.*.tf files, parses
