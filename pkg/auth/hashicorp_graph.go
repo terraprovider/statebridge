@@ -4,14 +4,16 @@ import (
 	"crypto/rand"
 
 	"github.com/hashicorp/go-azure-sdk/sdk/auth"
+	"github.com/hashicorp/go-azure-sdk/sdk/environments"
 	"software.sslmate.com/src/go-pkcs12"
 )
 
 // HcAzureSdk construct a credential for the hashicorp Azure SDK
 func (c *CredentialConfiguration) HcAzureSdk() (auth.Credentials, error) {
 	creds := auth.Credentials{
-		ClientID: c.ClientId,
-		TenantID: c.TenantId,
+		Environment: *environments.AzurePublic(),
+		ClientID:    c.ClientId,
+		TenantID:    c.TenantId,
 	}
 
 	if c.useMsi != nil && *c.useMsi {
@@ -43,6 +45,18 @@ func (c *CredentialConfiguration) HcAzureSdk() (auth.Credentials, error) {
 		creds.EnableAuthenticationUsingOIDC = true
 		creds.EnableAuthenticationUsingADOPipelineOIDC = true
 		creds.EnableAuthenticationUsingGitHubOIDC = true
+		if c.oidcToken != nil {
+			creds.OIDCAssertionToken = *c.oidcToken
+		}
+		if c.oidcTokenRequestURL != nil {
+			creds.OIDCTokenRequestURL = *c.oidcTokenRequestURL
+		}
+		if c.oidcRequestToken != nil {
+			creds.OIDCTokenRequestToken = *c.oidcRequestToken
+		}
+		if c.adoPipelineServiceConnectionID != nil {
+			creds.ADOPipelineServiceConnectionID = *c.adoPipelineServiceConnectionID
+		}
 	}
 
 	return creds, nil

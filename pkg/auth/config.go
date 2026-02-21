@@ -40,8 +40,16 @@ type CredentialConfiguration struct {
 	// msiClientId is the client ID for user-assigned managed identity (optional)
 	msiClientId *string
 
-	// useOidc enables OpenID Connect authentication (currently unused)
+	// useOidc enables OpenID Connect authentication
 	useOidc *bool
+	// oidcToken is a direct OIDC assertion token
+	oidcToken *string
+	// oidcRequestToken is an auth token for requesting OIDC tokens from a URL
+	oidcRequestToken *string
+	// oidcTokenRequestURL is the URL to request OIDC tokens from (GitHub Actions / ADO)
+	oidcTokenRequestURL *string
+	// adoPipelineServiceConnectionID is the service connection ID for ADO Pipeline OIDC
+	adoPipelineServiceConnectionID *string
 }
 
 // Option is a functional option for configuring CredentialConfiguration
@@ -140,6 +148,21 @@ func (c *CredentialConfiguration) parseEnv(prefixes ...string) error {
 		if v := util.Getenv[bool](prefix + "_USE_MSI"); v != nil {
 			c.useMsi = v
 		}
+		if v := util.GetMultienv[string]("ARM_OIDC_TOKEN"); v != nil && *v != "" {
+			c.oidcToken = v
+		}
+		if v := util.Getenv[bool]("ARM_USE_OIDC"); v != nil {
+			c.useOidc = v
+		}
+		if v := util.GetMultienv[string]("ARM_OIDC_REQUEST_URL", "ACTIONS_ID_TOKEN_REQUEST_URL", "SYSTEM_OIDCREQUESTURI"); v != nil && *v != "" {
+			c.oidcTokenRequestURL = v
+		}
+		if v := util.GetMultienv[string]("ARM_OIDC_REQUEST_TOKEN", "ACTIONS_ID_TOKEN_REQUEST_TOKEN", "SYSTEM_OIDCREQUESTTOKEN"); v != nil && *v != "" {
+			c.oidcRequestToken = v
+		}
+		if v := util.GetMultienv[string]("SYSTEM_SERVICECONNECTIONID"); v != nil && *v != "" {
+			c.adoPipelineServiceConnectionID = v
+		}
 	}
 	return nil
 }
@@ -202,6 +225,14 @@ func WithMsi(useMsi bool, msiClientId *string) Option {
 	return func(c *CredentialConfiguration) error {
 		c.useMsi = &useMsi
 		c.msiClientId = msiClientId
+		return nil
+	}
+}
+
+// WithOidc enables or disables OpenID Connect authentication.
+func WithOidc(useOidc bool) Option {
+	return func(c *CredentialConfiguration) error {
+		c.useOidc = &useOidc
 		return nil
 	}
 }
