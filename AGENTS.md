@@ -514,11 +514,11 @@ tfmigrate generate --upload --backend-config=storage_account_name=myacct migrati
 cd layers/compute
 tfmigrate download --backend-config=storage_account_name=myacct
 
-# 3. Plan to verify (targeted to migration resources by default)
-tfmigrate plan
-
-# 4. Apply
-tfmigrate apply
+# 3. Plan and apply
+tfmigrate plan --out=tfplan --detailed-exitcode
+if [ $? -eq 2 ]; then
+  tofu apply tfplan
+fi
 ```
 
 ## Uploading Migrations to Azure Blob Storage
@@ -611,28 +611,43 @@ Downloads applicable migration files from the layer's blob container to the curr
 5. Evaluates auto-inferred + explicit conditions: for `layer == "."`, reads state and checks; for cross-layer conditions, warns and treats as met
 6. Writes only applicable files; skipped files print a message to stderr
 
-## Plan and Apply Commands
+## Plan Command
 
 ```bash
-tfmigrate plan [flags] [-- extra-tofu-args...]
-tfmigrate apply [flags] [-- extra-tofu-args...]
+tfmigrate plan [flags]
 ```
 
-Run targeted `tofu plan` or `tofu apply -auto-approve` scoped to resources in migration file metadata. Must run from a layer directory containing `migration.*.tf` files.
+Run targeted `tofu plan` scoped to resources in migration file metadata. Must run from a layer directory containing `migration.*.tf` files.
 
-**Flags (both commands):**
+**Flags:**
 
 | Flag | Description |
 |------|-------------|
-| `--no-target` | Run without `-target` flags (full plan/apply) |
+| `--no-target` | Run without `-target` flags (full plan) |
 | `--tofu-path` | Override tofu binary path |
+| `--detailed-exitcode` | Return exit code 2 when plan has changes |
+| `--out <path>` | Save the plan to a file |
+| `--var <key=value>` | Set a variable (repeatable) |
+| `--var-file <path>` | Variable file path (repeatable) |
+| `--lock` | Lock the state file (default: true) |
+| `--lock-timeout <duration>` | Duration to retry a state lock |
 
 **Flow:**
 
 1. Scans cwd for `migration.*.tf` files
 2. Parses metadata from each to extract resource addresses
-3. Runs `tofu plan` or `tofu apply -auto-approve` with `-target=<addr>` for each address
-4. Extra args after `--` are passed through to tofu
+3. If no migration files found, prints message and exits with code 0
+4. Runs `tofu plan` with `-target=<addr>` for each address (via terraform-exec)
+5. Returns tofu's exit code (0 = no changes, 2 with `--detailed-exitcode` = changes detected)
+
+To apply changes, save the plan and use tofu directly:
+
+```bash
+tfmigrate plan --out=tfplan --detailed-exitcode
+if [ $? -eq 2 ]; then
+  tofu apply tfplan
+fi
+```
 
 ## Migration Metadata
 
@@ -654,7 +669,7 @@ import {
 - `conditions` — auto-inferred from block types (`resources_exist` for removed/moved, `resources_not_exist` for import/moved), merged with any explicit YAML conditions. The owning layer is represented as `"."` for portability.
 - `resources` — all resource addresses touched by blocks in the file (used for `-target` flags)
 
-The metadata is produced by the generator during `ProcessFiles()` and embedded by the `Writer` at render time. The `download`, `plan`, and `apply` commands parse it using `generator.ParseMetadataComment()`.
+The metadata is produced by the generator during `ProcessFiles()` and embedded by the `Writer` at render time. The `download` and `plan` commands parse it using `generator.ParseMetadataComment()`.
 
 ## Project Structure
 
@@ -669,16 +684,16 @@ Key source files for understanding the codebase:
 - `pkg/engine/resolver.go` — import ID resolution and state lookups
 - `pkg/engine/tracker.go` — cross-operation key tracking and completeness checking
 - `pkg/generator/` — HCL block rendering (import, moved, removed)
-- `pkg/generator/metadata.go` — migration metadata type, render/parse, address extraction
-- `pkg/generator/writer.go` — file output with metadata embedding
+- `pkg/generator/metadata.go` — migration metadata type, render/parse, address extraction, condition inference/merge
+- `pkg/generator/writer.go` — file output with metadata embedding and condition inference
+- `pkg/state/reader.go` — OpenTofu state reading (TofuStateReader with built-in caching and auto-init)
 - `pkg/auth/` — Azure credential management (azcore, azidentity, hashicorp graph)
 - `pkg/upload/backend.go` — backend config discovery (HCL parsing + init arg merging)
 - `pkg/upload/uploader.go` — Azure Blob Storage operations (BlobUploader interface)
 - `pkg/upload/upload.go` — upload orchestration (Manager, version cleanup)
 - `pkg/download/download.go` — download orchestration with condition evaluation
-- `pkg/tofu/runner.go` — OpenTofu command execution and migration target scanning
+- `pkg/tofu/runner.go` — OpenTofu plan execution (via terraform-exec) and migration target scanning
 - `cmd/generate.go` — CLI entry point for generate command (with `--upload` flag)
 - `cmd/upload.go` — CLI entry point for standalone upload command
 - `cmd/download.go` — CLI entry point for download command
 - `cmd/plan.go` — CLI entry point for targeted plan command
-- `cmd/apply.go` — CLI entry point for targeted apply command
