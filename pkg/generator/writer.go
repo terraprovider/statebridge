@@ -101,7 +101,7 @@ func (w *Writer) RenderAll() map[string]string {
 // Each (layer, source migration file) pair gets its own output file with
 // deterministic block ordering and a content-addressed filename.
 // Before writing, old versions of the same migration stem are removed so that
-// stale files do not interfere with tofu plan/apply.
+// stale files do not interfere with tofu plan.
 // Returns the sorted list of file paths written and any error encountered.
 func (w *Writer) WriteAll() ([]string, error) {
 	var written []string
