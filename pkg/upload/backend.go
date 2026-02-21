@@ -6,11 +6,13 @@ package upload
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/hashicorp/hcl/v2"
 	"github.com/hashicorp/hcl/v2/hclparse"
+	"github.com/hashicorp/hcl/v2/hclsyntax"
 )
 
 // BackendConfig holds Azure Blob Storage backend configuration
@@ -140,9 +142,13 @@ func extractAzurermConfig(block *hcl.Block) (*BackendConfig, error) {
 }
 
 // ParseInitArgs extracts backend-config key=value pairs from init arguments.
-// It recognizes the format "-backend-config=key=value" and extracts only
-// known azurerm backend fields (storage_account_name, container_name,
-// resource_group_name). Non-backend-config args are silently ignored.
+// It recognizes the format "-backend-config=key=value" for inline values and
+// "-backend-config=path/to/file" for file-based configuration. When the value
+// after -backend-config= does not contain "=" it is treated as a file path.
+// Backend config files follow the Terraform/OpenTofu format: HCL assignments
+// (key = "value") or plain key=value lines.
+// Only known azurerm backend fields are extracted (storage_account_name,
+// container_name, resource_group_name). Non-backend-config args are silently ignored.
 func ParseInitArgs(args []string) map[string]string {
 	recognized := map[string]bool{
 		"storage_account_name": true,
@@ -159,9 +165,109 @@ func ParseInitArgs(args []string) map[string]string {
 				continue
 			}
 		}
-		parts := strings.SplitN(val, "=", 2)
-		if len(parts) == 2 && recognized[parts[0]] {
-			result[parts[0]] = parts[1]
+
+		// If val contains "=" it's a key=value pair; otherwise it's a file path
+		if strings.Contains(val, "=") {
+			parts := strings.SplitN(val, "=", 2)
+			if len(parts) == 2 && recognized[parts[0]] {
+				result[parts[0]] = parts[1]
+			}
+		} else {
+			// Treat as a file path
+			fileKVs, err := parseBackendConfigFile(val)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: could not read backend-config file %q: %v\n", val, err)
+				continue
+			}
+			for k, v := range fileKVs {
+				if recognized[k] {
+					result[k] = v
+				}
+			}
+		}
+	}
+
+	return result
+}
+
+// parseBackendConfigFile reads a Terraform/OpenTofu backend config file and
+// returns the key=value pairs it contains. It supports two formats:
+//
+//  1. HCL format: key = "value" assignments (standard .hcl/.tf style)
+//  2. Plain text format: key=value per line (simple key-value pairs)
+//
+// HCL parsing is attempted first; if it fails, plain text is used as fallback.
+func parseBackendConfigFile(path string) (map[string]string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+
+	// Try HCL parsing first
+	if kvs, err := parseBackendConfigHCL(path, data); err == nil {
+		return kvs, nil
+	}
+
+	// Fallback to plain text key=value parsing
+	return parseBackendConfigPlainText(data), nil
+}
+
+// parseBackendConfigHCL parses backend config as HCL attribute assignments.
+// Returns an error if parsing fails or if no string values could be extracted.
+func parseBackendConfigHCL(filename string, data []byte) (map[string]string, error) {
+	file, diags := hclsyntax.ParseConfig(data, filename, hcl.Pos{Line: 1, Column: 1})
+	if diags.HasErrors() {
+		return nil, fmt.Errorf("HCL parse error: %s", diags.Error())
+	}
+
+	attrs, diags := file.Body.JustAttributes()
+	if diags.HasErrors() {
+		return nil, fmt.Errorf("HCL attributes error: %s", diags.Error())
+	}
+
+	result := make(map[string]string)
+	for name, attr := range attrs {
+		val, diags := attr.Expr.Value(nil)
+		if diags.HasErrors() {
+			// Value couldn't be resolved (e.g., unquoted identifier treated as variable ref).
+			// Fall through to plain text parsing for the whole file.
+			continue
+		}
+		if val.Type().FriendlyName() != "string" {
+			continue
+		}
+		result[name] = val.AsString()
+	}
+
+	// If we parsed attributes but couldn't extract any string values,
+	// let the caller fall through to plain text parsing.
+	if len(attrs) > 0 && len(result) == 0 {
+		return nil, fmt.Errorf("no string values extracted from HCL")
+	}
+
+	return result, nil
+}
+
+// parseBackendConfigPlainText parses backend config as plain key=value lines.
+// Empty lines and lines starting with # are skipped.
+func parseBackendConfigPlainText(data []byte) map[string]string {
+	result := make(map[string]string)
+	content := string(data)
+
+	for _, line := range strings.Split(content, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		parts := strings.SplitN(line, "=", 2)
+		if len(parts) == 2 {
+			key := strings.TrimSpace(parts[0])
+			val := strings.TrimSpace(parts[1])
+			// Strip surrounding quotes if present
+			val = strings.Trim(val, "\"'")
+			if key != "" {
+				result[key] = val
+			}
 		}
 	}
 

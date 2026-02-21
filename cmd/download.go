@@ -48,7 +48,7 @@ func init() {
 	rootCmd.AddCommand(downloadCmd)
 
 	downloadCmd.Flags().StringSliceVar(&flagDownloadBackendConfig, "backend-config", nil,
-		"Backend config overrides in key=value format (repeatable)")
+		"Backend config overrides in key=value format or path to a config file (repeatable)")
 	downloadCmd.Flags().StringVar(&flagDownloadTofuPath, "tofu-path", "",
 		"Override path to the tofu binary (default: auto-detect from PATH)")
 	downloadCmd.Flags().BoolVar(&flagDownloadDryRun, "dry-run", false,

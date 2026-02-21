@@ -124,12 +124,15 @@ Each layer directory is scanned for `migration.*.tf` files and uploaded to the s
 
 | Flag | Description |
 |------|-------------|
-| `--backend-config` | Backend config overrides in `key=value` format (repeatable) |
+| `--backend-config` | Backend config overrides in `key=value` format or path to a config file (repeatable) |
 | `--migration-file` | Migration YAML file to read init args from for backend config discovery |
 
 ```bash
 # Override backend config values
 tfmigrate upload --backend-config=storage_account_name=myacct ./layers/compute
+
+# Use a backend config file
+tfmigrate upload --backend-config=backend.hcl ./layers/compute
 
 # Read init args from a migration YAML for backend config discovery
 tfmigrate upload --migration-file=migrations/001_move.yaml ./layers/compute
@@ -140,7 +143,7 @@ tfmigrate upload --migration-file=migrations/001_move.yaml ./layers/compute
 The upload target (storage account and container) is resolved per layer by:
 
 1. Parsing `.tf` files in the layer directory for a `backend "azurerm"` block
-2. Extracting `-backend-config=key=value` pairs from init args (YAML `init.args` or `--backend-config` flags)
+2. Extracting `-backend-config=key=value` pairs from init args (YAML `init.args` or `--backend-config` flags). File paths are also supported: `-backend-config=path/to/file.hcl` reads key=value pairs from the file (HCL or plain text format)
 3. Merging: init args override inline HCL values
 
 Required backend fields: `storage_account_name`, `container_name`.
@@ -178,13 +181,16 @@ This command must be run from within a layer directory containing backend config
 
 | Flag | Description |
 |------|-------------|
-| `--backend-config` | Backend config overrides in `key=value` format (repeatable) |
+| `--backend-config` | Backend config overrides in `key=value` format or path to a config file (repeatable) |
 | `--tofu-path <path>` | Override path to the `tofu` binary |
 | `--dry-run` | Print what would be downloaded without writing files |
 
 ```bash
 # Override backend config
 tfmigrate download --backend-config=storage_account_name=myacct
+
+# Use a backend config file
+tfmigrate download --backend-config=backend.hcl
 
 # Preview what would be downloaded
 tfmigrate download --dry-run

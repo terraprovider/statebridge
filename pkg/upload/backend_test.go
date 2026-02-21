@@ -200,6 +200,142 @@ func TestParseInitArgs(t *testing.T) {
 	}
 }
 
+func TestParseInitArgsWithHCLFile(t *testing.T) {
+	dir := t.TempDir()
+
+	// Create an HCL backend config file
+	hclFile := filepath.Join(dir, "backend.hcl")
+	err := os.WriteFile(hclFile, []byte(`
+storage_account_name = "fileacct"
+container_name       = "filecontainer"
+resource_group_name  = "filerg"
+key                  = "terraform.tfstate"
+`), 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	args := []string{
+		"-backend-config=" + hclFile,
+		"-reconfigure",
+	}
+
+	got := ParseInitArgs(args)
+
+	if got["storage_account_name"] != "fileacct" {
+		t.Errorf("storage_account_name = %q, want %q", got["storage_account_name"], "fileacct")
+	}
+	if got["container_name"] != "filecontainer" {
+		t.Errorf("container_name = %q, want %q", got["container_name"], "filecontainer")
+	}
+	if got["resource_group_name"] != "filerg" {
+		t.Errorf("resource_group_name = %q, want %q", got["resource_group_name"], "filerg")
+	}
+	// "key" should not be in the result (not a recognized field)
+	if _, ok := got["key"]; ok {
+		t.Error("key should not be in result (not recognized)")
+	}
+}
+
+func TestParseInitArgsWithPlainTextFile(t *testing.T) {
+	dir := t.TempDir()
+
+	// Create a plain text backend config file
+	plainFile := filepath.Join(dir, "backend.conf")
+	err := os.WriteFile(plainFile, []byte(`# Backend configuration
+storage_account_name=plaintextacct
+container_name=plaintextcontainer
+resource_group_name=plaintextrg
+`), 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	args := []string{
+		"-backend-config=" + plainFile,
+	}
+
+	got := ParseInitArgs(args)
+
+	if got["storage_account_name"] != "plaintextacct" {
+		t.Errorf("storage_account_name = %q, want %q", got["storage_account_name"], "plaintextacct")
+	}
+	if got["container_name"] != "plaintextcontainer" {
+		t.Errorf("container_name = %q, want %q", got["container_name"], "plaintextcontainer")
+	}
+	if got["resource_group_name"] != "plaintextrg" {
+		t.Errorf("resource_group_name = %q, want %q", got["resource_group_name"], "plaintextrg")
+	}
+}
+
+func TestParseInitArgsFileMixedWithInline(t *testing.T) {
+	dir := t.TempDir()
+
+	// File provides base values
+	hclFile := filepath.Join(dir, "base.hcl")
+	err := os.WriteFile(hclFile, []byte(`
+storage_account_name = "baseacct"
+container_name       = "basecontainer"
+`), 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Inline arg overrides storage_account_name
+	args := []string{
+		"-backend-config=" + hclFile,
+		"-backend-config=storage_account_name=overrideacct",
+	}
+
+	got := ParseInitArgs(args)
+
+	// Inline should override file value (processed after)
+	if got["storage_account_name"] != "overrideacct" {
+		t.Errorf("storage_account_name = %q, want %q (inline should override file)", got["storage_account_name"], "overrideacct")
+	}
+	if got["container_name"] != "basecontainer" {
+		t.Errorf("container_name = %q, want %q", got["container_name"], "basecontainer")
+	}
+}
+
+func TestParseInitArgsNonexistentFile(t *testing.T) {
+	// File that doesn't exist should produce a warning but not crash
+	args := []string{
+		"-backend-config=/nonexistent/path/backend.hcl",
+		"-backend-config=storage_account_name=fallback",
+	}
+
+	got := ParseInitArgs(args)
+
+	// The inline arg should still work
+	if got["storage_account_name"] != "fallback" {
+		t.Errorf("storage_account_name = %q, want %q", got["storage_account_name"], "fallback")
+	}
+}
+
+func TestParseInitArgsPlainTextWithQuotes(t *testing.T) {
+	dir := t.TempDir()
+
+	// Plain text with quoted values (some configs have this)
+	plainFile := filepath.Join(dir, "backend.conf")
+	err := os.WriteFile(plainFile, []byte(`storage_account_name="quotedacct"
+container_name='quotedcontainer'
+`), 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	args := []string{"-backend-config=" + plainFile}
+	got := ParseInitArgs(args)
+
+	if got["storage_account_name"] != "quotedacct" {
+		t.Errorf("storage_account_name = %q, want %q", got["storage_account_name"], "quotedacct")
+	}
+	if got["container_name"] != "quotedcontainer" {
+		t.Errorf("container_name = %q, want %q", got["container_name"], "quotedcontainer")
+	}
+}
+
 func TestMergeBackendConfig(t *testing.T) {
 	base := &BackendConfig{
 		StorageAccountName: "inline_acct",
