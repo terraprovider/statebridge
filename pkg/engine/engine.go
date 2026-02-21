@@ -346,6 +346,7 @@ func (e *Engine) processMoveKeyed(
 			ID:          importID,
 			Layer:       dstLayer,
 			Description: description,
+			Source:      e.currentSourceFile,
 		})
 	}
 
@@ -362,6 +363,7 @@ func (e *Engine) processMoveKeyed(
 			Destroy:     false,
 			Layer:       srcLayer,
 			Description: description,
+			Source:      e.currentSourceFile,
 		}
 		blocks = append([]generator.Block{removedBlock}, blocks...)
 	}
