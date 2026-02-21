@@ -96,14 +96,12 @@ resource "azurerm_resource_group" "test" {
   location = var.location
 }
 
-resource "azurerm_storage_account" "accounts" {
+resource "azurerm_network_security_group" "nsgs" {
   for_each = toset(["alpha", "beta", "gamma"])
 
-  name                     = "${var.prefix}${each.key}"
-  resource_group_name      = azurerm_resource_group.test.name
-  location                 = azurerm_resource_group.test.location
-  account_tier             = "Standard"
-  account_replication_type = "LRS"
+  name                = "${var.prefix}-e2e-${each.key}"
+  location            = azurerm_resource_group.test.location
+  resource_group_name = azurerm_resource_group.test.name
 }
 
 resource "azurerm_resource_group" "importable" {
@@ -137,7 +135,7 @@ resource "azurerm_resource_group" "importable" {
 	assertCleanPlan(t, networkingDir, vars)
 }
 
-// TestE2E_KeyedMove tests moving for_each resources (storage accounts) from
+// TestE2E_KeyedMove tests moving for_each resources (NSGs) from
 // the shared layer to the app layer with key remapping.
 func TestE2E_KeyedMove(t *testing.T) {
 	t.Parallel()
@@ -154,27 +152,27 @@ func TestE2E_KeyedMove(t *testing.T) {
 		tofuDestroy(t, sharedDir, vars)
 	})
 
-	// Verify storage accounts exist in shared state
+	// Verify NSGs exist in shared state
 	for _, key := range []string{"alpha", "beta", "gamma"} {
-		assertResourceInState(t, sharedDir, fmt.Sprintf(`azurerm_storage_account.accounts["%s"]`, key))
+		assertResourceInState(t, sharedDir, fmt.Sprintf(`azurerm_network_security_group.nsgs["%s"]`, key))
 	}
 
 	// Write keyed move migration YAML with absolute layer paths
-	migDir := writeMigration(t, rootDir, "001_move_storage.yaml", fmt.Sprintf(`
-description: "Move storage accounts with key remapping"
+	migDir := writeMigration(t, rootDir, "001_move_nsgs.yaml", fmt.Sprintf(`
+description: "Move NSGs with key remapping"
 operations:
   - type: move
     source_layer: "%s"
     destination_layer: "%s"
     resources:
-      - address: "azurerm_storage_account.accounts"
+      - address: "azurerm_network_security_group.nsgs"
         keys:
           alpha: app_alpha
           beta: app_beta
           gamma: app_gamma
 `, sharedDir, appDir))
 
-	// Add storage account resource to the app layer with new keys
+	// Add NSG resource to the app layer with new keys
 	updateTfFile(t, appDir, "main.tf", fmt.Sprintf(`
 terraform {
   required_providers {
@@ -188,22 +186,20 @@ provider "azurerm" {
   features {}
 }
 
-resource "azurerm_storage_account" "accounts" {
+resource "azurerm_network_security_group" "nsgs" {
   for_each = {
     app_alpha = "alpha"
     app_beta  = "beta"
     app_gamma = "gamma"
   }
 
-  name                     = "${var.prefix}${each.value}"
-  resource_group_name      = "%s-e2e-shared"
-  location                 = var.location
-  account_tier             = "Standard"
-  account_replication_type = "LRS"
+  name                = "${var.prefix}-e2e-${each.value}"
+  resource_group_name = "%s-e2e-shared"
+  location            = var.location
 }
 `, prefix))
 
-	// Remove storage accounts from shared layer config
+	// Remove NSGs from shared layer config
 	updateTfFile(t, sharedDir, "main.tf", `
 terraform {
   required_providers {
@@ -242,16 +238,16 @@ resource "azurerm_resource_group" "importable" {
 	}
 	t.Logf("Generated %d migration file(s): %v", len(files), files)
 
-	// Initialize and apply app layer (import storage accounts with new keys)
+	// Initialize and apply app layer (import NSGs with new keys)
 	tofuInit(t, appDir)
 	tofuApply(t, appDir, vars)
 
-	// Apply shared layer (remove storage accounts from state)
+	// Apply shared layer (remove NSGs from state)
 	tofuApply(t, sharedDir, vars)
 
-	// Verify: accounts in app state with new keys
+	// Verify: NSGs in app state with new keys
 	for _, key := range []string{"app_alpha", "app_beta", "app_gamma"} {
-		assertResourceInState(t, appDir, fmt.Sprintf(`azurerm_storage_account.accounts["%s"]`, key))
+		assertResourceInState(t, appDir, fmt.Sprintf(`azurerm_network_security_group.nsgs["%s"]`, key))
 	}
 
 	// Verify clean plans
@@ -308,14 +304,12 @@ resource "azurerm_resource_group" "test" {
   location = var.location
 }
 
-resource "azurerm_storage_account" "accounts" {
+resource "azurerm_network_security_group" "nsgs" {
   for_each = toset(["alpha", "beta", "gamma"])
 
-  name                     = "${var.prefix}${each.key}"
-  resource_group_name      = azurerm_resource_group.test.name
-  location                 = azurerm_resource_group.test.location
-  account_tier             = "Standard"
-  account_replication_type = "LRS"
+  name                = "${var.prefix}-e2e-${each.key}"
+  location            = azurerm_resource_group.test.location
+  resource_group_name = azurerm_resource_group.test.name
 }
 
 resource "azurerm_virtual_network" "main" {
@@ -401,14 +395,12 @@ resource "azurerm_resource_group" "test" {
   location = var.location
 }
 
-resource "azurerm_storage_account" "accounts" {
+resource "azurerm_network_security_group" "nsgs" {
   for_each = toset(["alpha", "beta", "gamma"])
 
-  name                     = "${var.prefix}${each.key}"
-  resource_group_name      = azurerm_resource_group.test.name
-  location                 = azurerm_resource_group.test.location
-  account_tier             = "Standard"
-  account_replication_type = "LRS"
+  name                = "${var.prefix}-e2e-${each.key}"
+  location            = azurerm_resource_group.test.location
+  resource_group_name = azurerm_resource_group.test.name
 }
 
 resource "azurerm_virtual_network" "main" {
@@ -474,14 +466,12 @@ resource "azurerm_resource_group" "test" {
   location = var.location
 }
 
-resource "azurerm_storage_account" "accounts" {
+resource "azurerm_network_security_group" "nsgs" {
   for_each = toset(["alpha", "beta", "gamma"])
 
-  name                     = "${var.prefix}${each.key}"
-  resource_group_name      = azurerm_resource_group.test.name
-  location                 = azurerm_resource_group.test.location
-  account_tier             = "Standard"
-  account_replication_type = "LRS"
+  name                = "${var.prefix}-e2e-${each.key}"
+  location            = azurerm_resource_group.test.location
+  resource_group_name = azurerm_resource_group.test.name
 }
 
 resource "azurerm_virtual_network" "main" {
@@ -590,14 +580,12 @@ resource "azurerm_resource_group" "test" {
   location = var.location
 }
 
-resource "azurerm_storage_account" "accounts" {
+resource "azurerm_network_security_group" "nsgs" {
   for_each = toset(["alpha", "beta", "gamma"])
 
-  name                     = "${var.prefix}${each.key}"
-  resource_group_name      = azurerm_resource_group.test.name
-  location                 = azurerm_resource_group.test.location
-  account_tier             = "Standard"
-  account_replication_type = "LRS"
+  name                = "${var.prefix}-e2e-${each.key}"
+  location            = azurerm_resource_group.test.location
+  resource_group_name = azurerm_resource_group.test.name
 }
 
 resource "azurerm_virtual_network" "main" {
@@ -714,14 +702,12 @@ resource "azurerm_resource_group" "test" {
   location = var.location
 }
 
-resource "azurerm_storage_account" "accounts" {
+resource "azurerm_network_security_group" "nsgs" {
   for_each = toset(["alpha", "beta", "gamma"])
 
-  name                     = "${var.prefix}${each.key}"
-  resource_group_name      = azurerm_resource_group.test.name
-  location                 = azurerm_resource_group.test.location
-  account_tier             = "Standard"
-  account_replication_type = "LRS"
+  name                = "${var.prefix}-e2e-${each.key}"
+  location            = azurerm_resource_group.test.location
+  resource_group_name = azurerm_resource_group.test.name
 }
 
 resource "azurerm_resource_group" "importable" {
