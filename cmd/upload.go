@@ -48,7 +48,7 @@ func init() {
 	rootCmd.AddCommand(uploadCmd)
 
 	uploadCmd.Flags().StringSliceVar(&flagUploadBackendConfig, "backend-config", nil,
-		"Backend config overrides in key=value format (repeatable)")
+		"Backend config overrides in key=value format or path to a config file (repeatable)")
 	uploadCmd.Flags().StringVar(&flagUploadMigrationFile, "migration-file", "",
 		"Migration YAML file to read init args from for backend config discovery")
 }

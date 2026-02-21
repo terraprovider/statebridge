@@ -573,7 +573,7 @@ Uploads pre-generated `migration.*.tf` files from layer directories. Useful when
 
 | Flag | Description |
 |------|-------------|
-| `--backend-config` | Backend config override in `key=value` format (repeatable) |
+| `--backend-config` | Backend config override in `key=value` format or path to a config file (repeatable) |
 | `--migration-file` | Migration YAML to read init args from for backend config discovery |
 
 **Examples:**
@@ -585,6 +585,9 @@ tfmigrate upload ./layers/compute ./layers/networking
 # Override backend config
 tfmigrate upload --backend-config=storage_account_name=myacct ./layers/compute
 
+# Use a backend config file
+tfmigrate upload --backend-config=backend.hcl ./layers/compute
+
 # Read init args from migration YAML
 tfmigrate upload --migration-file=migrations/001_move.yaml ./layers/compute
 ```
@@ -594,7 +597,7 @@ tfmigrate upload --migration-file=migrations/001_move.yaml ./layers/compute
 The upload target (storage account + container) is resolved per layer:
 
 1. Parse `.tf` files in the layer directory for `terraform { backend "azurerm" { ... } }`
-2. Extract `-backend-config=key=value` pairs from init args (YAML `init.args` or `--backend-config` flags)
+2. Extract `-backend-config=key=value` pairs from init args (YAML `init.args` or `--backend-config` flags). File paths are also supported: `-backend-config=path/to/file.hcl` reads key=value pairs from the file (HCL or plain text format)
 3. Merge: init args override inline HCL values
 
 Required fields: `storage_account_name`, `container_name`.
@@ -627,7 +630,7 @@ Downloads applicable migration files from the layer's blob container to the curr
 
 | Flag | Description |
 |------|-------------|
-| `--backend-config` | Backend config override in `key=value` format (repeatable) |
+| `--backend-config` | Backend config override in `key=value` format or path to a config file (repeatable) |
 | `--tofu-path` | Override tofu binary path |
 | `--dry-run` | Print what would be downloaded without writing |
 
