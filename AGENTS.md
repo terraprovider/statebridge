@@ -689,15 +689,16 @@ ARM_CLIENT_ID=... ARM_TENANT_ID=... ARM_SUBSCRIPTION_ID=... ARM_USE_OIDC=true \
 
 **Structure:**
 - `e2e/testproject/layers/` — Static Terraform project with 3 layers (shared, app, networking)
-- `e2e/helpers_test.go` — Test helpers (tofu init/apply/plan/destroy via terraform-exec, engine.ProcessFiles wrapper)
-- `e2e/e2e_test.go` — Test functions covering move, keyed move, rename, remove+import, condition skip
+- `e2e/helpers_test.go` — Test helpers (tofu init/apply/plan/destroy via terraform-exec, engine.ProcessFiles wrapper, blob container lifecycle)
+- `e2e/e2e_test.go` — Test functions covering move, keyed move, rename, remove+import, condition skip, upload/download
 
 **Environment variables:**
 - `ARM_CLIENT_ID`, `ARM_TENANT_ID`, `ARM_SUBSCRIPTION_ID` — Azure auth
 - `ARM_USE_OIDC=true` — OIDC authentication (GitHub Actions / ADO Pipeline)
 - `E2E_LOCATION` — Azure region (default: `westeurope`)
+- `E2E_STORAGE_ACCOUNT_NAME` — Pre-existing storage account for upload/download tests (service principal needs "Storage Blob Data Contributor" role). If not set, `TestE2E_UploadDownload` is skipped.
 
-**Test isolation:** Each test generates a unique resource prefix (`tfe2e` + 4 random hex chars) and uses `t.Cleanup()` to destroy all resources even on failure. Local backend — no shared state.
+**Test isolation:** Each test generates a unique resource prefix (`tfe2e` + 4 random hex chars) and uses `t.Cleanup()` to destroy all resources even on failure. Local backend — no shared state. The upload/download test creates an ephemeral blob container per run (named after the unique prefix) and deletes it on cleanup.
 
 ## Project Structure
 

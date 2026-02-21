@@ -24,7 +24,7 @@ env:
 
 jobs:
   e2e:
-    runs-on: ubuntu-latest-8cpu
+    runs-on: ubuntu-latest
     environment: e2e
 
     steps:
@@ -43,5 +43,6 @@ jobs:
           ARM_CLIENT_ID: ${{ vars.ARM_CLIENT_ID }}
           ARM_TENANT_ID: ${{ vars.ARM_TENANT_ID }}
           ARM_SUBSCRIPTION_ID: ${{ vars.ARM_SUBSCRIPTION_ID }}
+          E2E_STORAGE_ACCOUNT_NAME: ${{ vars.E2E_STORAGE_ACCOUNT_NAME }}
         run: |
           go test -tags=e2e -v -timeout=30m -count=1 ./e2e/...

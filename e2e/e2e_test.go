@@ -3,10 +3,14 @@
 package e2e
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/redtenant/tfmigrate/pkg/download"
+	"github.com/redtenant/tfmigrate/pkg/upload"
 )
 
 func TestMain(m *testing.M) {
@@ -628,4 +632,165 @@ resource "azurerm_resource_group" "secondary" {
 	// Verify clean plan
 	cleanupMigrationFiles(t, sharedDir)
 	assertCleanPlan(t, sharedDir, vars)
+}
+
+// TestE2E_UploadDownload tests the full upload/download pipeline: generate
+// migration files, upload them to Azure Blob Storage, delete the local copies,
+// download them back, and verify the migration applies cleanly.
+func TestE2E_UploadDownload(t *testing.T) {
+	t.Parallel()
+
+	storageAccountName := os.Getenv("E2E_STORAGE_ACCOUNT_NAME")
+	if storageAccountName == "" {
+		t.Skip("skipping: E2E_STORAGE_ACCOUNT_NAME not set")
+	}
+
+	rootDir, prefix, vars := setupTestProject(t)
+	ctx := context.Background()
+
+	sharedDir := filepath.Join(rootDir, "layers", "shared")
+	networkingDir := filepath.Join(rootDir, "layers", "networking")
+
+	// Initialize and apply shared layer to create resources
+	tofuInit(t, sharedDir)
+	tofuApply(t, sharedDir, vars)
+	t.Cleanup(func() {
+		tofuDestroy(t, networkingDir, vars)
+		tofuDestroy(t, sharedDir, vars)
+	})
+
+	// Verify VNet exists in shared state
+	assertResourceInState(t, sharedDir, "azurerm_virtual_network.main")
+
+	// Write migration YAML
+	migDir := writeMigration(t, rootDir, "001_move_vnet.yaml", fmt.Sprintf(`
+description: "Move VNet from shared to networking"
+operations:
+  - type: move
+    source_layer: "%s"
+    destination_layer: "%s"
+    resources:
+      - address: "azurerm_virtual_network.main"
+`, sharedDir, networkingDir))
+
+	// Add VNet resource to networking layer
+	updateTfFile(t, networkingDir, "main.tf", fmt.Sprintf(`
+terraform {
+  required_providers {
+    azurerm = {
+      source = "hashicorp/azurerm"
+    }
+  }
+}
+
+provider "azurerm" {
+  features {}
+}
+
+resource "azurerm_virtual_network" "main" {
+  name                = "${var.prefix}-e2e-vnet"
+  address_space       = ["10.0.0.0/16"]
+  location            = var.location
+  resource_group_name = "%s-e2e-shared"
+}
+`, prefix))
+
+	// Remove VNet from shared layer config
+	updateTfFile(t, sharedDir, "main.tf", `
+terraform {
+  required_providers {
+    azurerm = {
+      source = "hashicorp/azurerm"
+    }
+  }
+}
+
+provider "azurerm" {
+  features {}
+}
+
+resource "azurerm_resource_group" "test" {
+  name     = "${var.prefix}-e2e-shared"
+  location = var.location
+}
+
+resource "azurerm_storage_account" "accounts" {
+  for_each = toset(["alpha", "beta", "gamma"])
+
+  name                     = "${var.prefix}${each.key}"
+  resource_group_name      = azurerm_resource_group.test.name
+  location                 = azurerm_resource_group.test.location
+  account_tier             = "Standard"
+  account_replication_type = "LRS"
+}
+
+resource "azurerm_resource_group" "importable" {
+  name     = "${var.prefix}-e2e-importable"
+  location = var.location
+}
+`)
+
+	// Generate migration files (writes to disk in both layers)
+	files := runGenerate(t, []string{migDir})
+	if len(files) == 0 {
+		t.Fatal("expected generated migration files, got none")
+	}
+	t.Logf("Generated %d migration file(s): %v", len(files), files)
+
+	// Initialize networking layer (needed for state reads during download condition evaluation)
+	tofuInit(t, networkingDir)
+
+	// Create unique blob container for this test
+	containerName := prefix
+	cred := getCredential(t)
+
+	createContainer(t, ctx, cred, storageAccountName, containerName)
+	t.Cleanup(func() {
+		deleteContainer(t, context.Background(), cred, storageAccountName, containerName)
+	})
+
+	// Upload migration files from networking layer to blob storage
+	initArgs := []string{
+		"-backend-config=storage_account_name=" + storageAccountName,
+		"-backend-config=container_name=" + containerName,
+	}
+
+	mgr := upload.NewManager(cred, initArgs)
+	if err := mgr.UploadFromDisk(ctx, []string{networkingDir}); err != nil {
+		t.Fatalf("uploading migration files: %v", err)
+	}
+
+	// Remove local migration files from networking layer
+	cleanupMigrationFiles(t, networkingDir)
+
+	// Verify no migration files remain on disk
+	matches, _ := filepath.Glob(filepath.Join(networkingDir, "migration.*.tf"))
+	if len(matches) != 0 {
+		t.Fatalf("expected no migration files after cleanup, got %d", len(matches))
+	}
+
+	// Download from blob storage back to networking layer
+	dl := download.NewDownloader(cred, initArgs, tofuExecPath(t), false)
+	downloaded, err := dl.Download(ctx, networkingDir)
+	if err != nil {
+		t.Fatalf("downloading migration files: %v", err)
+	}
+	if len(downloaded) == 0 {
+		t.Fatal("expected downloaded migration files, got none")
+	}
+	t.Logf("Downloaded %d migration file(s): %v", len(downloaded), downloaded)
+
+	// Apply: first networking (imports VNet), then shared (removes VNet from state)
+	tofuApply(t, networkingDir, vars)
+	tofuApply(t, sharedDir, vars)
+
+	// Verify: VNet is in networking state, not in shared state
+	assertResourceInState(t, networkingDir, "azurerm_virtual_network.main")
+	assertResourceNotInState(t, sharedDir, "azurerm_virtual_network.main")
+
+	// Verify clean plans in both layers
+	cleanupMigrationFiles(t, sharedDir)
+	cleanupMigrationFiles(t, networkingDir)
+	assertCleanPlan(t, sharedDir, vars)
+	assertCleanPlan(t, networkingDir, vars)
 }

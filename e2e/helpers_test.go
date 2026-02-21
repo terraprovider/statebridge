@@ -15,9 +15,12 @@ import (
 	"sort"
 	"testing"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
+	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob"
 	"github.com/hashicorp/terraform-exec/tfexec"
 	tfjson "github.com/hashicorp/terraform-json"
 
+	"github.com/redtenant/tfmigrate/pkg/auth"
 	"github.com/redtenant/tfmigrate/pkg/engine"
 	"github.com/redtenant/tfmigrate/pkg/state"
 )
@@ -344,4 +347,46 @@ func cleanupMigrationFiles(t *testing.T, layerDir string) {
 // formatMigrationYAML is a helper that uses fmt.Sprintf to format migration YAML.
 func formatMigrationYAML(format string, args ...interface{}) string {
 	return fmt.Sprintf(format, args...)
+}
+
+// getCredential creates an azcore.TokenCredential from ARM_* environment variables.
+func getCredential(t *testing.T) azcore.TokenCredential {
+	t.Helper()
+	cfg, err := auth.NewCredentialConfiguration(auth.WithDefaultEnvironmentVariables())
+	if err != nil {
+		t.Fatalf("creating credential config: %v", err)
+	}
+	cred, err := cfg.TokenCredential()
+	if err != nil {
+		t.Fatalf("creating token credential: %v", err)
+	}
+	return cred
+}
+
+// createContainer creates a blob container in the given storage account.
+func createContainer(t *testing.T, ctx context.Context, cred azcore.TokenCredential, storageAccountName, containerName string) {
+	t.Helper()
+	serviceURL := fmt.Sprintf("https://%s.blob.core.windows.net", storageAccountName)
+	client, err := azblob.NewClient(serviceURL, cred, nil)
+	if err != nil {
+		t.Fatalf("creating blob client for %s: %v", storageAccountName, err)
+	}
+	if _, err = client.CreateContainer(ctx, containerName, nil); err != nil {
+		t.Fatalf("creating container %s: %v", containerName, err)
+	}
+}
+
+// deleteContainer deletes a blob container. Errors are logged but do not fail
+// the test (cleanup best-effort).
+func deleteContainer(t *testing.T, ctx context.Context, cred azcore.TokenCredential, storageAccountName, containerName string) {
+	t.Helper()
+	serviceURL := fmt.Sprintf("https://%s.blob.core.windows.net", storageAccountName)
+	client, err := azblob.NewClient(serviceURL, cred, nil)
+	if err != nil {
+		t.Logf("WARNING: creating blob client for cleanup: %v", err)
+		return
+	}
+	if _, err = client.DeleteContainer(ctx, containerName, nil); err != nil {
+		t.Logf("WARNING: deleting container %s: %v", containerName, err)
+	}
 }
