@@ -187,7 +187,7 @@ func TestParseInitArgs(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := ParseInitArgs(tt.args)
+			got := ParseInitArgs(".", tt.args)
 			if len(got) != len(tt.want) {
 				t.Fatalf("got %d entries, want %d: %v", len(got), len(tt.want), got)
 			}
@@ -220,7 +220,7 @@ key                  = "terraform.tfstate"
 		"-reconfigure",
 	}
 
-	got := ParseInitArgs(args)
+	got := ParseInitArgs(dir, args)
 
 	if got["storage_account_name"] != "fileacct" {
 		t.Errorf("storage_account_name = %q, want %q", got["storage_account_name"], "fileacct")
@@ -255,7 +255,7 @@ resource_group_name=plaintextrg
 		"-backend-config=" + plainFile,
 	}
 
-	got := ParseInitArgs(args)
+	got := ParseInitArgs(dir, args)
 
 	if got["storage_account_name"] != "plaintextacct" {
 		t.Errorf("storage_account_name = %q, want %q", got["storage_account_name"], "plaintextacct")
@@ -287,7 +287,7 @@ container_name       = "basecontainer"
 		"-backend-config=storage_account_name=overrideacct",
 	}
 
-	got := ParseInitArgs(args)
+	got := ParseInitArgs(dir, args)
 
 	// Inline should override file value (processed after)
 	if got["storage_account_name"] != "overrideacct" {
@@ -305,7 +305,7 @@ func TestParseInitArgsNonexistentFile(t *testing.T) {
 		"-backend-config=storage_account_name=fallback",
 	}
 
-	got := ParseInitArgs(args)
+	got := ParseInitArgs(".", args)
 
 	// The inline arg should still work
 	if got["storage_account_name"] != "fallback" {
@@ -326,13 +326,35 @@ container_name='quotedcontainer'
 	}
 
 	args := []string{"-backend-config=" + plainFile}
-	got := ParseInitArgs(args)
+	got := ParseInitArgs(dir, args)
 
 	if got["storage_account_name"] != "quotedacct" {
 		t.Errorf("storage_account_name = %q, want %q", got["storage_account_name"], "quotedacct")
 	}
 	if got["container_name"] != "quotedcontainer" {
 		t.Errorf("container_name = %q, want %q", got["container_name"], "quotedcontainer")
+	}
+}
+
+func TestParseInitArgsRelativeFileResolution(t *testing.T) {
+	dir := t.TempDir()
+	hclFile := filepath.Join(dir, "backend.hcl")
+	content := `storage_account_name = "relacct"
+container_name = "relcontainer"
+`
+	if err := os.WriteFile(hclFile, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Pass relative filename only — ParseInitArgs should resolve against layerPath (dir)
+	args := []string{"-backend-config=backend.hcl"}
+	got := ParseInitArgs(dir, args)
+
+	if got["storage_account_name"] != "relacct" {
+		t.Errorf("storage_account_name = %q, want %q", got["storage_account_name"], "relacct")
+	}
+	if got["container_name"] != "relcontainer" {
+		t.Errorf("container_name = %q, want %q", got["container_name"], "relcontainer")
 	}
 }
 
