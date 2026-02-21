@@ -72,15 +72,19 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("--upload and --dry-run cannot be used together")
 	}
 
-	// Resolve the tofu binary path
-	var tofuPath string
+	// Build init args from --backend-config flags
+	var initArgs []string
+	for _, bc := range flagGenerateBackendConfig {
+		initArgs = append(initArgs, "-backend-config="+bc)
+	}
+
+	// Resolve the tofu binary and create the state reader
 	var stateReader state.StateReader
 
 	if flagTofuPath != "" {
-		tofuPath = flagTofuPath
-		stateReader = state.NewTofuStateReaderWithPath(tofuPath)
+		stateReader = state.NewTofuStateReader(flagTofuPath, initArgs)
 	} else {
-		reader, lookupErr := state.NewTofuStateReader()
+		reader, lookupErr := state.NewTofuStateReaderFromPath(initArgs)
 		if lookupErr != nil {
 			// tofu not found is acceptable in dry-run mode or when state
 			// lookup is not needed; we'll fail later if state is actually needed
@@ -88,24 +92,12 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 			fmt.Fprintf(os.Stderr, "State auto-resolution will not be available. Use explicit import_id values.\n")
 			stateReader = &noopStateReader{}
 		} else {
-			tofuPath = reader.TofuPath
 			stateReader = reader
 		}
 	}
 
-	// Wrap in a cache to avoid re-reading the same layer's state
-	cachedReader := state.NewCachedStateReader(stateReader)
-
-	// Build init args from --backend-config flags
-	var initArgs []string
-	for _, bc := range flagGenerateBackendConfig {
-		initArgs = append(initArgs, "-backend-config="+bc)
-	}
-
 	cfg := engine.Config{
-		StateReader: cachedReader,
-		TofuPath:    tofuPath,
-		InitArgs:    initArgs,
+		StateReader: stateReader,
 		DryRun:      flagDryRun,
 	}
 
