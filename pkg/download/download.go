@@ -79,7 +79,7 @@ func (d *Downloader) Download(ctx context.Context, targetDir string) ([]string, 
 	// Set up state reader for condition evaluation (lazy — only created if needed)
 	var stateReader state.StateReader
 	var stateReaderErr error
-	getStateReader := func(initArgs []string) (state.StateReader, error) {
+	getStateReader := func() (state.StateReader, error) {
 		if stateReader != nil || stateReaderErr != nil {
 			return stateReader, stateReaderErr
 		}
@@ -94,14 +94,14 @@ func (d *Downloader) Download(ctx context.Context, targetDir string) ([]string, 
 			}
 			baseReader = r
 		}
-		if len(initArgs) > 0 {
+		if len(d.initArgs) > 0 {
 			tofuPath := d.tofuPath
 			if tofuPath == "" {
 				if r, ok := baseReader.(*state.TofuStateReader); ok {
 					tofuPath = r.TofuPath
 				}
 			}
-			baseReader = state.NewInitStateReader(baseReader, tofuPath, initArgs)
+			baseReader = state.NewInitStateReader(baseReader, tofuPath, d.initArgs)
 		}
 		stateReader = state.NewCachedStateReader(baseReader)
 		return stateReader, nil
@@ -150,8 +150,8 @@ func (d *Downloader) Download(ctx context.Context, targetDir string) ([]string, 
 	return written, nil
 }
 
-// stateReaderGetter is a lazy factory for state readers with init args.
-type stateReaderGetter func(initArgs []string) (state.StateReader, error)
+// stateReaderGetter is a lazy factory for state readers.
+type stateReaderGetter func() (state.StateReader, error)
 
 // evaluateConditions checks whether a migration's conditions are met.
 // Returns true if the migration should be applied.
@@ -172,7 +172,7 @@ func (d *Downloader) evaluateConditions(
 			continue
 		}
 
-		reader, err := getReader(meta.InitArgs)
+		reader, err := getReader()
 		if err != nil {
 			return false, err
 		}
@@ -195,7 +195,7 @@ func (d *Downloader) evaluateConditions(
 			continue
 		}
 
-		reader, err := getReader(meta.InitArgs)
+		reader, err := getReader()
 		if err != nil {
 			return false, err
 		}

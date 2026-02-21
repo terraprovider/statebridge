@@ -48,7 +48,7 @@ func init() {
 	rootCmd.AddCommand(downloadCmd)
 
 	downloadCmd.Flags().StringSliceVar(&flagDownloadBackendConfig, "backend-config", nil,
-		"Backend config overrides in key=value format or path to a config file (repeatable)")
+		"Backend configuration passed to tofu init, as key=value or path to a file (repeatable)")
 	downloadCmd.Flags().StringVar(&flagDownloadTofuPath, "tofu-path", "",
 		"Override path to the tofu binary (default: auto-detect from PATH)")
 	downloadCmd.Flags().BoolVar(&flagDownloadDryRun, "dry-run", false,
@@ -73,7 +73,13 @@ func runDownload(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("getting current directory: %w", err)
 	}
 
-	dl := download.NewDownloader(cred, flagDownloadBackendConfig, flagDownloadTofuPath, flagDownloadDryRun)
+	// Build init args from --backend-config flags
+	var initArgs []string
+	for _, bc := range flagDownloadBackendConfig {
+		initArgs = append(initArgs, "-backend-config="+bc)
+	}
+
+	dl := download.NewDownloader(cred, initArgs, flagDownloadTofuPath, flagDownloadDryRun)
 	ctx := context.Background()
 
 	files, err := dl.Download(ctx, cwd)

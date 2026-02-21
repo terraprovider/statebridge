@@ -17,8 +17,13 @@ type Config struct {
 	StateReader state.StateReader
 
 	// TofuPath is the path to the tofu binary.
-	// Required when migration files use the init feature.
+	// Required when --backend-config flags are used for auto-init.
 	TofuPath string
+
+	// InitArgs are extra arguments passed to `tofu init` when a layer's state
+	// cannot be read. Typically contains -backend-config flags and -reconfigure.
+	// When non-empty, the state reader is wrapped with automatic init-on-failure.
+	InitArgs []string
 
 	// DryRun if true prints output but does not write files.
 	DryRun bool
@@ -32,7 +37,6 @@ type Engine struct {
 	resolver          *Resolver
 	parser            *migration.Parser
 	currentSourceFile string
-	migrationFiles    []*migration.MigrationFile
 }
 
 // New creates a new Engine with the given configuration.
@@ -40,10 +44,17 @@ func New(cfg Config) *Engine {
 	w := generator.NewWriter()
 	w.DryRun = cfg.DryRun
 
+	// When init args are provided, wrap the state reader with auto-init
+	// so that layers are automatically initialized on state read failure.
+	reader := cfg.StateReader
+	if len(cfg.InitArgs) > 0 {
+		reader = state.NewInitStateReader(reader, cfg.TofuPath, cfg.InitArgs)
+	}
+
 	return &Engine{
 		config:   cfg,
 		writer:   w,
-		resolver: NewResolver(cfg.StateReader),
+		resolver: NewResolver(reader),
 		parser:   migration.NewParser(),
 	}
 }
@@ -52,11 +63,6 @@ func New(cfg Config) *Engine {
 // (e.g., for dry-run output).
 func (e *Engine) Writer() *generator.Writer {
 	return e.writer
-}
-
-// MigrationFiles returns the parsed migration files from the last ProcessFiles call.
-func (e *Engine) MigrationFiles() []*migration.MigrationFile {
-	return e.migrationFiles
 }
 
 // ProcessFiles parses and processes a list of migration file paths (or directories),
@@ -68,8 +74,6 @@ func (e *Engine) ProcessFiles(ctx context.Context, paths []string) ([]string, er
 		return nil, fmt.Errorf("parsing migration files: %w", err)
 	}
 
-	e.migrationFiles = files
-
 	for _, mf := range files {
 		if errs := migration.Validate(mf); len(errs) > 0 {
 			var msgs []string
@@ -77,15 +81,6 @@ func (e *Engine) ProcessFiles(ctx context.Context, paths []string) ([]string, er
 				msgs = append(msgs, ve.Error())
 			}
 			return nil, fmt.Errorf("validation errors in %q:\n  %s", mf.FilePath, strings.Join(msgs, "\n  "))
-		}
-
-		// When init config is present, wrap the state reader with an
-		// init-on-failure reader for this migration file.
-		if mf.Init != nil {
-			initReader := state.NewInitStateReader(e.config.StateReader, e.config.TofuPath, mf.Init.Args)
-			e.resolver = NewResolver(initReader)
-		} else {
-			e.resolver = NewResolver(e.config.StateReader)
 		}
 
 		proceed, err := e.evaluateCondition(ctx, mf)
@@ -346,6 +341,7 @@ func (e *Engine) processMoveKeyed(
 			ID:          importID,
 			Layer:       dstLayer,
 			Description: description,
+			Source:      e.currentSourceFile,
 		})
 	}
 
@@ -362,6 +358,7 @@ func (e *Engine) processMoveKeyed(
 			Destroy:     false,
 			Layer:       srcLayer,
 			Description: description,
+			Source:      e.currentSourceFile,
 		}
 		blocks = append([]generator.Block{removedBlock}, blocks...)
 	}
@@ -464,11 +461,6 @@ func buildFileMetadata(mf *migration.MigrationFile) *generator.MigrationMetadata
 
 	if mf.Condition != nil {
 		meta.Conditions = convertCondition(mf.Condition)
-	}
-
-	if mf.Init != nil && len(mf.Init.Args) > 0 {
-		meta.InitArgs = make([]string, len(mf.Init.Args))
-		copy(meta.InitArgs, mf.Init.Args)
 	}
 
 	return meta

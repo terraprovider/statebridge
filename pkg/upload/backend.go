@@ -48,7 +48,7 @@ func DiscoverBackendConfig(layerPath string, initArgs []string) (*BackendConfig,
 		return nil, fmt.Errorf("parsing backend config in %q: %w", layerPath, err)
 	}
 
-	overrides := ParseInitArgs(initArgs)
+	overrides := ParseInitArgs(layerPath, initArgs)
 	config := MergeBackendConfig(inline, overrides)
 
 	if err := config.Validate(); err != nil {
@@ -145,11 +145,13 @@ func extractAzurermConfig(block *hcl.Block) (*BackendConfig, error) {
 // It recognizes the format "-backend-config=key=value" for inline values and
 // "-backend-config=path/to/file" for file-based configuration. When the value
 // after -backend-config= does not contain "=" it is treated as a file path.
+// Relative file paths are resolved against layerPath so that backend config
+// files placed alongside .tf files in the layer directory are found correctly.
 // Backend config files follow the Terraform/OpenTofu format: HCL assignments
 // (key = "value") or plain key=value lines.
 // Only known azurerm backend fields are extracted (storage_account_name,
 // container_name, resource_group_name). Non-backend-config args are silently ignored.
-func ParseInitArgs(args []string) map[string]string {
+func ParseInitArgs(layerPath string, args []string) map[string]string {
 	recognized := map[string]bool{
 		"storage_account_name": true,
 		"container_name":       true,
@@ -173,8 +175,12 @@ func ParseInitArgs(args []string) map[string]string {
 				result[parts[0]] = parts[1]
 			}
 		} else {
-			// Treat as a file path
-			fileKVs, err := parseBackendConfigFile(val)
+			// Treat as a file path — resolve relative to the layer directory
+			filePath := val
+			if !filepath.IsAbs(filePath) {
+				filePath = filepath.Join(layerPath, filePath)
+			}
+			fileKVs, err := parseBackendConfigFile(filePath)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: could not read backend-config file %q: %v\n", val, err)
 				continue

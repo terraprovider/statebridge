@@ -8,11 +8,10 @@ import (
 )
 
 // MigrationMetadata holds structured information embedded in generated .tf files.
-// It carries conditions, init arguments, and resource addresses needed by the
-// download command to evaluate applicability and by plan/apply for targeting.
+// It carries conditions and resource addresses needed by the download command
+// to evaluate applicability and by plan/apply for targeting.
 type MigrationMetadata struct {
 	Conditions *MetadataCondition `json:"conditions,omitempty"`
-	InitArgs   []string           `json:"init_args,omitempty"`
 	Resources  []string           `json:"resources"`
 }
 
