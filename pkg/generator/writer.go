@@ -28,7 +28,7 @@ func NewWriter() *Writer {
 	}
 }
 
-// SetFileMetadata associates metadata (conditions, init args) with a source
+// SetFileMetadata associates metadata (conditions) with a source
 // migration file. The resources field is computed automatically at render time
 // from the blocks in each group. Layer-specific condition relativization is
 // also applied at render time.
@@ -144,7 +144,6 @@ func (w *Writer) buildGroupMetadata(key groupKey, blocks []Block) *MigrationMeta
 	}
 
 	if stored != nil {
-		meta.InitArgs = stored.InitArgs
 		meta.Conditions = RelativizeCondition(stored.Conditions, key.Layer)
 	}
 

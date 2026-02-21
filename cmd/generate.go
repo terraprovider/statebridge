@@ -16,9 +16,10 @@ import (
 )
 
 var (
-	flagDryRun   bool
-	flagTofuPath string
-	flagUpload   bool
+	flagDryRun                bool
+	flagTofuPath              string
+	flagUpload                bool
+	flagGenerateBackendConfig []string
 )
 
 // generateCmd represents the generate command.
@@ -62,6 +63,8 @@ func init() {
 		"Override path to the tofu binary (default: auto-detect from PATH)")
 	generateCmd.Flags().BoolVar(&flagUpload, "upload", false,
 		"Upload generated files to Azure Blob Storage after generation")
+	generateCmd.Flags().StringSliceVar(&flagGenerateBackendConfig, "backend-config", nil,
+		"Backend configuration passed to tofu init, as key=value or path to a file (repeatable)")
 }
 
 func runGenerate(cmd *cobra.Command, args []string) error {
@@ -93,9 +96,16 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 	// Wrap in a cache to avoid re-reading the same layer's state
 	cachedReader := state.NewCachedStateReader(stateReader)
 
+	// Build init args from --backend-config flags
+	var initArgs []string
+	for _, bc := range flagGenerateBackendConfig {
+		initArgs = append(initArgs, "-backend-config="+bc)
+	}
+
 	cfg := engine.Config{
 		StateReader: cachedReader,
 		TofuPath:    tofuPath,
+		InitArgs:    initArgs,
 		DryRun:      flagDryRun,
 	}
 
@@ -151,12 +161,10 @@ func runUploadAfterGenerate(ctx context.Context, eng *engine.Engine) error {
 		return fmt.Errorf("creating Azure credential: %w", err)
 	}
 
-	// Collect init args from all processed migration files
+	// Build init args from --backend-config flags
 	var initArgs []string
-	for _, mf := range eng.MigrationFiles() {
-		if mf.Init != nil {
-			initArgs = append(initArgs, mf.Init.Args...)
-		}
+	for _, bc := range flagGenerateBackendConfig {
+		initArgs = append(initArgs, "-backend-config="+bc)
 	}
 
 	mgr := upload.NewManager(cred, initArgs)

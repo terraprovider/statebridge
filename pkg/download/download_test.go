@@ -171,7 +171,7 @@ func TestEvaluateConditionsResourcesExist(t *testing.T) {
 		"/test/layer": stateWithResource,
 	})
 
-	getReader := func(initArgs []string) (state.StateReader, error) {
+	getReader := func() (state.StateReader, error) {
 		return reader, nil
 	}
 
@@ -201,7 +201,7 @@ func TestEvaluateConditionsResourcesExistFails(t *testing.T) {
 		"/test/layer": emptyState,
 	})
 
-	getReader := func(initArgs []string) (state.StateReader, error) {
+	getReader := func() (state.StateReader, error) {
 		return reader, nil
 	}
 
@@ -231,7 +231,7 @@ func TestEvaluateConditionsResourcesNotExist(t *testing.T) {
 		"/test/layer": emptyState,
 	})
 
-	getReader := func(initArgs []string) (state.StateReader, error) {
+	getReader := func() (state.StateReader, error) {
 		return reader, nil
 	}
 
@@ -261,7 +261,7 @@ func TestEvaluateConditionsResourcesNotExistFails(t *testing.T) {
 		"/test/layer": stateWithResource,
 	})
 
-	getReader := func(initArgs []string) (state.StateReader, error) {
+	getReader := func() (state.StateReader, error) {
 		return reader, nil
 	}
 
@@ -286,7 +286,7 @@ func TestEvaluateConditionsCrossLayerWarning(t *testing.T) {
 	dl := &Downloader{}
 	ctx := context.Background()
 
-	getReader := func(initArgs []string) (state.StateReader, error) {
+	getReader := func() (state.StateReader, error) {
 		return newMockStateReader(nil), nil
 	}
 
@@ -312,7 +312,7 @@ func TestEvaluateConditionsNil(t *testing.T) {
 	dl := &Downloader{}
 	ctx := context.Background()
 
-	getReader := func(initArgs []string) (state.StateReader, error) {
+	getReader := func() (state.StateReader, error) {
 		return nil, nil
 	}
 

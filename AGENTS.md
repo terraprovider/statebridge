@@ -35,10 +35,6 @@ condition:           # optional: skip file if checks fail
     - layer: "<layer path>"
       addresses:
         - "<resource address>"
-init:                # optional: auto-init layers on state read failure
-  args:
-    - "-backend-config=bucket=my-bucket"
-    - "-reconfigure"
 operations:
   - type: <move|rename|remove|import>
     # ... fields depend on type
@@ -64,23 +60,6 @@ condition:
     - layer: "./layers/app"
       addresses:
         - "aws_instance.web"
-```
-
-### Auto-Init
-
-Optional. Configures automatic `tofu init` when a layer's state cannot be read (common in CI where backends are not pre-initialized).
-
-- `args`: list of extra arguments passed to `tofu init` (e.g., `-backend-config=key=value`, `-reconfigure`)
-- Init runs lazily — only when `tofu show` fails for a layer
-- Init runs once per layer per migration file
-- If `args` is empty or omitted, `tofu init` runs with no extra arguments
-- If `tofu init` fails, the error propagates
-
-```yaml
-init:
-  args:
-    - "-backend-config=bucket=my-state-bucket"
-    - "-reconfigure"
 ```
 
 ### Common Field: `address_prefix`
@@ -443,21 +422,20 @@ condition:
 
 ### "Run in CI where backends aren't initialized" / "Auto-init layers"
 
-Add an `init` block with the backend configuration:
+Use the `--backend-config` CLI flag on `generate`, `upload`, or `download` to pass backend configuration to `tofu init`. This mirrors the `tofu init -backend-config=...` syntax:
 
-```yaml
-description: "Move resources (CI-safe)"
-init:
-  args:
-    - "-backend-config=bucket=my-state-bucket"
-    - "-backend-config=key=terraform.tfstate"
-    - "-reconfigure"
-operations:
-  - type: move
-    source_layer: "<source layer>"
-    destination_layer: "<destination layer>"
-    resources:
-      - address: "<resource address>"
+```bash
+# Generate with backend config (auto-inits layers on state read failure)
+tfmigrate generate --backend-config=bucket=my-state-bucket --backend-config=key=terraform.tfstate migrations/
+
+# Upload with backend config
+tfmigrate upload --backend-config=storage_account_name=myacct ./layers/compute
+
+# Download with backend config
+tfmigrate download --backend-config=storage_account_name=myacct
+
+# Point to a backend config file
+tfmigrate generate --backend-config=backend.hcl migrations/
 ```
 
 ---
@@ -482,7 +460,6 @@ When generating YAML, ensure:
 14. `condition` is optional; if present, each resource check requires `layer` (non-empty) and `addresses` (non-empty list of non-empty strings)
 15. `resources_exist`: all listed addresses must exist in the specified layer's state for the migration to proceed
 16. `resources_not_exist`: none of the listed addresses may exist in the specified layer's state
-17. `init` is optional; `args` accepts any list of strings to pass to `tofu init`
 
 ## File Naming Convention
 
@@ -526,8 +503,11 @@ tfmigrate generate --dry-run migrations/
 # Generate the HCL files
 tfmigrate generate migrations/
 
+# Generate with backend config for auto-init
+tfmigrate generate --backend-config=storage_account_name=myacct migrations/
+
 # Generate and upload to Azure Blob Storage in one step
-tfmigrate generate --upload migrations/
+tfmigrate generate --upload --backend-config=storage_account_name=myacct migrations/
 ```
 
 ### CI Workflow
@@ -536,11 +516,11 @@ The full lifecycle for applying migrations in CI:
 
 ```bash
 # 1. Generate and upload (from repo root, once)
-tfmigrate generate --upload migrations/
+tfmigrate generate --upload --backend-config=storage_account_name=myacct migrations/
 
 # 2. Per layer: download applicable migrations
 cd layers/compute
-tfmigrate download
+tfmigrate download --backend-config=storage_account_name=myacct
 
 # 3. Plan to verify (targeted to migration resources by default)
 tfmigrate plan
@@ -556,10 +536,10 @@ Generated migration files can be persisted to Azure Blob Storage using either th
 ### Generate and Upload
 
 ```bash
-tfmigrate generate --upload migrations/
+tfmigrate generate --upload --backend-config=storage_account_name=myacct migrations/
 ```
 
-Runs the full pipeline, writes files to disk, then uploads each generated `.tf` file to `migrations/<filename>` in the Azure Blob Storage container configured in that layer's backend. Cannot be combined with `--dry-run`.
+Runs the full pipeline, writes files to disk, then uploads each generated `.tf` file to `migrations/<filename>` in the Azure Blob Storage container configured in that layer's backend. Cannot be combined with `--dry-run`. The `--backend-config` flag is used both for auto-init during state reads and for backend config discovery during upload.
 
 ### Standalone Upload
 
@@ -573,8 +553,7 @@ Uploads pre-generated `migration.*.tf` files from layer directories. Useful when
 
 | Flag | Description |
 |------|-------------|
-| `--backend-config` | Backend config override in `key=value` format or path to a config file (repeatable) |
-| `--migration-file` | Migration YAML to read init args from for backend config discovery |
+| `--backend-config` | Backend configuration passed to tofu init, as `key=value` or path to a file (repeatable) |
 
 **Examples:**
 
@@ -587,9 +566,6 @@ tfmigrate upload --backend-config=storage_account_name=myacct ./layers/compute
 
 # Use a backend config file
 tfmigrate upload --backend-config=backend.hcl ./layers/compute
-
-# Read init args from migration YAML
-tfmigrate upload --migration-file=migrations/001_move.yaml ./layers/compute
 ```
 
 ### Backend Configuration Discovery
@@ -597,8 +573,8 @@ tfmigrate upload --migration-file=migrations/001_move.yaml ./layers/compute
 The upload target (storage account + container) is resolved per layer:
 
 1. Parse `.tf` files in the layer directory for `terraform { backend "azurerm" { ... } }`
-2. Extract `-backend-config=key=value` pairs from init args (YAML `init.args` or `--backend-config` flags). File paths are also supported: `-backend-config=path/to/file.hcl` reads key=value pairs from the file (HCL or plain text format)
-3. Merge: init args override inline HCL values
+2. Extract `key=value` pairs from `--backend-config` CLI flags. File paths are also supported: `--backend-config=path/to/file.hcl` reads key=value pairs from the file (HCL or plain text format)
+3. Merge: `--backend-config` overrides inline HCL values
 
 Required fields: `storage_account_name`, `container_name`.
 
@@ -630,7 +606,7 @@ Downloads applicable migration files from the layer's blob container to the curr
 
 | Flag | Description |
 |------|-------------|
-| `--backend-config` | Backend config override in `key=value` format or path to a config file (repeatable) |
+| `--backend-config` | Backend configuration passed to tofu init, as `key=value` or path to a file (repeatable) |
 | `--tofu-path` | Override tofu binary path |
 | `--dry-run` | Print what would be downloaded without writing |
 
@@ -639,7 +615,7 @@ Downloads applicable migration files from the layer's blob container to the curr
 1. Discovers backend config from `.tf` files in cwd (+ `--backend-config` overrides)
 2. Lists `migrations/migration.*.tf` blobs in the layer's container
 3. Downloads each blob and parses embedded metadata
-4. For conditions with `layer == "."`: auto-inits backend, reads state, evaluates conditions
+4. For conditions with `layer == "."`: initializes backend (if `--backend-config` provided), reads state, evaluates conditions
 5. For cross-layer conditions: warns and treats as met (other layer state unavailable)
 6. Writes only applicable files; skipped files print a message to stderr
 
@@ -674,7 +650,7 @@ Generated `.tf` files include a structured JSON metadata block as comments:
 # Generated by tfmigrate - do not edit manually
 #
 # tfmigrate:metadata:begin
-# {"conditions":{"resources_exist":[{"layer":".","addresses":["azurerm_vm.web"]}]},"init_args":["-reconfigure"],"resources":["azurerm_vm.web","azurerm_vnet.main"]}
+# {"conditions":{"resources_exist":[{"layer":".","addresses":["azurerm_vm.web"]}]},"resources":["azurerm_vm.web","azurerm_vnet.main"]}
 # tfmigrate:metadata:end
 
 import {
@@ -684,7 +660,6 @@ import {
 
 **Fields:**
 - `conditions` — from the migration YAML, with the owning layer replaced by `"."` for portability
-- `init_args` — backend init arguments for auto-initialization during download
 - `resources` — all resource addresses touched by blocks in the file (used for `-target` flags)
 
 The metadata is produced by the generator during `ProcessFiles()` and embedded by the `Writer` at render time. The `download`, `plan`, and `apply` commands parse it using `generator.ParseMetadataComment()`.
