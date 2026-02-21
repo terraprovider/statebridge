@@ -12,13 +12,19 @@ import (
 )
 
 var (
-	flagPlanNoTarget bool
-	flagPlanTofuPath string
+	flagPlanNoTarget         bool
+	flagPlanTofuPath         string
+	flagPlanDetailedExitcode bool
+	flagPlanOut              string
+	flagPlanVar              []string
+	flagPlanVarFile          []string
+	flagPlanLock             bool
+	flagPlanLockTimeout      string
 )
 
 // planCmd represents the plan command.
 var planCmd = &cobra.Command{
-	Use:   "plan [-- extra-tofu-args...]",
+	Use:   "plan",
 	Short: "Run tofu plan targeted to migration resources",
 	Long: `Run tofu plan scoped to the resources touched by migration files in the
 current directory. By default, only resources listed in migration metadata
@@ -27,8 +33,6 @@ are targeted with -target flags. Use --no-target for a full plan.
 Migration files (migration.*.tf) must be present in the current directory,
 typically placed there by the download command.
 
-Extra arguments can be passed to tofu after --:
-
 Examples:
   # Targeted plan (default)
   tfmigrate plan
@@ -36,9 +40,12 @@ Examples:
   # Full plan without targeting
   tfmigrate plan --no-target
 
-  # Pass extra flags to tofu
-  tfmigrate plan -- -var="env=prod"`,
-	Args: cobra.ArbitraryArgs,
+  # Save plan to file with detailed exit code
+  tfmigrate plan --out=tfplan --detailed-exitcode
+
+  # Pass variables and disable locking
+  tfmigrate plan --var="env=prod" --lock=false`,
+	Args: cobra.NoArgs,
 	RunE: runPlan,
 }
 
@@ -49,6 +56,18 @@ func init() {
 		"Run tofu plan without -target flags (full plan)")
 	planCmd.Flags().StringVar(&flagPlanTofuPath, "tofu-path", "",
 		"Override path to the tofu binary (default: auto-detect from PATH)")
+	planCmd.Flags().BoolVar(&flagPlanDetailedExitcode, "detailed-exitcode", false,
+		"Return exit code 2 when plan has changes")
+	planCmd.Flags().StringVar(&flagPlanOut, "out", "",
+		"Save the plan to a file")
+	planCmd.Flags().StringSliceVar(&flagPlanVar, "var", nil,
+		"Set a variable (key=value, can be repeated)")
+	planCmd.Flags().StringSliceVar(&flagPlanVarFile, "var-file", nil,
+		"Variable file path (can be repeated)")
+	planCmd.Flags().BoolVar(&flagPlanLock, "lock", true,
+		"Lock the state file during operations")
+	planCmd.Flags().StringVar(&flagPlanLockTimeout, "lock-timeout", "",
+		"Duration to retry a state lock (e.g. 30s)")
 }
 
 func runPlan(cmd *cobra.Command, args []string) error {
@@ -67,8 +86,9 @@ func runPlan(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("scanning migration targets: %w", err)
 	}
 
-	if len(targets) == 0 {
-		return fmt.Errorf("no migration files with metadata found in current directory")
+	if len(targets) == 0 && !flagPlanNoTarget {
+		fmt.Fprintln(os.Stderr, "No migration files found, nothing to plan.")
+		return nil
 	}
 
 	if !flagPlanNoTarget {
@@ -83,15 +103,30 @@ func runPlan(cmd *cobra.Command, args []string) error {
 		fmt.Fprintln(os.Stderr)
 	}
 
-	var extraArgs []string
-	if dashIdx := cmd.ArgsLenAtDash(); dashIdx >= 0 {
-		extraArgs = args[dashIdx:]
+	opts := tofu.PlanOpts{
+		Out:         flagPlanOut,
+		Vars:        flagPlanVar,
+		VarFiles:    flagPlanVarFile,
+		LockTimeout: flagPlanLockTimeout,
+	}
+	if cmd.Flags().Changed("lock") {
+		opts.Lock = &flagPlanLock
 	}
 
-	runner := tofu.NewRunner(tofuPath, cwd)
+	runner, err := tofu.NewRunner(tofuPath, cwd)
+	if err != nil {
+		return err
+	}
 	ctx := context.Background()
 
-	return runner.Plan(ctx, targets, extraArgs)
+	hasChanges, err := runner.Plan(ctx, targets, opts)
+	if err != nil {
+		return err
+	}
+	if hasChanges && flagPlanDetailedExitcode {
+		return &ExitCodeError{Code: 2}
+	}
+	return nil
 }
 
 // resolveTofuPath returns the tofu binary path from a flag or PATH lookup.

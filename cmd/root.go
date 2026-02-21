@@ -2,10 +2,22 @@
 package cmd
 
 import (
+	"errors"
+	"fmt"
 	"os"
 
 	"github.com/spf13/cobra"
 )
+
+// ExitCodeError wraps an exit code so that cobra RunE handlers can propagate
+// the exact exit code from an external process (e.g., tofu --detailed-exitcode).
+type ExitCodeError struct {
+	Code int
+}
+
+func (e *ExitCodeError) Error() string {
+	return fmt.Sprintf("exit code %d", e.Code)
+}
 
 // rootCmd represents the base command when called without any subcommands.
 var rootCmd = &cobra.Command{
@@ -30,6 +42,10 @@ Use cases:
 func Execute() {
 	err := rootCmd.Execute()
 	if err != nil {
+		var exitErr *ExitCodeError
+		if errors.As(err, &exitErr) {
+			os.Exit(exitErr.Code)
+		}
 		os.Exit(1)
 	}
 }

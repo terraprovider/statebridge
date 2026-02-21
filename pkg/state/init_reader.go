@@ -4,9 +4,10 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
+	"strings"
 
+	tfexec "github.com/hashicorp/terraform-exec/tfexec"
 	tfjson "github.com/hashicorp/terraform-json"
 )
 
@@ -63,12 +64,20 @@ func (r *InitStateReader) ReadState(ctx context.Context, layerPath string) (*tfj
 
 // runInit executes `tofu init` with the configured arguments in the given directory.
 func (r *InitStateReader) runInit(ctx context.Context, absPath string) error {
-	args := append([]string{"init"}, r.initArgs...)
-	cmd := exec.CommandContext(ctx, r.tofuPath, args...)
-	cmd.Dir = absPath
-	cmd.Stdout = os.Stderr
-	cmd.Stderr = os.Stderr
+	tf, err := tfexec.NewTerraform(absPath, r.tofuPath)
+	if err != nil {
+		return fmt.Errorf("initializing terraform-exec: %w", err)
+	}
+	tf.SetStdout(os.Stderr)
+	tf.SetStderr(os.Stderr)
+
+	var opts []tfexec.InitOption
+	for _, arg := range r.initArgs {
+		if strings.HasPrefix(arg, "-backend-config=") {
+			opts = append(opts, tfexec.BackendConfig(strings.TrimPrefix(arg, "-backend-config=")))
+		}
+	}
 
 	fmt.Fprintf(os.Stderr, "Running tofu init in %s\n", absPath)
-	return cmd.Run()
+	return tf.Init(ctx, opts...)
 }

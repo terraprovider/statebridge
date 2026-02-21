@@ -6,63 +6,67 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 
+	tfexec "github.com/hashicorp/terraform-exec/tfexec"
 	"github.com/redtenant/tfmigrate/pkg/generator"
 )
 
 // Runner executes tofu commands in a working directory.
 type Runner struct {
-	tofuPath string
-	workDir  string
+	tf *tfexec.Terraform
 }
 
-// NewRunner creates a Runner for the given tofu binary and working directory.
-func NewRunner(tofuPath, workDir string) *Runner {
-	return &Runner{tofuPath: tofuPath, workDir: workDir}
+// PlanOpts holds typed options for the plan command, replacing raw extra args.
+type PlanOpts struct {
+	Out         string
+	Vars        []string
+	VarFiles    []string
+	Lock        *bool
+	LockTimeout string
 }
 
-// Plan runs tofu plan with optional -target flags.
-// Stdout and stderr are streamed directly to the terminal.
-func (r *Runner) Plan(ctx context.Context, targets []string, extraArgs []string) error {
-	args := []string{"plan"}
+// NewRunner creates a Runner backed by terraform-exec for the given tofu
+// binary and working directory.
+func NewRunner(tofuPath, workDir string) (*Runner, error) {
+	tf, err := tfexec.NewTerraform(workDir, tofuPath)
+	if err != nil {
+		return nil, fmt.Errorf("initializing terraform-exec: %w", err)
+	}
+	tf.SetStdout(os.Stdout)
+	tf.SetStderr(os.Stderr)
+	return &Runner{tf: tf}, nil
+}
+
+// Plan runs tofu plan with optional -target flags and typed options.
+// Returns true if the plan detects changes, false otherwise.
+func (r *Runner) Plan(ctx context.Context, targets []string, opts PlanOpts) (bool, error) {
+	var planOpts []tfexec.PlanOption
 	for _, t := range targets {
-		args = append(args, fmt.Sprintf("-target=%s", t))
+		planOpts = append(planOpts, tfexec.Target(t))
 	}
-	args = append(args, extraArgs...)
-	return r.run(ctx, args)
-}
-
-// Apply runs tofu apply -auto-approve with optional -target flags.
-// Stdout and stderr are streamed directly to the terminal.
-func (r *Runner) Apply(ctx context.Context, targets []string, extraArgs []string) error {
-	args := []string{"apply", "-auto-approve"}
-	for _, t := range targets {
-		args = append(args, fmt.Sprintf("-target=%s", t))
+	if opts.Out != "" {
+		planOpts = append(planOpts, tfexec.Out(opts.Out))
 	}
-	args = append(args, extraArgs...)
-	return r.run(ctx, args)
-}
-
-// run executes a tofu command with the given arguments, streaming stdout/stderr.
-func (r *Runner) run(ctx context.Context, args []string) error {
-	cmd := exec.CommandContext(ctx, r.tofuPath, args...)
-	cmd.Dir = r.workDir
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	cmd.Stdin = os.Stdin
-
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("tofu %s: %w", args[0], err)
+	for _, v := range opts.Vars {
+		planOpts = append(planOpts, tfexec.Var(v))
 	}
-	return nil
+	for _, vf := range opts.VarFiles {
+		planOpts = append(planOpts, tfexec.VarFile(vf))
+	}
+	if opts.Lock != nil {
+		planOpts = append(planOpts, tfexec.Lock(*opts.Lock))
+	}
+	if opts.LockTimeout != "" {
+		planOpts = append(planOpts, tfexec.LockTimeout(opts.LockTimeout))
+	}
+	return r.tf.Plan(ctx, planOpts...)
 }
 
 // ScanMigrationTargets scans a directory for migration.*.tf files, parses
 // metadata from each, and returns the deduplicated sorted list of resource
-// addresses. This is used by plan and apply commands to determine -target flags.
+// addresses. This is used by the plan command to determine -target flags.
 func ScanMigrationTargets(dir string) ([]string, error) {
 	pattern := filepath.Join(dir, "migration.*.tf")
 	matches, err := filepath.Glob(pattern)
