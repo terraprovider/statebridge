@@ -83,27 +83,16 @@ func (d *Downloader) Download(ctx context.Context, targetDir string) ([]string, 
 		if stateReader != nil || stateReaderErr != nil {
 			return stateReader, stateReaderErr
 		}
-		var baseReader state.StateReader
 		if d.tofuPath != "" {
-			baseReader = state.NewTofuStateReaderWithPath(d.tofuPath)
+			stateReader = state.NewTofuStateReader(d.tofuPath, d.initArgs)
 		} else {
-			r, err := state.NewTofuStateReader()
+			r, err := state.NewTofuStateReaderFromPath(d.initArgs)
 			if err != nil {
 				stateReaderErr = fmt.Errorf("tofu binary not found: %w", err)
 				return nil, stateReaderErr
 			}
-			baseReader = r
+			stateReader = r
 		}
-		if len(d.initArgs) > 0 {
-			tofuPath := d.tofuPath
-			if tofuPath == "" {
-				if r, ok := baseReader.(*state.TofuStateReader); ok {
-					tofuPath = r.TofuPath
-				}
-			}
-			baseReader = state.NewInitStateReader(baseReader, tofuPath, d.initArgs)
-		}
-		stateReader = state.NewCachedStateReader(baseReader)
 		return stateReader, nil
 	}
 

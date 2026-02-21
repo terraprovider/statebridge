@@ -1,7 +1,6 @@
 package state
 
 import (
-	"context"
 	"testing"
 
 	tfjson "github.com/hashicorp/terraform-json"
@@ -208,64 +207,6 @@ func TestLookupResourcesByPrefix_NotFound(t *testing.T) {
 	_, err := LookupResourcesByPrefix(s, "aws_s3_bucket.missing")
 	if err == nil {
 		t.Fatal("expected error for no matches")
-	}
-}
-
-func TestCachedStateReader_CachesResults(t *testing.T) {
-	mock := testutil.NewMockStateReader(map[string]*tfjson.State{
-		"./layer-a": testutil.BuildState(
-			testutil.NewResource("aws_instance.web", "aws_instance", "web", nil, nil),
-		),
-	})
-
-	cached := NewCachedStateReader(mock)
-	ctx := context.Background()
-
-	// First read
-	s1, err := cached.ReadState(ctx, "./layer-a")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	// Second read (should be cached)
-	s2, err := cached.ReadState(ctx, "./layer-a")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if s1 != s2 {
-		t.Error("expected same state pointer from cache")
-	}
-
-	if mock.ReadCount["./layer-a"] != 1 {
-		t.Errorf("expected 1 read, got %d", mock.ReadCount["./layer-a"])
-	}
-}
-
-func TestCachedStateReader_DifferentLayers(t *testing.T) {
-	mock := testutil.NewMockStateReader(map[string]*tfjson.State{
-		"./layer-a": testutil.BuildState(),
-		"./layer-b": testutil.BuildState(),
-	})
-
-	cached := NewCachedStateReader(mock)
-	ctx := context.Background()
-
-	_, err := cached.ReadState(ctx, "./layer-a")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	_, err = cached.ReadState(ctx, "./layer-b")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if mock.ReadCount["./layer-a"] != 1 {
-		t.Errorf("expected 1 read for layer-a, got %d", mock.ReadCount["./layer-a"])
-	}
-	if mock.ReadCount["./layer-b"] != 1 {
-		t.Errorf("expected 1 read for layer-b, got %d", mock.ReadCount["./layer-b"])
 	}
 }
 

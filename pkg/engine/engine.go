@@ -16,15 +16,6 @@ type Config struct {
 	// StateReader reads Terraform/OpenTofu state for layers.
 	StateReader state.StateReader
 
-	// TofuPath is the path to the tofu binary.
-	// Required when --backend-config flags are used for auto-init.
-	TofuPath string
-
-	// InitArgs are extra arguments passed to `tofu init` when a layer's state
-	// cannot be read. Typically contains -backend-config flags and -reconfigure.
-	// When non-empty, the state reader is wrapped with automatic init-on-failure.
-	InitArgs []string
-
 	// DryRun if true prints output but does not write files.
 	DryRun bool
 }
@@ -44,17 +35,10 @@ func New(cfg Config) *Engine {
 	w := generator.NewWriter()
 	w.DryRun = cfg.DryRun
 
-	// When init args are provided, wrap the state reader with auto-init
-	// so that layers are automatically initialized on state read failure.
-	reader := cfg.StateReader
-	if len(cfg.InitArgs) > 0 {
-		reader = state.NewInitStateReader(reader, cfg.TofuPath, cfg.InitArgs)
-	}
-
 	return &Engine{
 		config:   cfg,
 		writer:   w,
-		resolver: NewResolver(reader),
+		resolver: NewResolver(cfg.StateReader),
 		parser:   migration.NewParser(),
 	}
 }
