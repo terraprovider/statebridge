@@ -63,7 +63,7 @@ func runDownload(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("configuring Azure credentials: %w", err)
 	}
 
-	cred, err := credCfg.AzCore()
+	cred, err := credCfg.TokenCredential()
 	if err != nil {
 		return fmt.Errorf("creating Azure credential: %w", err)
 	}

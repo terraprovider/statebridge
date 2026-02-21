@@ -21,6 +21,18 @@ func Getenv[T SupportedEnvTypes](envVar string) *T {
 	return nil
 }
 
+func GetMultienv[T SupportedEnvTypes](envVars ...string) *T {
+	for _, envVar := range envVars {
+		if val, ok := os.LookupEnv(envVar); ok {
+			parsed, err := Parse[T](val)
+			if err == nil {
+				return &parsed
+			}
+		}
+	}
+	return nil
+}
+
 func Parse[T SupportedEnvTypes](value string) (def T, err error) {
 	var result any
 	switch any(def).(type) {

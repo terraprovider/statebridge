@@ -585,6 +585,10 @@ Uses `pkg/auth` for Azure credentials via environment variables:
 - `ARM_CLIENT_ID`, `ARM_TENANT_ID`, `ARM_CLIENT_SECRET` (service principal)
 - `ARM_USE_CLI` (Azure CLI)
 - `ARM_USE_MSI` (managed identity)
+- `ARM_USE_OIDC` (OIDC federation — GitHub Actions, ADO Pipeline, generic)
+- `ARM_OIDC_TOKEN` (direct OIDC assertion token)
+- `ARM_OIDC_REQUEST_URL` / `ACTIONS_ID_TOKEN_REQUEST_URL` (OIDC token request URL)
+- `ARM_OIDC_REQUEST_TOKEN` / `ACTIONS_ID_TOKEN_REQUEST_TOKEN` (OIDC request auth token)
 
 ## Downloading Migrations from Azure Blob Storage
 
