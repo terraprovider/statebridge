@@ -107,6 +107,25 @@ func (d *Downloader) Download(ctx context.Context, targetDir string) ([]string, 
 		return stateReader, nil
 	}
 
+	// Clean up all existing migration.*.tf files in the target directory.
+	// Blob storage is the source of truth, so stale local files must be
+	// removed before writing fresh copies to avoid interfering with tofu.
+	existingPattern := filepath.Join(targetDir, "migration.*.tf")
+	existingFiles, err := filepath.Glob(existingPattern)
+	if err != nil {
+		return nil, fmt.Errorf("scanning existing migration files: %w", err)
+	}
+	for _, f := range existingFiles {
+		if d.dryRun {
+			fmt.Fprintf(os.Stderr, "Would remove old migration: %s\n", f)
+			continue
+		}
+		if err := os.Remove(f); err != nil {
+			return nil, fmt.Errorf("removing old migration %q: %w", f, err)
+		}
+		fmt.Fprintf(os.Stderr, "Removed old migration: %s\n", f)
+	}
+
 	var written []string
 	for _, blobName := range migrationBlobs {
 		content, err := uploader.DownloadBlob(ctx, blobName)

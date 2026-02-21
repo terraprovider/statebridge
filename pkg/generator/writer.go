@@ -100,6 +100,8 @@ func (w *Writer) RenderAll() map[string]string {
 // WriteAll writes all collected blocks to their respective layer directories.
 // Each (layer, source migration file) pair gets its own output file with
 // deterministic block ordering and a content-addressed filename.
+// Before writing, old versions of the same migration stem are removed so that
+// stale files do not interfere with tofu plan/apply.
 // Returns the sorted list of file paths written and any error encountered.
 func (w *Writer) WriteAll() ([]string, error) {
 	var written []string
@@ -110,7 +112,13 @@ func (w *Writer) WriteAll() ([]string, error) {
 		SortBlocks(blocks)
 		meta := w.buildGroupMetadata(key, blocks)
 		content := renderBlocks(blocks, meta)
-		outPath := filepath.Join(key.Layer, outputFilename(key.SourceFile, content))
+		filename := outputFilename(key.SourceFile, content)
+		outPath := filepath.Join(key.Layer, filename)
+
+		// Clean up old versions of the same migration stem
+		if err := w.cleanupOldVersions(key.Layer, filename); err != nil {
+			return written, fmt.Errorf("cleaning old versions for %q: %w", filename, err)
+		}
 
 		if w.DryRun {
 			written = append(written, outPath)
@@ -124,6 +132,42 @@ func (w *Writer) WriteAll() ([]string, error) {
 	}
 
 	return written, nil
+}
+
+// cleanupOldVersions removes migration files in layerDir that share the same
+// YAML stem as filename but have a different content hash.
+// For example, if filename is "migration.001_move.a1b2c3d4.tf", any existing
+// "migration.001_move.*.tf" files with a different hash are deleted.
+func (w *Writer) cleanupOldVersions(layerDir, filename string) error {
+	// Extract the YAML stem from "migration.<stem>.<hash>.tf"
+	inner := strings.TrimPrefix(strings.TrimSuffix(filename, ".tf"), "migration.")
+	lastDot := strings.LastIndex(inner, ".")
+	if lastDot <= 0 {
+		return nil // unexpected format, skip cleanup
+	}
+	stem := inner[:lastDot]
+
+	pattern := filepath.Join(layerDir, fmt.Sprintf("migration.%s.*.tf", stem))
+	matches, err := filepath.Glob(pattern)
+	if err != nil {
+		return fmt.Errorf("globbing old versions: %w", err)
+	}
+
+	for _, match := range matches {
+		if filepath.Base(match) == filename {
+			continue // same file, keep it
+		}
+		if w.DryRun {
+			fmt.Fprintf(os.Stderr, "Would remove old version: %s\n", match)
+			continue
+		}
+		if err := os.Remove(match); err != nil {
+			return fmt.Errorf("removing old version %q: %w", match, err)
+		}
+		fmt.Fprintf(os.Stderr, "Removed old version: %s\n", match)
+	}
+
+	return nil
 }
 
 // buildGroupMetadata constructs complete metadata for a (layer, sourceFile) group.
