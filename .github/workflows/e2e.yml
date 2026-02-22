@@ -1,0 +1,48 @@
+name: E2E Tests
+
+on:
+  workflow_dispatch:
+    inputs:
+      location:
+        description: 'Azure region'
+        default: 'westeurope'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'pkg/**'
+      - 'cmd/**'
+      - 'e2e/**'
+      - 'go.mod'
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  ARM_USE_OIDC: "true"
+  E2E_LOCATION: ${{ github.event.inputs.location || 'westeurope' }}
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    environment: e2e
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
+        with:
+          go-version-file: go.mod
+
+      - uses: opentofu/setup-opentofu@9d84900f3238fab8cd84ce47d658d25dd008be2f # v1.0.8
+
+      - name: Run e2e tests
+        env:
+          ARM_CLIENT_ID: ${{ vars.ARM_CLIENT_ID }}
+          ARM_TENANT_ID: ${{ vars.ARM_TENANT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ vars.ARM_SUBSCRIPTION_ID }}
+          E2E_STORAGE_ACCOUNT_NAME: ${{ vars.E2E_STORAGE_ACCOUNT_NAME }}
+        run: |
+          go test -tags=e2e -v -timeout=30m -count=1 ./e2e/...

@@ -675,6 +675,31 @@ import {
 
 The metadata is produced by the generator during `ProcessFiles()` and embedded by the `Writer` at render time. The `download` and `plan` commands parse it using `generator.ParseMetadataComment()`.
 
+## E2E Tests
+
+End-to-end tests live in `e2e/` and exercise the full migration pipeline against real Azure resources. They are gated behind the `e2e` build tag and skipped when `ARM_SUBSCRIPTION_ID` is not set.
+
+**Running locally:**
+```bash
+ARM_CLIENT_ID=... ARM_TENANT_ID=... ARM_SUBSCRIPTION_ID=... ARM_USE_OIDC=true \
+  go test -tags=e2e -v -timeout=30m -count=1 ./e2e/...
+```
+
+**CI:** Runs via `.github/workflows/e2e.yml` (separate from unit tests). Triggered by `workflow_dispatch` or PRs touching `pkg/`, `cmd/`, `e2e/`, or `go.mod`. Requires GitHub environment `e2e` with OIDC secrets.
+
+**Structure:**
+- `e2e/testproject/layers/` — Static Terraform project with 3 layers (shared, app, networking)
+- `e2e/helpers_test.go` — Test helpers (tofu init/apply/plan/destroy via terraform-exec, engine.ProcessFiles wrapper, blob container lifecycle)
+- `e2e/e2e_test.go` — Test functions covering move, keyed move, rename, remove+import, condition skip, upload/download
+
+**Environment variables:**
+- `ARM_CLIENT_ID`, `ARM_TENANT_ID`, `ARM_SUBSCRIPTION_ID` — Azure auth
+- `ARM_USE_OIDC=true` — OIDC authentication (GitHub Actions / ADO Pipeline)
+- `E2E_LOCATION` — Azure region (default: `westeurope`)
+- `E2E_STORAGE_ACCOUNT_NAME` — Pre-existing storage account for upload/download tests (service principal needs "Storage Blob Data Contributor" role). If not set, `TestE2E_UploadDownload` is skipped.
+
+**Test isolation:** Each test generates a unique resource prefix (`tfe2e` + 4 random hex chars) and uses `t.Cleanup()` to destroy all resources even on failure. Local backend — no shared state. The upload/download test creates an ephemeral blob container per run (named after the unique prefix) and deletes it on cleanup.
+
 ## Project Structure
 
 Key source files for understanding the codebase:
@@ -691,7 +716,8 @@ Key source files for understanding the codebase:
 - `pkg/generator/metadata.go` — migration metadata type, render/parse, address extraction, condition inference/merge
 - `pkg/generator/writer.go` — file output with metadata embedding and condition inference
 - `pkg/state/reader.go` — OpenTofu state reading (TofuStateReader with built-in caching and auto-init)
-- `pkg/auth/` — Azure credential management (azcore, azidentity, hashicorp graph)
+- `pkg/auth/` — Azure credential management (HashiCorp go-azure-sdk wrapper for azcore.TokenCredential)
+- `pkg/auth/credential.go` — TokenCredential wrapper bridging HashiCorp SDK auth to azcore
 - `pkg/upload/backend.go` — backend config discovery (HCL parsing + init arg merging)
 - `pkg/upload/uploader.go` — Azure Blob Storage operations (BlobUploader interface)
 - `pkg/upload/upload.go` — upload orchestration (Manager, version cleanup)
@@ -701,3 +727,6 @@ Key source files for understanding the codebase:
 - `cmd/upload.go` — CLI entry point for standalone upload command
 - `cmd/download.go` — CLI entry point for download command
 - `cmd/plan.go` — CLI entry point for targeted plan command
+- `e2e/e2e_test.go` — E2E test functions (build tag: e2e)
+- `e2e/helpers_test.go` — E2E test helpers (terraform-exec wrappers, engine runner)
+- `e2e/testproject/` — Static Terraform project with 3 layers for e2e tests
