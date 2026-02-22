@@ -408,13 +408,27 @@ func (e *Engine) evaluateCondition(ctx context.Context, mf *migration.MigrationF
 		return true, nil
 	}
 
+	indexCache := make(map[string]*state.StateIndex)
+	getIndex := func(layer string) (*state.StateIndex, error) {
+		if idx, ok := indexCache[layer]; ok {
+			return idx, nil
+		}
+		s, err := e.resolver.ReadState(ctx, layer)
+		if err != nil {
+			return nil, err
+		}
+		idx := state.NewStateIndex(s)
+		indexCache[layer] = idx
+		return idx, nil
+	}
+
 	for _, check := range mf.Condition.ResourcesExist {
-		s, err := e.resolver.ReadState(ctx, check.Layer)
+		idx, err := getIndex(check.Layer)
 		if err != nil {
 			return false, err
 		}
 		for _, addr := range check.Addresses {
-			if !state.ResourceExists(s, addr) {
+			if !idx.ResourceExists(addr) {
 				fmt.Fprintf(os.Stderr, "Skipping %q: resource %q not found in layer %q\n", mf.FilePath, addr, check.Layer)
 				return false, nil
 			}
@@ -422,12 +436,12 @@ func (e *Engine) evaluateCondition(ctx context.Context, mf *migration.MigrationF
 	}
 
 	for _, check := range mf.Condition.ResourcesNotExist {
-		s, err := e.resolver.ReadState(ctx, check.Layer)
+		idx, err := getIndex(check.Layer)
 		if err != nil {
 			return false, err
 		}
 		for _, addr := range check.Addresses {
-			if state.ResourceExists(s, addr) {
+			if idx.ResourceExists(addr) {
 				fmt.Fprintf(os.Stderr, "Skipping %q: resource %q already exists in layer %q\n", mf.FilePath, addr, check.Layer)
 				return false, nil
 			}
