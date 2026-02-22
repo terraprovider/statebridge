@@ -3,6 +3,7 @@ package generator
 import (
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strings"
 )
@@ -266,5 +267,7 @@ func sortedKeys[V any](m map[string]V) []string {
 
 // pathsEqual compares two filesystem paths after cleaning.
 func pathsEqual(a, b string) bool {
-	return strings.TrimRight(a, "/") == strings.TrimRight(b, "/")
+	cleanA := filepath.Clean(filepath.FromSlash(a))
+	cleanB := filepath.Clean(filepath.FromSlash(b))
+	return cleanA == cleanB
 }

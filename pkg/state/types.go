@@ -38,6 +38,72 @@ type ResourceInfo struct {
 	Attributes map[string]interface{}
 }
 
+// StateIndex provides an indexed view of flattened state for fast lookups.
+// It is safe to use with nil or empty state (lookups will return not found).
+type StateIndex struct {
+	resources []*ResourceInfo
+	byAddress map[string]*ResourceInfo
+	byBase    map[string][]*ResourceInfo
+}
+
+// NewStateIndex builds a StateIndex from the given state.
+func NewStateIndex(s *tfjson.State) *StateIndex {
+	idx := &StateIndex{
+		byAddress: make(map[string]*ResourceInfo),
+		byBase:    make(map[string][]*ResourceInfo),
+	}
+
+	resources := FlattenState(s)
+	idx.resources = resources
+	for _, r := range resources {
+		idx.byAddress[r.Address] = r
+		base := baseAddress(r.Address)
+		idx.byBase[base] = append(idx.byBase[base], r)
+	}
+
+	return idx
+}
+
+// LookupResource finds a single resource by exact address in the index.
+// Returns an error if the resource is not found.
+func (i *StateIndex) LookupResource(address string) (*ResourceInfo, error) {
+	if i == nil {
+		return nil, fmt.Errorf("resource %q not found in state", address)
+	}
+	if r, ok := i.byAddress[address]; ok {
+		return r, nil
+	}
+	return nil, fmt.Errorf("resource %q not found in state", address)
+}
+
+// LookupResourcesByPrefix finds all resource instances that match a base address.
+// The baseAddress should not include any index notation.
+func (i *StateIndex) LookupResourcesByPrefix(baseAddress string) ([]*ResourceInfo, error) {
+	if i == nil {
+		return nil, fmt.Errorf("no resources matching %q found in state", baseAddress)
+	}
+	if matches := i.byBase[baseAddress]; len(matches) > 0 {
+		return matches, nil
+	}
+	return nil, fmt.Errorf("no resources matching %q found in state", baseAddress)
+}
+
+// ResourceExists checks whether any resource matching the given address exists
+// in the indexed state. Base addresses match any for_each instance.
+func (i *StateIndex) ResourceExists(address string) bool {
+	if i == nil {
+		return false
+	}
+
+	if strings.Contains(address, "[") {
+		_, ok := i.byAddress[address]
+		return ok
+	}
+
+	base := baseAddress(address)
+	return len(i.byBase[base]) > 0
+}
+
 // FlattenState recursively walks the state module tree and returns all
 // resource instances as a flat slice of ResourceInfo.
 // Returns nil if the state or root module is nil.
@@ -46,6 +112,13 @@ func FlattenState(s *tfjson.State) []*ResourceInfo {
 		return nil
 	}
 	return flattenModule(s.Values.RootModule)
+}
+
+func baseAddress(address string) string {
+	if idx := strings.Index(address, "["); idx >= 0 {
+		return address[:idx]
+	}
+	return address
 }
 
 // flattenModule recursively extracts resources from a module and its children.
@@ -98,13 +171,8 @@ func formatIndex(index interface{}) string {
 // LookupResource finds a single resource by exact address in the flattened state.
 // Returns an error if the resource is not found.
 func LookupResource(s *tfjson.State, address string) (*ResourceInfo, error) {
-	resources := FlattenState(s)
-	for _, r := range resources {
-		if r.Address == address {
-			return r, nil
-		}
-	}
-	return nil, fmt.Errorf("resource %q not found in state", address)
+	idx := NewStateIndex(s)
+	return idx.LookupResource(address)
 }
 
 // LookupResourcesByPrefix finds all resource instances that match a base address.
@@ -112,20 +180,8 @@ func LookupResource(s *tfjson.State, address string) (*ResourceInfo, error) {
 // will match "aws_s3_bucket.data[\"key1\"]", "aws_s3_bucket.data[\"key2\"]", etc.
 // It also matches the exact address "aws_s3_bucket.data" (no index).
 func LookupResourcesByPrefix(s *tfjson.State, baseAddress string) ([]*ResourceInfo, error) {
-	resources := FlattenState(s)
-	var matches []*ResourceInfo
-
-	for _, r := range resources {
-		if r.Address == baseAddress || strings.HasPrefix(r.Address, baseAddress+"[") {
-			matches = append(matches, r)
-		}
-	}
-
-	if len(matches) == 0 {
-		return nil, fmt.Errorf("no resources matching %q found in state", baseAddress)
-	}
-
-	return matches, nil
+	idx := NewStateIndex(s)
+	return idx.LookupResourcesByPrefix(baseAddress)
 }
 
 // ResourceExists checks whether any resource matching the given address exists
@@ -133,15 +189,6 @@ func LookupResourcesByPrefix(s *tfjson.State, baseAddress string) ([]*ResourceIn
 // for_each instance. For an address with an index (e.g., "aws_instance.web[\"key\"]"),
 // it matches only that specific instance. Returns false for nil or empty state.
 func ResourceExists(s *tfjson.State, address string) bool {
-	if s == nil || s.Values == nil || s.Values.RootModule == nil {
-		return false
-	}
-
-	if strings.Contains(address, "[") {
-		_, err := LookupResource(s, address)
-		return err == nil
-	}
-
-	_, err := LookupResourcesByPrefix(s, address)
-	return err == nil
+	idx := NewStateIndex(s)
+	return idx.ResourceExists(address)
 }
