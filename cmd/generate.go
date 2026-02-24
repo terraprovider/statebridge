@@ -20,6 +20,7 @@ var (
 	flagTofuPath              string
 	flagUpload                bool
 	flagGenerateBackendConfig []string
+	flagGenerateForce         bool
 )
 
 // generateCmd represents the generate command.
@@ -65,6 +66,8 @@ func init() {
 		"Upload generated files to Azure Blob Storage after generation")
 	generateCmd.Flags().StringSliceVar(&flagGenerateBackendConfig, "backend-config", nil,
 		"Backend configuration passed to tofu init, as key=value or path to a file (repeatable)")
+	generateCmd.Flags().BoolVar(&flagGenerateForce, "force", false,
+		"Force upload even if existing migrations are still active (overwrite protection bypass)")
 }
 
 func runGenerate(cmd *cobra.Command, args []string) error {
@@ -80,8 +83,10 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 
 	// Resolve the tofu binary and create the state reader
 	var stateReader state.StateReader
+	var resolvedTofuPath string
 
 	if flagTofuPath != "" {
+		resolvedTofuPath = flagTofuPath
 		stateReader = state.NewTofuStateReader(flagTofuPath, initArgs)
 	} else {
 		reader, lookupErr := state.NewTofuStateReaderFromPath(initArgs)
@@ -92,6 +97,7 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 			fmt.Fprintf(os.Stderr, "State auto-resolution will not be available. Use explicit import_id values.\n")
 			stateReader = &noopStateReader{}
 		} else {
+			resolvedTofuPath = reader.TofuPath()
 			stateReader = reader
 		}
 	}
@@ -130,7 +136,7 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 	}
 
 	if flagUpload {
-		if err := runUploadAfterGenerate(ctx, eng); err != nil {
+		if err := runUploadAfterGenerate(ctx, eng, resolvedTofuPath); err != nil {
 			return fmt.Errorf("uploading migration files: %w", err)
 		}
 	}
@@ -140,7 +146,7 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 
 // runUploadAfterGenerate handles uploading generated files to Azure Blob Storage
 // after the generate pipeline completes.
-func runUploadAfterGenerate(ctx context.Context, eng *engine.Engine) error {
+func runUploadAfterGenerate(ctx context.Context, eng *engine.Engine, tofuPath string) error {
 	credCfg, err := auth.NewCredentialConfiguration(
 		auth.WithDefaultEnvironmentVariables(),
 	)
@@ -159,7 +165,13 @@ func runUploadAfterGenerate(ctx context.Context, eng *engine.Engine) error {
 		initArgs = append(initArgs, "-backend-config="+bc)
 	}
 
-	mgr := upload.NewManager(cred, initArgs)
+	var opts []upload.ManagerOption
+	opts = append(opts, upload.WithForce(flagGenerateForce))
+	if tofuPath != "" {
+		opts = append(opts, upload.WithTofuPath(tofuPath, initArgs))
+	}
+
+	mgr := upload.NewManager(cred, initArgs, opts...)
 	rendered := eng.Writer().RenderAll()
 
 	return mgr.UploadRendered(ctx, rendered)

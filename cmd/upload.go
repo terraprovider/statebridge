@@ -3,6 +3,8 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"os"
+	"os/exec"
 
 	"github.com/spf13/cobra"
 
@@ -10,7 +12,11 @@ import (
 	"github.com/redtenant/tfmigrate/pkg/upload"
 )
 
-var flagUploadBackendConfig []string
+var (
+	flagUploadBackendConfig []string
+	flagUploadForce         bool
+	flagUploadTofuPath      string
+)
 
 // uploadCmd represents the standalone upload command.
 var uploadCmd = &cobra.Command{
@@ -41,6 +47,10 @@ func init() {
 
 	uploadCmd.Flags().StringSliceVar(&flagUploadBackendConfig, "backend-config", nil,
 		"Backend configuration passed to tofu init, as key=value or path to a file (repeatable)")
+	uploadCmd.Flags().BoolVar(&flagUploadForce, "force", false,
+		"Force upload even if existing migrations are still active (overwrite protection bypass)")
+	uploadCmd.Flags().StringVar(&flagUploadTofuPath, "tofu-path", "",
+		"Path to the tofu binary for upload guard state evaluation (default: auto-detect from PATH)")
 }
 
 func runUpload(cmd *cobra.Command, args []string) error {
@@ -62,7 +72,23 @@ func runUpload(cmd *cobra.Command, args []string) error {
 		initArgs = append(initArgs, "-backend-config="+bc)
 	}
 
-	mgr := upload.NewManager(cred, initArgs)
+	var opts []upload.ManagerOption
+	opts = append(opts, upload.WithForce(flagUploadForce))
+
+	// Resolve tofu path for the upload guard
+	tofuPath := flagUploadTofuPath
+	if tofuPath == "" {
+		if resolved, err := exec.LookPath("tofu"); err == nil {
+			tofuPath = resolved
+		} else {
+			fmt.Fprintf(os.Stderr, "Warning: tofu binary not found; upload guard (overwrite protection) will be disabled\n")
+		}
+	}
+	if tofuPath != "" {
+		opts = append(opts, upload.WithTofuPath(tofuPath, initArgs))
+	}
+
+	mgr := upload.NewManager(cred, initArgs, opts...)
 	ctx := context.Background()
 
 	return mgr.UploadFromDisk(ctx, args)

@@ -48,6 +48,11 @@ func (w *Writer) AddBlocks(blocks []Block) {
 	w.blocks = append(w.blocks, blocks...)
 }
 
+// HasBlocks reports whether any blocks have been added to the writer.
+func (w *Writer) HasBlocks() bool {
+	return len(w.blocks) > 0
+}
+
 // groupKey uniquely identifies a (layer, source file) pair.
 type groupKey struct {
 	Layer      string

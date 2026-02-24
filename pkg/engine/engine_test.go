@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -587,12 +588,14 @@ operations:
 
 	engine := New(Config{StateReader: mock})
 
+	// Incomplete coverage causes the file to be skipped (not a fatal error).
+	// Since it's the only file, ProcessFiles returns "all migration files were skipped".
 	_, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
 	if err == nil {
-		t.Fatal("expected completeness error for uncovered key")
+		t.Fatal("expected error when all files are skipped")
 	}
-	if !strings.Contains(err.Error(), "other_admin") {
-		t.Errorf("expected error to mention uncovered key 'other_admin', got: %v", err)
+	if !strings.Contains(err.Error(), "skipped") {
+		t.Errorf("expected error to mention files were skipped, got: %v", err)
 	}
 }
 
@@ -1075,12 +1078,14 @@ operations:
 	mock := testutil.NewMockStateReader(nil)
 	engine := New(Config{StateReader: mock})
 
+	// State read errors during condition evaluation cause the file to be skipped.
+	// Since it's the only file, ProcessFiles returns "all migration files were skipped".
 	_, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
 	if err == nil {
-		t.Fatal("expected error when state read fails during condition check")
+		t.Fatal("expected error when all files are skipped due to state read failure")
 	}
-	if !strings.Contains(err.Error(), "condition") {
-		t.Errorf("expected error to mention condition, got: %v", err)
+	if !strings.Contains(err.Error(), "skipped") {
+		t.Errorf("expected error to mention files were skipped, got: %v", err)
 	}
 }
 
@@ -1114,5 +1119,193 @@ operations:
 	}
 	if len(files) != 1 {
 		t.Fatalf("expected 1 file (no condition, proceeds normally), got %d", len(files))
+	}
+}
+
+func TestEngine_ProcessFiles_PartialSkip(t *testing.T) {
+	// Two YAML files: first one references a missing resource and should be skipped,
+	// second one is a simple rename and should succeed.
+	dir := t.TempDir()
+	srcLayer := filepath.Join(dir, "layers", "compute")
+	dstLayer := filepath.Join(dir, "layers", "app")
+	renameLayer := filepath.Join(dir, "layers", "net")
+	for _, d := range []string{srcLayer, dstLayer, renameLayer} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// First file: move with missing resource → will be skipped
+	moveContent := `
+description: "Move missing resource"
+operations:
+  - type: move
+    source_layer: "` + srcLayer + `"
+    destination_layer: "` + dstLayer + `"
+    resources:
+      - address: "aws_instance.gone"
+        import_id: "i-gone"
+`
+	moveFile := filepath.Join(dir, "001_move.yaml")
+	if err := os.WriteFile(moveFile, []byte(moveContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Second file: simple rename → should succeed
+	renameContent := `
+description: "Rename VPC"
+operations:
+  - type: rename
+    layer: "` + renameLayer + `"
+    renames:
+      - from: "module.old"
+        to: "module.new"
+`
+	renameFile := filepath.Join(dir, "002_rename.yaml")
+	if err := os.WriteFile(renameFile, []byte(renameContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	mock := testutil.NewMockStateReader(map[string]*tfjson.State{
+		srcLayer: testutil.BuildState(), // empty state — resource not found
+	})
+
+	engine := New(Config{StateReader: mock})
+
+	files, err := engine.ProcessFiles(context.Background(), []string{moveFile, renameFile})
+	if err != nil {
+		t.Fatalf("expected partial success (first skipped, second succeeds), got error: %v", err)
+	}
+
+	if len(files) != 1 {
+		t.Fatalf("expected 1 output file from the rename, got %d: %v", len(files), files)
+	}
+
+	content, err := os.ReadFile(files[0])
+	if err != nil {
+		t.Fatalf("reading output: %v", err)
+	}
+	if !strings.Contains(string(content), "moved {") {
+		t.Error("expected moved block from the rename operation")
+	}
+}
+
+func TestEngine_ProcessFiles_AllSkipped(t *testing.T) {
+	// Two YAML files that both fail during processing. ProcessFiles should
+	// return an error indicating all files were skipped.
+	dir := t.TempDir()
+	srcLayer := filepath.Join(dir, "layers", "compute")
+	dstLayer := filepath.Join(dir, "layers", "app")
+	if err := os.MkdirAll(srcLayer, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(dstLayer, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Both files reference missing resources
+	for i, name := range []string{"001_move_a.yaml", "002_move_b.yaml"} {
+		content := `
+description: "Move missing resource ` + strings.TrimSuffix(name, ".yaml") + `"
+operations:
+  - type: move
+    source_layer: "` + srcLayer + `"
+    destination_layer: "` + dstLayer + `"
+    resources:
+      - address: "aws_instance.missing` + fmt.Sprintf("%d", i) + `"
+        import_id: "i-missing"
+`
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	mock := testutil.NewMockStateReader(map[string]*tfjson.State{
+		srcLayer: testutil.BuildState(), // empty state
+	})
+
+	engine := New(Config{StateReader: mock})
+
+	_, err := engine.ProcessFiles(context.Background(), []string{
+		filepath.Join(dir, "001_move_a.yaml"),
+		filepath.Join(dir, "002_move_b.yaml"),
+	})
+	if err == nil {
+		t.Fatal("expected error when all migration files are skipped")
+	}
+	if !strings.Contains(err.Error(), "skipped") {
+		t.Errorf("expected error to mention 'skipped', got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "001_move_a.yaml") {
+		t.Errorf("expected error to mention first file, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "002_move_b.yaml") {
+		t.Errorf("expected error to mention second file, got: %v", err)
+	}
+}
+
+func TestEngine_ProcessFiles_ConditionErrorWithSuccessfulFile(t *testing.T) {
+	// One file has a condition that fails with a state error, another succeeds.
+	dir := t.TempDir()
+	layerDir := filepath.Join(dir, "layers", "net")
+	if err := os.MkdirAll(layerDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// First file: condition references nonexistent layer → state error → skip
+	condContent := `
+description: "Move with bad condition"
+condition:
+  resources_exist:
+    - layer: "/nonexistent/layer"
+      addresses:
+        - "aws_instance.web"
+operations:
+  - type: move
+    source_layer: "/nonexistent/layer"
+    destination_layer: "/other/layer"
+    resources:
+      - address: "aws_instance.web"
+        import_id: "i-0abc123"
+`
+	condFile := filepath.Join(dir, "001_cond_err.yaml")
+	if err := os.WriteFile(condFile, []byte(condContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Second file: simple rename → succeeds
+	renameContent := `
+description: "Simple rename"
+operations:
+  - type: rename
+    layer: "` + layerDir + `"
+    renames:
+      - from: "module.old"
+        to: "module.new"
+`
+	renameFile := filepath.Join(dir, "002_rename.yaml")
+	if err := os.WriteFile(renameFile, []byte(renameContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	mock := testutil.NewMockStateReader(nil) // no state configured → error for any reads
+
+	engine := New(Config{StateReader: mock})
+
+	files, err := engine.ProcessFiles(context.Background(), []string{condFile, renameFile})
+	if err != nil {
+		t.Fatalf("expected partial success, got error: %v", err)
+	}
+
+	if len(files) != 1 {
+		t.Fatalf("expected 1 output file from the rename, got %d: %v", len(files), files)
+	}
+
+	content, err := os.ReadFile(files[0])
+	if err != nil {
+		t.Fatalf("reading output: %v", err)
+	}
+	if !strings.Contains(string(content), "moved {") {
+		t.Error("expected moved block from the rename operation")
 	}
 }

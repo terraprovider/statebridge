@@ -54,6 +54,11 @@ func NewTofuStateReaderFromPath(initArgs []string) (*TofuStateReader, error) {
 	return NewTofuStateReader(tofuPath, initArgs), nil
 }
 
+// TofuPath returns the resolved path to the tofu binary.
+func (r *TofuStateReader) TofuPath() string {
+	return r.tofuPath
+}
+
 // ReadState runs `tofu show -json` in the given layer directory and returns
 // the parsed state. Results are cached per absolute layer path. If the read
 // fails and initArgs were provided, `tofu init` is run and the read retried.

@@ -52,11 +52,18 @@ func (e *Engine) Writer() *generator.Writer {
 // ProcessFiles parses and processes a list of migration file paths (or directories),
 // generates HCL blocks, and writes them to the appropriate layer directories.
 // Returns the list of generated file paths.
+//
+// When a migration file fails during condition evaluation or processing (e.g.,
+// because a source resource no longer exists in state), it is skipped with an
+// informational message to stderr. This allows unrelated migration files to
+// still be generated. Parse errors and validation errors remain fatal.
 func (e *Engine) ProcessFiles(ctx context.Context, paths []string) ([]string, error) {
 	files, err := e.parser.ParseFiles(paths)
 	if err != nil {
 		return nil, fmt.Errorf("parsing migration files: %w", err)
 	}
+
+	var skipped []string
 
 	for _, mf := range files {
 		if errs := migration.Validate(mf); len(errs) > 0 {
@@ -69,20 +76,31 @@ func (e *Engine) ProcessFiles(ctx context.Context, paths []string) ([]string, er
 
 		proceed, err := e.evaluateCondition(ctx, mf)
 		if err != nil {
-			return nil, fmt.Errorf("evaluating condition in %q: %w", mf.FilePath, err)
+			fmt.Fprintf(os.Stderr, "Skipping %q: %v\n", mf.FilePath, err)
+			skipped = append(skipped, mf.FilePath)
+			continue
 		}
 		if !proceed {
 			continue
 		}
 
-		if err := e.processMigration(ctx, mf); err != nil {
-			return nil, fmt.Errorf("processing %q: %w", mf.FilePath, err)
+		blocks, err := e.processMigration(ctx, mf)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Skipping %q: %v\n", mf.FilePath, err)
+			skipped = append(skipped, mf.FilePath)
+			continue
 		}
+
+		e.writer.AddBlocks(blocks)
 
 		// Store metadata (conditions, init args) for this migration file.
 		// The Writer uses this at render time to embed metadata comments
 		// in the generated .tf files.
 		e.writer.SetFileMetadata(mf.FilePath, buildFileMetadata(mf))
+	}
+
+	if len(skipped) > 0 && !e.writer.HasBlocks() {
+		return nil, fmt.Errorf("all migration files were skipped: %s", strings.Join(skipped, ", "))
 	}
 
 	return e.writer.WriteAll()
@@ -91,23 +109,26 @@ func (e *Engine) ProcessFiles(ctx context.Context, paths []string) ([]string, er
 // processMigration processes a single parsed migration file, generating
 // HCL blocks for each operation. For keyed moves, it coordinates across
 // operations to ensure completeness and prevent duplicate removed blocks.
-func (e *Engine) processMigration(ctx context.Context, mf *migration.MigrationFile) error {
+// Returns the collected blocks; the caller decides when to commit them
+// to the Writer.
+func (e *Engine) processMigration(ctx context.Context, mf *migration.MigrationFile) ([]generator.Block, error) {
 	e.currentSourceFile = mf.FilePath
 	tracker := newWildcardTracker()
 
+	var allBlocks []generator.Block
 	for i, op := range mf.Operations {
 		blocks, err := e.processOperation(ctx, &op, i, tracker)
 		if err != nil {
-			return fmt.Errorf("operation[%d] (%s): %w", i, op.Type, err)
+			return nil, fmt.Errorf("operation[%d] (%s): %w", i, op.Type, err)
 		}
-		e.writer.AddBlocks(blocks)
+		allBlocks = append(allBlocks, blocks...)
 	}
 
 	if err := tracker.checkCompleteness(); err != nil {
-		return err
+		return nil, err
 	}
 
-	return nil
+	return allBlocks, nil
 }
 
 // processOperation dispatches a single operation to the appropriate handler.
