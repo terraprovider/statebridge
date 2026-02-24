@@ -8,6 +8,10 @@ import (
 	"strings"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
+
+	"github.com/redtenant/tfmigrate/pkg/conditions"
+	"github.com/redtenant/tfmigrate/pkg/generator"
+	"github.com/redtenant/tfmigrate/pkg/state"
 )
 
 // UploaderFactory creates BlobUploader instances for a given storage account
@@ -19,6 +23,10 @@ func DefaultUploaderFactory(storageAccountName, containerName string, cred azcor
 	return NewAzureBlobUploader(storageAccountName, containerName, cred)
 }
 
+// GuardChecker evaluates whether an existing blob's migration conditions are
+// still met. Returns true if the blob is still active (should NOT be overwritten).
+type GuardChecker func(ctx context.Context, blobContent []byte, layerPath string) (bool, error)
+
 // Manager orchestrates upload of generated migration files to Azure Blob Storage.
 // It discovers backend configuration per layer and manages uploader lifecycle.
 type Manager struct {
@@ -26,17 +34,46 @@ type Manager struct {
 	uploaderFactory UploaderFactory
 	initArgs        []string
 	uploaderCache   map[string]BlobUploader // keyed by "account|container"
+	force           bool
+	guardChecker    GuardChecker
 }
 
 // NewManager creates an upload Manager with the given credential and
 // init args (used for backend config discovery in all layers).
-func NewManager(cred azcore.TokenCredential, initArgs []string) *Manager {
-	return &Manager{
+func NewManager(cred azcore.TokenCredential, initArgs []string, opts ...ManagerOption) *Manager {
+	m := &Manager{
 		cred:            cred,
 		uploaderFactory: DefaultUploaderFactory,
 		initArgs:        initArgs,
 		uploaderCache:   make(map[string]BlobUploader),
 	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
+}
+
+// ManagerOption configures optional Manager behaviour.
+type ManagerOption func(*Manager)
+
+// WithForce disables the upload guard, allowing overwrite of active migrations.
+func WithForce(force bool) ManagerOption {
+	return func(m *Manager) { m.force = force }
+}
+
+// WithTofuPath enables the upload guard using the given tofu binary.
+// The guard evaluates existing blob metadata conditions against the
+// layer's state to prevent overwriting still-active migrations.
+func WithTofuPath(tofuPath string, initArgs []string) ManagerOption {
+	return func(m *Manager) {
+		reader := state.NewTofuStateReader(tofuPath, initArgs)
+		m.guardChecker = defaultGuardChecker(reader)
+	}
+}
+
+// WithGuardChecker injects a custom guard checker (primarily for testing).
+func WithGuardChecker(gc GuardChecker) ManagerOption {
+	return func(m *Manager) { m.guardChecker = gc }
 }
 
 // WithUploaderFactory replaces the default uploader factory.
@@ -44,6 +81,22 @@ func NewManager(cred azcore.TokenCredential, initArgs []string) *Manager {
 func (m *Manager) WithUploaderFactory(factory UploaderFactory) *Manager {
 	m.uploaderFactory = factory
 	return m
+}
+
+// defaultGuardChecker creates a GuardChecker that parses migration metadata
+// and evaluates conditions against real layer state.
+func defaultGuardChecker(reader state.StateReader) GuardChecker {
+	return func(ctx context.Context, blobContent []byte, layerPath string) (bool, error) {
+		meta, err := generator.ParseMetadataComment(string(blobContent))
+		if err != nil {
+			return false, fmt.Errorf("parsing metadata: %w", err)
+		}
+		if meta == nil || meta.Conditions == nil {
+			return false, nil // no metadata = not guarded
+		}
+		readState := conditions.NewStateReaderFunc(reader)
+		return conditions.EvaluateMetadataConditions(ctx, meta, readState, layerPath)
+	}
 }
 
 // UploadRendered uploads generated files from Writer.RenderAll() output.
@@ -73,7 +126,7 @@ func (m *Manager) UploadRendered(ctx context.Context, rendered map[string]string
 		}
 
 		for _, f := range files {
-			if err := m.uploadFile(ctx, uploader, f.filename, f.content); err != nil {
+			if err := m.uploadFile(ctx, uploader, f.filename, f.content, layerPath); err != nil {
 				return fmt.Errorf("layer %q, file %q: %w", layerPath, f.filename, err)
 			}
 		}
@@ -109,7 +162,7 @@ func (m *Manager) UploadFromDisk(ctx context.Context, layerPaths []string) error
 			}
 
 			filename := filepath.Base(match)
-			if err := m.uploadFile(ctx, uploader, filename, content); err != nil {
+			if err := m.uploadFile(ctx, uploader, filename, content, layerPath); err != nil {
 				return fmt.Errorf("layer %q, file %q: %w", layerPath, filename, err)
 			}
 		}
@@ -140,8 +193,12 @@ func (m *Manager) getUploader(layerPath string) (BlobUploader, error) {
 	return uploader, nil
 }
 
-// uploadFile handles cleanup of old versions and upload of a single file.
-func (m *Manager) uploadFile(ctx context.Context, uploader BlobUploader, filename string, content []byte) error {
+// uploadFile handles guard check, cleanup of old versions, and upload of a single file.
+func (m *Manager) uploadFile(ctx context.Context, uploader BlobUploader, filename string, content []byte, layerPath string) error {
+	if err := m.checkActiveBlobs(ctx, uploader, filename, layerPath); err != nil {
+		return err
+	}
+
 	if err := cleanupOldVersions(ctx, uploader, filename); err != nil {
 		return err
 	}
@@ -152,6 +209,59 @@ func (m *Manager) uploadFile(ctx context.Context, uploader BlobUploader, filenam
 	}
 
 	fmt.Fprintf(os.Stdout, "Uploaded: %s\n", blobName)
+	return nil
+}
+
+// checkActiveBlobs checks whether existing migration blobs with the same stem
+// are still active (their metadata conditions still pass). If so, uploading
+// would overwrite a still-needed migration, and the upload is refused.
+//
+// This guard can be bypassed with the --force flag.
+// It is a no-op if no guardChecker is configured (e.g., when tofu binary
+// is not available).
+func (m *Manager) checkActiveBlobs(ctx context.Context, uploader BlobUploader, filename, layerPath string) error {
+	if m.force || m.guardChecker == nil {
+		return nil
+	}
+
+	stem, err := YamlStemFromFilename(filename)
+	if err != nil {
+		return err
+	}
+
+	prefix := "migrations/migration." + stem + "."
+	existing, err := uploader.ListBlobs(ctx, prefix)
+	if err != nil {
+		return fmt.Errorf("listing existing blobs for guard check: %w", err)
+	}
+
+	newBlobName := "migrations/" + filename
+	for _, blobName := range existing {
+		if !strings.HasSuffix(blobName, ".tf") || blobName == newBlobName {
+			continue
+		}
+
+		blobContent, err := uploader.DownloadBlob(ctx, blobName)
+		if err != nil {
+			// If we can't download the blob, warn but don't block
+			fmt.Fprintf(os.Stderr, "Warning: could not download %q for guard check: %v\n", blobName, err)
+			continue
+		}
+
+		active, err := m.guardChecker(ctx, blobContent, layerPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not evaluate guard for %q: %v\n", blobName, err)
+			continue
+		}
+
+		if active {
+			return fmt.Errorf(
+				"refusing to overwrite %q: migration is still active in layer %q (conditions pass); use --force to override",
+				blobName, layerPath,
+			)
+		}
+	}
+
 	return nil
 }
 
