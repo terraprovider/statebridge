@@ -136,6 +136,31 @@ func validateResourceMove(opIndex, resIndex int, res *ResourceMove) []Validation
 		})
 	}
 
+	// Validate module-level move constraints
+	if res.Address != "" && IsModuleAddress(res.Address) {
+		if len(res.Keys) > 0 {
+			errs = append(errs, ValidationError{
+				OperationIndex: opIndex,
+				Field:          fieldPrefix + ".keys",
+				Message:        "keys are not supported for module-level moves",
+			})
+		}
+		if res.ImportID != "" {
+			errs = append(errs, ValidationError{
+				OperationIndex: opIndex,
+				Field:          fieldPrefix + ".import_id",
+				Message:        "import_id is not supported for module-level moves (auto-resolved from state)",
+			})
+		}
+		if res.DestinationAddress != "" && !IsModuleAddress(res.DestinationAddress) {
+			errs = append(errs, ValidationError{
+				OperationIndex: opIndex,
+				Field:          fieldPrefix + ".destination_address",
+				Message:        "destination_address for a module move must also be a module address",
+			})
+		}
+	}
+
 	// Validate keys map entries
 	for pattern := range res.Keys {
 		if pattern == "*" {

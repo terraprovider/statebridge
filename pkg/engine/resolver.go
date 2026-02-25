@@ -31,9 +31,11 @@ func (r *Resolver) ReadState(ctx context.Context, layerPath string) (*tfjson.Sta
 	return s, nil
 }
 
-// LookupResources returns all for_each instances of a resource from state.
+// LookupResources returns all for_each instances of a managed resource from state.
 // The baseAddr should be the resource address without any key suffix
 // (e.g., "aws_s3_bucket.data", not "aws_s3_bucket.data[*]").
+// Data sources are excluded from the results since they are auto-computed
+// and never need import/removed blocks.
 func (r *Resolver) LookupResources(
 	ctx context.Context,
 	layerPath string,
@@ -49,10 +51,16 @@ func (r *Resolver) LookupResources(
 		return nil, fmt.Errorf("looking up resources for %q: %w", baseAddr, err)
 	}
 
-	return resources, nil
+	managed := filterManagedResources(resources)
+	if len(managed) == 0 {
+		return nil, fmt.Errorf("no managed resources matching %q found in state (data sources are excluded from migrations)", baseAddr)
+	}
+
+	return managed, nil
 }
 
-// LookupResource returns a single (non-for_each) resource from state.
+// LookupResource returns a single (non-for_each) managed resource from state.
+// Returns an error if the resource is a data source.
 func (r *Resolver) LookupResource(
 	ctx context.Context,
 	layerPath string,
@@ -68,7 +76,45 @@ func (r *Resolver) LookupResource(
 		return nil, fmt.Errorf("looking up resource %q: %w", address, err)
 	}
 
+	if resource.Mode == "data" {
+		return nil, fmt.Errorf("resource %q is a data source (data sources are excluded from migrations)", address)
+	}
+
 	return resource, nil
+}
+
+// filterManagedResources returns only managed resources, filtering out data sources.
+func filterManagedResources(resources []*state.ResourceInfo) []*state.ResourceInfo {
+	var managed []*state.ResourceInfo
+	for _, r := range resources {
+		if r.Mode == "managed" {
+			managed = append(managed, r)
+		}
+	}
+	return managed
+}
+
+// LookupModuleResources returns all managed resource instances under a module
+// prefix from state. Returns resources at any nesting depth, including
+// individual for_each instances. Data sources are excluded.
+// Returns an error if no managed resources are found under the module.
+func (r *Resolver) LookupModuleResources(
+	ctx context.Context,
+	layerPath string,
+	modulePrefix string,
+) ([]*state.ResourceInfo, error) {
+	s, err := r.stateReader.ReadState(ctx, layerPath)
+	if err != nil {
+		return nil, fmt.Errorf("reading state for layer %q: %w", layerPath, err)
+	}
+
+	idx := state.NewStateIndex(s)
+	resources := idx.ManagedResourcesUnderModule(modulePrefix)
+	if len(resources) == 0 {
+		return nil, fmt.Errorf("no managed resources found under %q in layer %q", modulePrefix, layerPath)
+	}
+
+	return resources, nil
 }
 
 // EvaluateTemplate evaluates a Go template expression using the given resource

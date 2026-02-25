@@ -150,6 +150,17 @@ resources:
       key1: key1
 ```
 
+**Module-level move** — specify a module address to move all managed resources under it:
+
+```yaml
+resources:
+  - address: "module.foo"                        # moves all resources under module.foo
+  - address: "module.foo"
+    destination_address: "module.bar"            # remaps module prefix
+```
+
+Constraints: `keys` and `import_id` are not allowed on module moves. `destination_address` must also be a module address if specified. Import IDs are auto-resolved from state. Works with `address_prefix` and at any nesting depth (nested sub-modules are included). The removed blocks are automatically consolidated into a single module-level `removed { from = module.foo }`.
+
 ### Operation: `rename`
 
 Renames resources within a single layer. Generates `moved` blocks.
@@ -288,6 +299,20 @@ If the user provides a specific import ID, add `import_id` to the resource. Othe
     - address: "<resource 2>"
     - address: "<resource 3>"
 ```
+
+### "Move entire module from layer A to layer B"
+
+```yaml
+- type: move
+  source_layer: "<layer A path>"
+  destination_layer: "<layer B path>"
+  resources:
+    - address: "module.<module_name>"
+    - address: "module.<module_name>"
+      destination_address: "module.<new_name>"   # if renaming the module
+```
+
+Module addresses (`module.foo`, `module.foo.module.bar`) are automatically detected. All managed resources under the module are discovered from state and moved. No `keys` or `import_id` needed.
 
 ### "Rename X to Y in layer A"
 
@@ -521,6 +546,28 @@ if [ $? -eq 2 ]; then
 fi
 ```
 
+### Resilient Multi-File Processing
+
+When processing multiple migration YAML files, tfmigrate is resilient to individual file failures. If one YAML file fails — for example, because its source resource no longer exists in state after a partial pipeline run — it is skipped with an informational message to stderr, and remaining files continue to be processed:
+
+```
+Skipping "migrations/001_move.yaml": operation[0] (move): no resources matching "aws_instance.gone" found in state
+```
+
+This allows unrelated migrations to be generated even when some migrations reference resources that have already been moved. Parse errors and YAML validation errors remain fatal. If all files are skipped, the command returns an error.
+
+### Data Source Exclusion
+
+Data sources (`data.*` resources) are automatically excluded from all migration operations. They are auto-computed and never need import or removed blocks. The filtering happens in the resolver (`pkg/engine/resolver.go`), which only returns managed resources from state lookups. If a resource address matches only data sources, the resolver returns an error indicating no managed resources were found.
+
+### Module-Level Consolidation
+
+When all managed resources within a module are being moved out, individual `removed` blocks are automatically consolidated into a single module-level removal block (e.g., `removed { from = module.foo }`). This works at any nesting depth — deepest modules are consolidated first, then the algorithm checks if parent modules can also be consolidated.
+
+The consolidation logic lives in `pkg/engine/consolidate.go` and runs as a post-processing step in `ProcessFiles`, after all blocks are generated but before they are written. Data sources in the module state are ignored (they don't prevent consolidation).
+
+For condition handling, `ResourceExists` in `pkg/state/types.go` was extended to support module addresses: `ResourceExists(s, "module.foo")` returns true if any resource under `module.foo` exists in state. This ensures download-time condition evaluation works correctly with module-level removed blocks.
+
 ## Uploading Migrations to Azure Blob Storage
 
 Generated migration files can be persisted to Azure Blob Storage using either the `--upload` flag on `generate` or the standalone `upload` command.
@@ -546,6 +593,8 @@ Uploads pre-generated `migration.*.tf` files from layer directories. Useful when
 | Flag | Description |
 |------|-------------|
 | `--backend-config` | Backend configuration passed to tofu init, as `key=value` or path to a file (repeatable) |
+| `--force` | Force upload even if existing migrations are still active (overwrite protection bypass) |
+| `--tofu-path <path>` | Override path to the tofu binary for upload guard state evaluation (default: auto-detect from PATH) |
 
 **Examples:**
 
@@ -589,6 +638,20 @@ Uses `pkg/auth` for Azure credentials via environment variables:
 - `ARM_OIDC_TOKEN` (direct OIDC assertion token)
 - `ARM_OIDC_REQUEST_URL` / `ACTIONS_ID_TOKEN_REQUEST_URL` (OIDC token request URL)
 - `ARM_OIDC_REQUEST_TOKEN` / `ACTIONS_ID_TOKEN_REQUEST_TOKEN` (OIDC request auth token)
+
+### Upload Guard (Overwrite Protection)
+
+When uploading, tfmigrate checks whether existing migration blobs are still "active" (their metadata conditions still pass against the layer's state). If an existing blob is still needed — for example, because a cross-layer migration was only partially applied — the upload is refused:
+
+```
+Error: refusing to overwrite "migrations/migration.001_move.a1b2c3d4.tf": migration is still active in layer "./layers/app" (conditions pass); use --force to override
+```
+
+This protects against a common CI failure mode: a pipeline partially applies migrations across layers (e.g., L10 applied, L30 fails, L50 pending), then re-runs `generate --upload` which would otherwise overwrite the still-needed import blocks.
+
+The guard requires the `tofu` binary to read layer state. If `tofu` is not available, the guard is silently disabled and upload proceeds without protection. Use `--force` to explicitly bypass the guard when intentional overwrite is needed.
+
+The guard logic lives in `pkg/upload/upload.go` (`checkActiveBlobs` method) and uses shared condition evaluation from `pkg/conditions/evaluate.go`.
 
 ## Downloading Migrations from Azure Blob Storage
 
@@ -709,6 +772,7 @@ Key source files for understanding the codebase:
 - `pkg/template/funcs.go` — available template functions
 - `pkg/template/template.go` — template evaluation logic
 - `pkg/engine/engine.go` — orchestration pipeline (with metadata wiring)
+- `pkg/engine/consolidate.go` — module-level removed block consolidation
 - `pkg/engine/keymatcher.go` — key pattern matching (exact, prefix, catch-all)
 - `pkg/engine/resolver.go` — import ID resolution and state lookups
 - `pkg/engine/tracker.go` — cross-operation key tracking and completeness checking
@@ -720,7 +784,8 @@ Key source files for understanding the codebase:
 - `pkg/auth/credential.go` — TokenCredential wrapper bridging HashiCorp SDK auth to azcore
 - `pkg/upload/backend.go` — backend config discovery (HCL parsing + init arg merging)
 - `pkg/upload/uploader.go` — Azure Blob Storage operations (BlobUploader interface)
-- `pkg/upload/upload.go` — upload orchestration (Manager, version cleanup)
+- `pkg/upload/upload.go` — upload orchestration (Manager, version cleanup, overwrite protection guard)
+- `pkg/conditions/evaluate.go` — shared condition evaluation for upload guard and download
 - `pkg/download/download.go` — download orchestration with condition evaluation
 - `pkg/tofu/runner.go` — OpenTofu plan execution (via terraform-exec) and migration target scanning
 - `cmd/generate.go` — CLI entry point for generate command (with `--upload` flag)

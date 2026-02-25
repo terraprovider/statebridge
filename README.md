@@ -90,6 +90,7 @@ tfmigrate generate migrations/001_move.yaml other_migrations/
 | `--tofu-path <path>` | Override path to the `tofu` binary (default: auto-detect from PATH) |
 | `--upload` | Upload generated files to Azure Blob Storage after generation |
 | `--backend-config` | Backend configuration passed to tofu init, as `key=value` or path to a file (repeatable) |
+| `--force` | Force upload even if existing migrations are still active (overwrite protection bypass; only relevant with `--upload`) |
 
 ### Dry Run
 
@@ -126,6 +127,8 @@ Each layer directory is scanned for `migration.*.tf` files and uploaded to the s
 | Flag | Description |
 |------|-------------|
 | `--backend-config` | Backend configuration passed to tofu init, as `key=value` or path to a file (repeatable) |
+| `--force` | Force upload even if existing migrations are still active (overwrite protection bypass) |
+| `--tofu-path <path>` | Override path to the `tofu` binary for upload guard state evaluation (default: auto-detect from PATH) |
 
 ```bash
 # Override backend config values
@@ -155,6 +158,18 @@ Uploaded: migrations/migration.001_move.newnew99.tf
 ```
 
 The storage account is expected to have blob versioning enabled, so deleted versions remain recoverable through Azure's versioning.
+
+#### Upload Guard (Overwrite Protection)
+
+When uploading, tfmigrate checks whether existing migration blobs are still "active" (their metadata conditions still pass against the layer's state). If an existing blob is still needed — for example, because a cross-layer migration was only partially applied — the upload is refused to prevent overwriting it:
+
+```
+Error: refusing to overwrite "migrations/migration.001_move.a1b2c3d4.tf": migration is still active in layer "./layers/app" (conditions pass); use --force to override
+```
+
+This protects against a common CI failure mode: a pipeline partially applies migrations across layers (e.g., L10 applied, L30 fails, L50 pending), then re-runs `generate --upload` which would otherwise overwrite the still-needed import blocks.
+
+The guard requires the `tofu` binary to read layer state. If `tofu` is not available, the guard is silently disabled and upload proceeds without protection. Use `--force` to explicitly bypass the guard when intentional overwrite is needed.
 
 #### Authentication
 
@@ -276,6 +291,37 @@ if [ $? -eq 2 ]; then
 fi
 ```
 
+#### Resilient Multi-File Processing
+
+When processing multiple migration YAML files, tfmigrate is resilient to individual file failures. If one YAML file fails — for example, because its source resource no longer exists in state after a partial pipeline run — it is skipped with an informational message to stderr, and remaining files continue to be processed:
+
+```
+Skipping "migrations/001_move.yaml": operation[0] (move): no resources matching "aws_instance.gone" found in state
+```
+
+This allows unrelated migrations to be generated even when some migrations reference resources that have already been moved. Parse errors and YAML validation errors remain fatal. If all files are skipped, the command returns an error.
+
+#### Data Source Exclusion
+
+Data sources (`data.*` resources) are automatically excluded from all migration operations. They are auto-computed by Terraform/OpenTofu and never need import or removed blocks. If a resource address matches only data sources in state, the generation will report that no managed resources were found.
+
+#### Module-Level Consolidation
+
+When all managed resources within a module are being moved out, tfmigrate automatically consolidates the individual `removed` blocks into a single module-level removal:
+
+```hcl
+# Instead of individual removed blocks for each resource:
+#   removed { from = module.foo.aws_instance.web }
+#   removed { from = module.foo.aws_s3_bucket.data }
+# A single consolidated block is generated:
+removed {
+  from = module.foo
+  lifecycle { destroy = false }
+}
+```
+
+This works at any nesting depth. If all resources under `module.foo.module.bar` are moved but `module.foo` has other resources remaining, only `module.foo.module.bar` is consolidated. If the entire parent module is moved, consolidation rolls up to the parent level.
+
 ### Migration Metadata
 
 Generated `.tf` files include an embedded metadata block used by `download` and `plan` commands:
@@ -366,6 +412,17 @@ resources:
     keys:
       key1: key1
 ```
+
+**Module-Level Move** — Move an entire module (all managed resources under it) to a new layer:
+
+```yaml
+resources:
+  - address: "module.foo"
+  - address: "module.foo"
+    destination_address: "module.bar"   # optional: remap module prefix
+```
+
+When a module address is specified (e.g., `module.foo`), tfmigrate discovers all managed resources under that module from the source layer's state and generates import + removed blocks for each. The removed blocks are automatically consolidated into a single `removed { from = module.foo }`. Module moves do not support `keys` or `import_id` (import IDs are auto-resolved from state). If `destination_address` is provided, it must also be a module address. This works with `address_prefix` and at any nesting depth (nested sub-modules are included).
 
 #### `rename` — In-Layer Rename
 
@@ -605,8 +662,9 @@ pkg/
   template/    - Go template evaluation with custom functions
   generator/   - HCL block rendering, file output, and migration metadata
   engine/      - Pipeline orchestration, key matching, wildcard tracking
+  conditions/  - Shared condition evaluation for upload guard and download
   auth/        - Azure credential management (azcore, azidentity)
-  upload/      - Azure Blob Storage upload for generated migrations
+  upload/      - Azure Blob Storage upload with overwrite protection guard
   download/    - Download orchestration with condition evaluation
   tofu/        - OpenTofu command execution and migration target scanning
 ```

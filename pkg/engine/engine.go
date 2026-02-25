@@ -64,6 +64,7 @@ func (e *Engine) ProcessFiles(ctx context.Context, paths []string) ([]string, er
 	}
 
 	var skipped []string
+	var allBlocks []generator.Block
 
 	for _, mf := range files {
 		if errs := migration.Validate(mf); len(errs) > 0 {
@@ -91,7 +92,7 @@ func (e *Engine) ProcessFiles(ctx context.Context, paths []string) ([]string, er
 			continue
 		}
 
-		e.writer.AddBlocks(blocks)
+		allBlocks = append(allBlocks, blocks...)
 
 		// Store metadata (conditions, init args) for this migration file.
 		// The Writer uses this at render time to embed metadata comments
@@ -99,9 +100,16 @@ func (e *Engine) ProcessFiles(ctx context.Context, paths []string) ([]string, er
 		e.writer.SetFileMetadata(mf.FilePath, buildFileMetadata(mf))
 	}
 
-	if len(skipped) > 0 && !e.writer.HasBlocks() {
+	if len(skipped) > 0 && len(allBlocks) == 0 {
 		return nil, fmt.Errorf("all migration files were skipped: %s", strings.Join(skipped, ", "))
 	}
+
+	// Consolidate module-level removals: when all managed resources within
+	// a module are being removed, replace individual removed blocks with
+	// a single module-level removed block.
+	allBlocks = e.consolidateModuleRemovals(ctx, allBlocks)
+
+	e.writer.AddBlocks(allBlocks)
 
 	return e.writer.WriteAll()
 }
@@ -176,8 +184,9 @@ func (e *Engine) processMove(ctx context.Context, op *migration.Operation, opInd
 }
 
 // processMoveResource handles a single resource entry within a move operation.
-// If the resource has a keys map, it performs keyed expansion with pattern
-// matching. Otherwise, it moves the resource as-is (single or all for_each instances).
+// If the address is a module path, it discovers all resources under the module
+// and generates blocks for each. If the resource has a keys map, it performs
+// keyed expansion with pattern matching. Otherwise, it moves the resource as-is.
 func (e *Engine) processMoveResource(
 	ctx context.Context,
 	srcLayer, dstLayer, srcAddr, dstAddr string,
@@ -186,11 +195,106 @@ func (e *Engine) processMoveResource(
 	tracker *wildcardTracker,
 	description string,
 ) ([]generator.Block, error) {
+	// Module-level move: discover all resources under the module prefix
+	if migration.IsModuleAddress(srcAddr) {
+		return e.processMoveModule(ctx, srcLayer, dstLayer, srcAddr, dstAddr, description)
+	}
+
 	if len(res.Keys) > 0 {
 		return e.processMoveKeyed(ctx, srcLayer, dstLayer, srcAddr, dstAddr, res, opIndex, tracker, description)
 	}
 
 	return e.processMoveSimple(ctx, srcLayer, dstLayer, srcAddr, dstAddr, res, tracker, description)
+}
+
+// processMoveModule handles a module-level move by discovering all managed
+// resources under the source module prefix and generating removed + import
+// blocks for each. Resources are grouped by base address so that for_each
+// resources get a single removed block per base and individual import blocks
+// per instance.
+//
+// The existing consolidateModuleRemovals post-processing step will collapse
+// the individual removed blocks into a single module-level removed block.
+func (e *Engine) processMoveModule(
+	ctx context.Context,
+	srcLayer, dstLayer, srcAddr, dstAddr string,
+	description string,
+) ([]generator.Block, error) {
+	resources, err := e.resolver.LookupModuleResources(ctx, srcLayer, srcAddr)
+	if err != nil {
+		return nil, err
+	}
+
+	// Group resources by base address (strip key suffixes like ["key"])
+	// so for_each resources get one removed block per base, not per instance.
+	type baseGroup struct {
+		baseAddr  string
+		resources []*state.ResourceInfo
+	}
+	groupMap := make(map[string]*baseGroup)
+	var groupOrder []string
+	for _, r := range resources {
+		base := stripKeyFromAddress(r.Address)
+		if _, ok := groupMap[base]; !ok {
+			groupMap[base] = &baseGroup{baseAddr: base}
+			groupOrder = append(groupOrder, base)
+		}
+		groupMap[base].resources = append(groupMap[base].resources, r)
+	}
+
+	srcPrefix := srcAddr + "."
+	var blocks []generator.Block
+
+	for _, base := range groupOrder {
+		g := groupMap[base]
+
+		// Compute destination base by swapping module prefix
+		suffix := strings.TrimPrefix(g.baseAddr, srcPrefix)
+		destBase := dstAddr + "." + suffix
+
+		// Emit removed block for this base address
+		blocks = append(blocks, &generator.RemovedBlock{
+			From:        g.baseAddr,
+			Destroy:     false,
+			Layer:       srcLayer,
+			Description: description,
+			Source:      e.currentSourceFile,
+		})
+
+		// Emit import blocks for each instance
+		for _, r := range g.resources {
+			importID, err := e.resolver.ResolveImportID(r, "")
+			if err != nil {
+				return nil, fmt.Errorf("resolving import ID for %q: %w", r.Address, err)
+			}
+
+			destAddr := destBase
+			if r.Key != "" {
+				destAddr = fmt.Sprintf("%s[\"%s\"]", destBase, r.Key)
+			}
+
+			blocks = append(blocks, &generator.ImportBlock{
+				To:          destAddr,
+				ID:          importID,
+				Provider:    r.Provider,
+				Layer:       dstLayer,
+				Description: description,
+				Source:      e.currentSourceFile,
+			})
+		}
+	}
+
+	return blocks, nil
+}
+
+// stripKeyFromAddress removes the key/index suffix from a resource address.
+// "aws_s3_bucket.data[\"key\"]" → "aws_s3_bucket.data"
+// "aws_instance.web" → "aws_instance.web"
+func stripKeyFromAddress(address string) string {
+	if idx := strings.Index(address, "["); idx >= 0 {
+		return address[:idx]
+	}
+	return address
 }
 
 // processMoveSimple handles a resource move without a keys map.

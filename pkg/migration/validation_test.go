@@ -569,3 +569,141 @@ func TestValidate_EmptyConditionStruct(t *testing.T) {
 		t.Errorf("expected no errors for empty condition struct, got %v", errs)
 	}
 }
+
+func TestIsModuleAddress(t *testing.T) {
+	tests := []struct {
+		address  string
+		expected bool
+	}{
+		{"module.foo", true},
+		{"module.foo.module.bar", true},
+		{"module.a.module.b.module.c", true},
+		{"module.foo.aws_instance.web", false},
+		{"aws_instance.web", false},
+		{"module.foo.module.bar.aws_instance.web", false},
+		{"", false},
+		{"module", false},                  // odd number of segments
+		{"module.foo.module", false},        // odd number of segments
+		{"aws_instance.web.module.foo", false}, // doesn't start with module
+	}
+	for _, tt := range tests {
+		result := IsModuleAddress(tt.address)
+		if result != tt.expected {
+			t.Errorf("IsModuleAddress(%q) = %v, want %v", tt.address, result, tt.expected)
+		}
+	}
+}
+
+func TestValidate_ModuleMoveValid(t *testing.T) {
+	mf := &MigrationFile{
+		Description: "Valid module move",
+		Operations: []Operation{
+			{
+				Type:             OpMove,
+				SourceLayer:      "./src",
+				DestinationLayer: "./dst",
+				Resources: []ResourceMove{
+					{Address: "module.foo"},
+				},
+			},
+		},
+	}
+
+	errs := Validate(mf)
+	if len(errs) != 0 {
+		t.Errorf("expected no errors, got %v", errs)
+	}
+}
+
+func TestValidate_ModuleMoveWithDestinationModule(t *testing.T) {
+	mf := &MigrationFile{
+		Description: "Valid module move with destination",
+		Operations: []Operation{
+			{
+				Type:             OpMove,
+				SourceLayer:      "./src",
+				DestinationLayer: "./dst",
+				Resources: []ResourceMove{
+					{Address: "module.foo", DestinationAddress: "module.bar"},
+				},
+			},
+		},
+	}
+
+	errs := Validate(mf)
+	if len(errs) != 0 {
+		t.Errorf("expected no errors, got %v", errs)
+	}
+}
+
+func TestValidate_ModuleMoveWithKeys(t *testing.T) {
+	mf := &MigrationFile{
+		Description: "Module move with keys (invalid)",
+		Operations: []Operation{
+			{
+				Type:             OpMove,
+				SourceLayer:      "./src",
+				DestinationLayer: "./dst",
+				Resources: []ResourceMove{
+					{
+						Address: "module.foo",
+						Keys:    map[string]string{"*": "{{ .Key }}"},
+					},
+				},
+			},
+		},
+	}
+
+	errs := Validate(mf)
+	if !hasError(errs, "resources[0].keys") {
+		t.Errorf("expected validation error for keys on module move, got %v", errs)
+	}
+}
+
+func TestValidate_ModuleMoveWithImportID(t *testing.T) {
+	mf := &MigrationFile{
+		Description: "Module move with import_id (invalid)",
+		Operations: []Operation{
+			{
+				Type:             OpMove,
+				SourceLayer:      "./src",
+				DestinationLayer: "./dst",
+				Resources: []ResourceMove{
+					{
+						Address:  "module.foo",
+						ImportID: "some-id",
+					},
+				},
+			},
+		},
+	}
+
+	errs := Validate(mf)
+	if !hasError(errs, "resources[0].import_id") {
+		t.Errorf("expected validation error for import_id on module move, got %v", errs)
+	}
+}
+
+func TestValidate_ModuleMoveWithNonModuleDestination(t *testing.T) {
+	mf := &MigrationFile{
+		Description: "Module move with non-module destination (invalid)",
+		Operations: []Operation{
+			{
+				Type:             OpMove,
+				SourceLayer:      "./src",
+				DestinationLayer: "./dst",
+				Resources: []ResourceMove{
+					{
+						Address:            "module.foo",
+						DestinationAddress: "aws_instance.web",
+					},
+				},
+			},
+		},
+	}
+
+	errs := Validate(mf)
+	if !hasError(errs, "resources[0].destination_address") {
+		t.Errorf("expected validation error for non-module destination_address, got %v", errs)
+	}
+}

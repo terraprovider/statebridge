@@ -2,6 +2,8 @@
 // and provides parsing and validation functionality.
 package migration
 
+import "strings"
+
 // OperationType enumerates the supported migration operation types.
 type OperationType string
 
@@ -177,4 +179,26 @@ func FullAddress(prefix, addr string) string {
 		return addr
 	}
 	return prefix + "." + addr
+}
+
+// IsModuleAddress returns true if the address is a pure module path with no
+// resource type/name segments. For example:
+//   - "module.foo" → true
+//   - "module.foo.module.bar" → true
+//   - "module.foo.aws_instance.web" → false (contains resource type)
+//   - "aws_instance.web" → false (not a module path)
+func IsModuleAddress(address string) bool {
+	if !strings.HasPrefix(address, "module.") {
+		return false
+	}
+	parts := strings.Split(address, ".")
+	if len(parts)%2 != 0 {
+		return false // must be even (module.name pairs)
+	}
+	for i := 0; i < len(parts); i += 2 {
+		if parts[i] != "module" {
+			return false
+		}
+	}
+	return true
 }
