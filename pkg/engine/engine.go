@@ -164,7 +164,7 @@ func (e *Engine) processMove(ctx context.Context, op *migration.Operation, opInd
 	dstLayer := op.DestinationLayer
 
 	if op.AllResources {
-		return e.processMoveAllResources(ctx, srcLayer, dstLayer, op.Resources, op.Description)
+		return e.processMoveAllResources(ctx, srcLayer, dstLayer, op.Resources, op.Omit, op.Description)
 	}
 
 	var blocks []generator.Block
@@ -307,6 +307,7 @@ func (e *Engine) processMoveAllResources(
 	ctx context.Context,
 	srcLayer, dstLayer string,
 	overrides []migration.ResourceMove,
+	omitEntries []migration.OmitEntry,
 	description string,
 ) ([]generator.Block, error) {
 	resources, err := e.resolver.LookupAllManagedResources(ctx, srcLayer)
@@ -318,6 +319,15 @@ func (e *Engine) processMoveAllResources(
 	overrideMap := make(map[string]string)
 	for _, res := range overrides {
 		overrideMap[res.Address] = res.DestinationAddress
+	}
+
+	// Build omit map: address → destroy flag
+	type omitConfig struct {
+		destroy bool
+	}
+	omitMap := make(map[string]omitConfig)
+	for _, entry := range omitEntries {
+		omitMap[entry.Address] = omitConfig{destroy: entry.Destroy}
 	}
 
 	// Group resources by base address (strip key suffixes)
@@ -340,6 +350,18 @@ func (e *Engine) processMoveAllResources(
 
 	for _, base := range groupOrder {
 		g := groupMap[base]
+
+		// Check if this resource group is omitted from import
+		if cfg, isOmitted := omitMap[g.baseAddr]; isOmitted {
+			blocks = append(blocks, &generator.RemovedBlock{
+				From:        g.baseAddr,
+				Destroy:     cfg.destroy,
+				Layer:       srcLayer,
+				Description: description,
+				Source:      e.currentSourceFile,
+			})
+			continue
+		}
 
 		// Determine destination base address (override or same)
 		destBase := g.baseAddr

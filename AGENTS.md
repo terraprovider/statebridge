@@ -186,6 +186,21 @@ Optional `resources` entries alongside `all_resources` serve as destination addr
 
 Override constraints: `destination_address` is required, `keys` and `import_id` are not allowed, module addresses cannot be used as overrides, and `address_prefix` cannot be combined with `all_resources`.
 
+**`omit`** — Exclude resources from import during an `all_resources` move:
+
+```yaml
+- type: move
+  source_layer: "./layers/old"
+  destination_layer: "./layers/new"
+  all_resources: true
+  omit:
+    - address: "aws_instance.ephemeral"
+    - address: "aws_route.dynamic"
+      destroy: true
+```
+
+Omitted resources get `removed` blocks in the source layer (with `destroy = false` by default) but no `import` blocks in the destination layer. Set `destroy: true` per entry to also destroy the resource. `omit` is only valid with `all_resources: true`, and omit addresses cannot overlap with `resources` override addresses.
+
 ### Operation: `rename`
 
 Renames resources within a single layer. Generates `moved` blocks.
@@ -514,6 +529,7 @@ When generating YAML, ensure:
 5. Each resource requires `address` (except when using `all_resources` without overrides)
 5a. `all_resources` is only valid on `move` operations; cannot be combined with `address_prefix`
 5b. When `all_resources: true`, override entries require `destination_address`, cannot use `keys` or `import_id`, and cannot use module addresses
+5c. `omit` is only valid with `all_resources: true`; each entry requires `address`; omit addresses cannot overlap with `resources` override addresses
 6. `keys` map entries: `*` only at the end of a pattern (e.g., `"prefix_*"`)
 7. `rename` requires `layer` and non-empty `renames` list; each entry requires `from` and `to`
 8. `remove` requires `layer` and non-empty `addresses` list

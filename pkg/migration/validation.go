@@ -128,11 +128,42 @@ func validateMove(index int, op *Operation) []ValidationError {
 		for i, res := range op.Resources {
 			errs = append(errs, validateAllResourcesOverride(index, i, &res)...)
 		}
+		// Validate omit entries
+		omitAddresses := make(map[string]bool)
+		for i, entry := range op.Omit {
+			fieldPrefix := fmt.Sprintf("omit[%d]", i)
+			if entry.Address == "" {
+				errs = append(errs, ValidationError{
+					OperationIndex: index,
+					Field:          fieldPrefix + ".address",
+					Message:        "omit entry requires an address",
+				})
+			}
+			omitAddresses[entry.Address] = true
+		}
+		// Check for overlap between omit and resources overrides
+		for i, res := range op.Resources {
+			if omitAddresses[res.Address] {
+				errs = append(errs, ValidationError{
+					OperationIndex: index,
+					Field:          fmt.Sprintf("resources[%d].address", i),
+					Message:        fmt.Sprintf("address %q appears in both resources and omit", res.Address),
+				})
+			}
+		}
 	} else if len(op.Resources) == 0 {
 		errs = append(errs, ValidationError{
 			OperationIndex: index,
 			Field:          "resources",
 			Message:        "move operation requires at least one resource (or set all_resources: true)",
+		})
+	}
+
+	if len(op.Omit) > 0 && !op.AllResources {
+		errs = append(errs, ValidationError{
+			OperationIndex: index,
+			Field:          "omit",
+			Message:        "omit is only valid when all_resources is true",
 		})
 	}
 

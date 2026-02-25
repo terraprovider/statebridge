@@ -450,6 +450,21 @@ Optional `resources` entries can be specified alongside `all_resources` to overr
 
 All other resources keep their addresses unchanged. Override constraints: `destination_address` is required, `keys` and `import_id` are not allowed, module addresses cannot be used as overrides, and `address_prefix` cannot be combined with `all_resources`.
 
+**`omit`** — Exclude specific resources from import during an `all_resources` move:
+
+```yaml
+- type: move
+  source_layer: "./layers/old"
+  destination_layer: "./layers/new"
+  all_resources: true
+  omit:
+    - address: "aws_instance.ephemeral"
+    - address: "aws_route.dynamic"
+      destroy: true
+```
+
+Omitted resources get `removed` blocks in the source layer (with `destroy = false` by default) but no `import` blocks in the destination layer. This is useful for resources that cannot be imported and need to be recreated. The `destroy` field can be set to `true` per entry if the resource should also be destroyed.
+
 #### `rename` — In-Layer Rename
 
 Renames resources or modules within a single layer. Generates `moved` blocks.
