@@ -64,6 +64,15 @@ func Validate(mf *MigrationFile) []ValidationError {
 func validateOperation(index int, op *Operation) []ValidationError {
 	var errs []ValidationError
 
+	// all_resources is only valid on move operations
+	if op.AllResources && op.Type != OpMove {
+		errs = append(errs, ValidationError{
+			OperationIndex: index,
+			Field:          "all_resources",
+			Message:        "all_resources is only valid for move operations",
+		})
+	}
+
 	switch op.Type {
 	case OpMove:
 		errs = append(errs, validateMove(index, op)...)
@@ -108,11 +117,22 @@ func validateMove(index int, op *Operation) []ValidationError {
 			Message:        "move operation requires a destination_layer",
 		})
 	}
-	if len(op.Resources) == 0 {
+	if op.AllResources {
+		if op.AddressPrefix != "" {
+			errs = append(errs, ValidationError{
+				OperationIndex: index,
+				Field:          "address_prefix",
+				Message:        "address_prefix cannot be used with all_resources",
+			})
+		}
+		for i, res := range op.Resources {
+			errs = append(errs, validateAllResourcesOverride(index, i, &res)...)
+		}
+	} else if len(op.Resources) == 0 {
 		errs = append(errs, ValidationError{
 			OperationIndex: index,
 			Field:          "resources",
-			Message:        "move operation requires at least one resource",
+			Message:        "move operation requires at least one resource (or set all_resources: true)",
 		})
 	}
 
@@ -176,6 +196,45 @@ func validateResourceMove(opIndex, resIndex int, res *ResourceMove) []Validation
 				})
 			}
 		}
+	}
+
+	return errs
+}
+
+// validateAllResourcesOverride checks a ResourceMove entry used as an override
+// alongside all_resources: true. Overrides can only specify a destination_address
+// to rename a resource during a bulk move.
+func validateAllResourcesOverride(opIndex, resIndex int, res *ResourceMove) []ValidationError {
+	var errs []ValidationError
+	fieldPrefix := fmt.Sprintf("resources[%d]", resIndex)
+
+	if len(res.Keys) > 0 {
+		errs = append(errs, ValidationError{
+			OperationIndex: opIndex,
+			Field:          fieldPrefix + ".keys",
+			Message:        "keys cannot be used with all_resources",
+		})
+	}
+	if res.ImportID != "" {
+		errs = append(errs, ValidationError{
+			OperationIndex: opIndex,
+			Field:          fieldPrefix + ".import_id",
+			Message:        "import_id cannot be used with all_resources (auto-resolved from state)",
+		})
+	}
+	if res.DestinationAddress == "" {
+		errs = append(errs, ValidationError{
+			OperationIndex: opIndex,
+			Field:          fieldPrefix + ".destination_address",
+			Message:        "destination_address is required when using all_resources (otherwise the entry has no effect)",
+		})
+	}
+	if res.Address != "" && IsModuleAddress(res.Address) {
+		errs = append(errs, ValidationError{
+			OperationIndex: opIndex,
+			Field:          fieldPrefix + ".address",
+			Message:        "module addresses cannot be used as overrides with all_resources",
+		})
 	}
 
 	return errs

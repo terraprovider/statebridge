@@ -163,6 +163,21 @@ func (i *StateIndex) ManagedResourcesUnderModule(modulePrefix string) []*Resourc
 	return result
 }
 
+// AllManagedResources returns all managed resource instances in the index,
+// excluding data sources. Includes individual for_each instances.
+func (i *StateIndex) AllManagedResources() []*ResourceInfo {
+	if i == nil {
+		return nil
+	}
+	var result []*ResourceInfo
+	for _, r := range i.resources {
+		if r.Mode == "managed" {
+			result = append(result, r)
+		}
+	}
+	return result
+}
+
 // FlattenState recursively walks the state module tree and returns all
 // resource instances as a flat slice of ResourceInfo.
 // Returns nil if the state or root module is nil.

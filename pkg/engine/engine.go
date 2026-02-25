@@ -163,6 +163,10 @@ func (e *Engine) processMove(ctx context.Context, op *migration.Operation, opInd
 	srcLayer := op.SourceLayer
 	dstLayer := op.DestinationLayer
 
+	if op.AllResources {
+		return e.processMoveAllResources(ctx, srcLayer, dstLayer, op.Resources, op.Description)
+	}
+
 	var blocks []generator.Block
 
 	for i, res := range op.Resources {
@@ -294,6 +298,87 @@ func stripKeyFromAddress(address string) string {
 		return address[:idx]
 	}
 	return address
+}
+
+// processMoveAllResources handles an all_resources move by discovering all
+// managed resources in the source layer and generating removed + import blocks
+// for each. Optional overrides allow renaming specific resources during the move.
+func (e *Engine) processMoveAllResources(
+	ctx context.Context,
+	srcLayer, dstLayer string,
+	overrides []migration.ResourceMove,
+	description string,
+) ([]generator.Block, error) {
+	resources, err := e.resolver.LookupAllManagedResources(ctx, srcLayer)
+	if err != nil {
+		return nil, err
+	}
+
+	// Build override map: base address → destination address
+	overrideMap := make(map[string]string)
+	for _, res := range overrides {
+		overrideMap[res.Address] = res.DestinationAddress
+	}
+
+	// Group resources by base address (strip key suffixes)
+	type baseGroup struct {
+		baseAddr  string
+		resources []*state.ResourceInfo
+	}
+	groupMap := make(map[string]*baseGroup)
+	var groupOrder []string
+	for _, r := range resources {
+		base := stripKeyFromAddress(r.Address)
+		if _, ok := groupMap[base]; !ok {
+			groupMap[base] = &baseGroup{baseAddr: base}
+			groupOrder = append(groupOrder, base)
+		}
+		groupMap[base].resources = append(groupMap[base].resources, r)
+	}
+
+	var blocks []generator.Block
+
+	for _, base := range groupOrder {
+		g := groupMap[base]
+
+		// Determine destination base address (override or same)
+		destBase := g.baseAddr
+		if dst, ok := overrideMap[g.baseAddr]; ok {
+			destBase = dst
+		}
+
+		// Emit removed block
+		blocks = append(blocks, &generator.RemovedBlock{
+			From:        g.baseAddr,
+			Destroy:     false,
+			Layer:       srcLayer,
+			Description: description,
+			Source:      e.currentSourceFile,
+		})
+
+		// Emit import blocks for each instance
+		for _, r := range g.resources {
+			importID, err := e.resolver.ResolveImportID(r, "")
+			if err != nil {
+				return nil, fmt.Errorf("resolving import ID for %q: %w", r.Address, err)
+			}
+
+			destAddr := destBase
+			if r.Key != "" {
+				destAddr = fmt.Sprintf("%s[\"%s\"]", destBase, r.Key)
+			}
+
+			blocks = append(blocks, &generator.ImportBlock{
+				To:          destAddr,
+				ID:          importID,
+				Layer:       dstLayer,
+				Description: description,
+				Source:      e.currentSourceFile,
+			})
+		}
+	}
+
+	return blocks, nil
 }
 
 // processMoveSimple handles a resource move without a keys map.

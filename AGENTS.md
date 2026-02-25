@@ -90,9 +90,9 @@ All operation types support an optional `address_prefix` field that is prepended
 
 Moves resources between two layers. Generates `removed` in source + `import` in destination.
 
-Required fields: `source_layer`, `destination_layer`, `resources` (non-empty list)
+Required fields: `source_layer`, `destination_layer`, and either `resources` (non-empty list) or `all_resources: true`
 Each resource requires: `address`
-Optional fields: `description`, `address_prefix`, per-resource `destination_address`, `keys`, `import_id`
+Optional fields: `description`, `address_prefix`, `all_resources`, per-resource `destination_address`, `keys`, `import_id`
 
 **Simple move (single or non-for_each resource):**
 
@@ -160,6 +160,31 @@ resources:
 ```
 
 Constraints: `keys` and `import_id` are not allowed on module moves. `destination_address` must also be a module address if specified. Import IDs are auto-resolved from state. Works with `address_prefix` and at any nesting depth (nested sub-modules are included). The removed blocks are automatically consolidated into a single module-level `removed { from = module.foo }`.
+
+**Full-layer move (`all_resources: true`)** — move all managed resources from the source layer:
+
+```yaml
+- type: move
+  source_layer: "./layers/old"
+  destination_layer: "./layers/new"
+  all_resources: true
+```
+
+Discovers all managed resources from the source layer's state and generates removed + import blocks for each. Data sources are excluded. Module-level consolidation applies automatically.
+
+Optional `resources` entries alongside `all_resources` serve as destination address overrides (renaming during bulk move):
+
+```yaml
+- type: move
+  source_layer: "./layers/old"
+  destination_layer: "./layers/new"
+  all_resources: true
+  resources:
+    - address: "aws_instance.web"
+      destination_address: "aws_instance.api"   # rename this one; all others keep their address
+```
+
+Override constraints: `destination_address` is required, `keys` and `import_id` are not allowed, module addresses cannot be used as overrides, and `address_prefix` cannot be combined with `all_resources`.
 
 ### Operation: `rename`
 
@@ -376,6 +401,27 @@ Use a keyed move with exact key mappings:
         old_key_2: new_key_2
 ```
 
+### "Move all resources from layer A to layer B" / "Move entire layer"
+
+```yaml
+- type: move
+  source_layer: "<layer A path>"
+  destination_layer: "<layer B path>"
+  all_resources: true
+```
+
+To rename specific resources during the bulk move, add override entries:
+
+```yaml
+- type: move
+  source_layer: "<layer A path>"
+  destination_layer: "<layer B path>"
+  all_resources: true
+  resources:
+    - address: "<resource to rename>"
+      destination_address: "<new address>"
+```
+
 ### "Move all instances of a for_each resource"
 
 Without a `keys` map, all instances are moved with the same keys:
@@ -464,8 +510,10 @@ When generating YAML, ensure:
 1. `description` at the top level is always present
 2. `operations` list is non-empty
 3. Every operation has a `type` field
-4. `move` requires `source_layer`, `destination_layer`, and non-empty `resources` list
-5. Each resource requires `address`
+4. `move` requires `source_layer`, `destination_layer`, and either non-empty `resources` list or `all_resources: true`
+5. Each resource requires `address` (except when using `all_resources` without overrides)
+5a. `all_resources` is only valid on `move` operations; cannot be combined with `address_prefix`
+5b. When `all_resources: true`, override entries require `destination_address`, cannot use `keys` or `import_id`, and cannot use module addresses
 6. `keys` map entries: `*` only at the end of a pattern (e.g., `"prefix_*"`)
 7. `rename` requires `layer` and non-empty `renames` list; each entry requires `from` and `to`
 8. `remove` requires `layer` and non-empty `addresses` list

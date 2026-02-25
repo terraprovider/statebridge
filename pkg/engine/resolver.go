@@ -117,6 +117,27 @@ func (r *Resolver) LookupModuleResources(
 	return resources, nil
 }
 
+// LookupAllManagedResources returns all managed resource instances in a
+// layer's state. Data sources are excluded.
+// Returns an error if no managed resources are found.
+func (r *Resolver) LookupAllManagedResources(
+	ctx context.Context,
+	layerPath string,
+) ([]*state.ResourceInfo, error) {
+	s, err := r.stateReader.ReadState(ctx, layerPath)
+	if err != nil {
+		return nil, fmt.Errorf("reading state for layer %q: %w", layerPath, err)
+	}
+
+	idx := state.NewStateIndex(s)
+	resources := idx.AllManagedResources()
+	if len(resources) == 0 {
+		return nil, fmt.Errorf("no managed resources found in layer %q", layerPath)
+	}
+
+	return resources, nil
+}
+
 // EvaluateTemplate evaluates a Go template expression using the given resource
 // as context. Returns the rendered string. If the expression contains no
 // template directives ({{ }}), it is returned as-is.

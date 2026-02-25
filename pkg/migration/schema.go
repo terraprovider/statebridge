@@ -99,6 +99,12 @@ type Operation struct {
 	// Resources lists the resources to move between layers (move operations).
 	Resources []ResourceMove `yaml:"resources,omitempty"`
 
+	// AllResources, when true, discovers all managed resources in the source
+	// layer's state and moves them. Individual resources entries can be specified
+	// alongside to override destination addresses for specific resources.
+	// Only valid for move operations.
+	AllResources bool `yaml:"all_resources,omitempty"`
+
 	// Layer is the filesystem path to the Terraform root module (rename, remove, import operations).
 	Layer string `yaml:"layer,omitempty"`
 

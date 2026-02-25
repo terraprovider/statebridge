@@ -424,6 +424,32 @@ resources:
 
 When a module address is specified (e.g., `module.foo`), tfmigrate discovers all managed resources under that module from the source layer's state and generates import + removed blocks for each. The removed blocks are automatically consolidated into a single `removed { from = module.foo }`. Module moves do not support `keys` or `import_id` (import IDs are auto-resolved from state). If `destination_address` is provided, it must also be a module address. This works with `address_prefix` and at any nesting depth (nested sub-modules are included).
 
+**`all_resources`** — Move all managed resources from the source layer to the destination layer:
+
+```yaml
+- type: move
+  description: "Move entire layer"
+  source_layer: "./layers/old"
+  destination_layer: "./layers/new"
+  all_resources: true
+```
+
+When `all_resources: true` is set, tfmigrate discovers all managed resources from the source layer's state and generates removed + import blocks for each. Data sources are excluded. Module-level consolidation applies automatically to the removed blocks.
+
+Optional `resources` entries can be specified alongside `all_resources` to override destination addresses for specific resources (e.g., renaming during a bulk move):
+
+```yaml
+- type: move
+  source_layer: "./layers/old"
+  destination_layer: "./layers/new"
+  all_resources: true
+  resources:
+    - address: "aws_instance.web"
+      destination_address: "aws_instance.api"   # rename this one
+```
+
+All other resources keep their addresses unchanged. Override constraints: `destination_address` is required, `keys` and `import_id` are not allowed, module addresses cannot be used as overrides, and `address_prefix` cannot be combined with `all_resources`.
+
 #### `rename` — In-Layer Rename
 
 Renames resources or modules within a single layer. Generates `moved` blocks.

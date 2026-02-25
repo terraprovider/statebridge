@@ -390,3 +390,84 @@ func TestManagedResourcesUnderModule_ForEachResources(t *testing.T) {
 		t.Fatalf("expected 2 for_each instances under module.foo, got %d", len(resources))
 	}
 }
+
+func TestAllManagedResources(t *testing.T) {
+	s := buildModuleState(
+		[]*tfjson.StateResource{
+			newTestResource("aws_instance.web", nil),
+			newTestDataResource("data.aws_ami.latest"),
+		},
+		&tfjson.StateModule{
+			Address: "module.foo",
+			Resources: []*tfjson.StateResource{
+				newTestModuleResource("module.foo.aws_s3_bucket.data"),
+			},
+		},
+	)
+
+	idx := NewStateIndex(s)
+	resources := idx.AllManagedResources()
+
+	if len(resources) != 2 {
+		t.Fatalf("expected 2 managed resources (excluding data source), got %d", len(resources))
+	}
+
+	addrs := map[string]bool{}
+	for _, r := range resources {
+		addrs[r.Address] = true
+	}
+	if !addrs["aws_instance.web"] {
+		t.Error("expected aws_instance.web")
+	}
+	if !addrs["module.foo.aws_s3_bucket.data"] {
+		t.Error("expected module.foo.aws_s3_bucket.data")
+	}
+}
+
+func TestAllManagedResources_NilIndex(t *testing.T) {
+	var idx *StateIndex
+	resources := idx.AllManagedResources()
+	if resources != nil {
+		t.Errorf("expected nil for nil index, got %v", resources)
+	}
+}
+
+func TestAllManagedResources_EmptyState(t *testing.T) {
+	s := buildModuleState(nil)
+	idx := NewStateIndex(s)
+	resources := idx.AllManagedResources()
+	if len(resources) != 0 {
+		t.Errorf("expected no resources for empty state, got %d", len(resources))
+	}
+}
+
+func TestAllManagedResources_ForEach(t *testing.T) {
+	s := buildModuleState(
+		[]*tfjson.StateResource{
+			{
+				Address:         `aws_s3_bucket.data["key-a"]`,
+				Mode:            tfjson.ManagedResourceMode,
+				Type:            "aws_s3_bucket",
+				Name:            "data",
+				Index:           "key-a",
+				ProviderName:    "registry.opentofu.org/hashicorp/aws",
+				AttributeValues: map[string]interface{}{"id": "bucket-a"},
+			},
+			{
+				Address:         `aws_s3_bucket.data["key-b"]`,
+				Mode:            tfjson.ManagedResourceMode,
+				Type:            "aws_s3_bucket",
+				Name:            "data",
+				Index:           "key-b",
+				ProviderName:    "registry.opentofu.org/hashicorp/aws",
+				AttributeValues: map[string]interface{}{"id": "bucket-b"},
+			},
+		},
+	)
+
+	idx := NewStateIndex(s)
+	resources := idx.AllManagedResources()
+	if len(resources) != 2 {
+		t.Fatalf("expected 2 for_each instances, got %d", len(resources))
+	}
+}
