@@ -769,9 +769,9 @@ func TestValidate_AllResourcesWithAddressPrefix(t *testing.T) {
 	}
 }
 
-func TestValidate_AllResourcesOverrideMissingDestination(t *testing.T) {
+func TestValidate_AllResourcesOverrideMissingDestinationAndImportID(t *testing.T) {
 	mf := &MigrationFile{
-		Description: "All resources override without destination (invalid)",
+		Description: "All resources override without destination or import_id (invalid)",
 		Operations: []Operation{
 			{
 				Type:             OpMove,
@@ -786,8 +786,8 @@ func TestValidate_AllResourcesOverrideMissingDestination(t *testing.T) {
 	}
 
 	errs := Validate(mf)
-	if !hasError(errs, "resources[0].destination_address") {
-		t.Errorf("expected validation error for missing destination_address, got %v", errs)
+	if !hasError(errs, "resources[0]") {
+		t.Errorf("expected validation error for empty override entry, got %v", errs)
 	}
 }
 
@@ -817,9 +817,9 @@ func TestValidate_AllResourcesOverrideWithKeys(t *testing.T) {
 	}
 }
 
-func TestValidate_AllResourcesOverrideWithImportID(t *testing.T) {
+func TestValidate_AllResourcesOverrideWithImportIDValid(t *testing.T) {
 	mf := &MigrationFile{
-		Description: "All resources override with import_id (invalid)",
+		Description: "All resources override with import_id (valid)",
 		Operations: []Operation{
 			{
 				Type:             OpMove,
@@ -838,8 +838,33 @@ func TestValidate_AllResourcesOverrideWithImportID(t *testing.T) {
 	}
 
 	errs := Validate(mf)
-	if !hasError(errs, "resources[0].import_id") {
-		t.Errorf("expected validation error for import_id with all_resources, got %v", errs)
+	if len(errs) != 0 {
+		t.Errorf("expected no errors, got %v", errs)
+	}
+}
+
+func TestValidate_AllResourcesOverrideWithImportIDOnly(t *testing.T) {
+	mf := &MigrationFile{
+		Description: "All resources override with import_id only (valid)",
+		Operations: []Operation{
+			{
+				Type:             OpMove,
+				SourceLayer:      "./src",
+				DestinationLayer: "./dst",
+				AllResources:     true,
+				Resources: []ResourceMove{
+					{
+						Address:  "aws_instance.web",
+						ImportID: "{{ .Attributes.project_id }}/{{ .Attributes.id }}",
+					},
+				},
+			},
+		},
+	}
+
+	errs := Validate(mf)
+	if len(errs) != 0 {
+		t.Errorf("expected no errors, got %v", errs)
 	}
 }
 

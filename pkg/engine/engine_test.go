@@ -2123,3 +2123,121 @@ operations:
 		t.Error("aws_instance.ephemeral should be omitted from imports")
 	}
 }
+
+func TestEngine_ProcessFiles_AllResourcesWithImportIDOverride(t *testing.T) {
+	// Move all resources, but override import_id for one resource.
+	dir := t.TempDir()
+	srcLayer := filepath.Join(dir, "layers", "old")
+	dstLayer := filepath.Join(dir, "layers", "new")
+	if err := os.MkdirAll(srcLayer, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(dstLayer, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	migrationContent := `
+description: "Move all, override import_id for one"
+operations:
+  - type: move
+    source_layer: "` + srcLayer + `"
+    destination_layer: "` + dstLayer + `"
+    all_resources: true
+    resources:
+      - address: "azuredevops_serviceendpoint_azurerm.key_vault"
+        import_id: "{{ .Attributes.project_id }}/{{ .Attributes.id }}"
+`
+	migrationFile := filepath.Join(dir, "001_import_override.yaml")
+	if err := os.WriteFile(migrationFile, []byte(migrationContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	mock := testutil.NewMockStateReader(map[string]*tfjson.State{
+		srcLayer: testutil.BuildState(
+			testutil.NewResource("aws_instance.web", "aws_instance", "web", nil,
+				map[string]interface{}{"id": "i-web123"}),
+			testutil.NewResource("azuredevops_serviceendpoint_azurerm.key_vault", "azuredevops_serviceendpoint_azurerm", "key_vault", nil,
+				map[string]interface{}{"id": "endpoint-id", "project_id": "proj-123"}),
+		),
+	})
+
+	engine := New(Config{StateReader: mock})
+
+	files, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	dstContent := readLayerFile(t, files, dstLayer)
+	// Both resources should have import blocks
+	if strings.Count(dstContent, "import {") != 2 {
+		t.Errorf("expected 2 import blocks, got:\n%s", dstContent)
+	}
+	// key_vault should use the composite import ID from the template
+	if !strings.Contains(dstContent, `id = "proj-123/endpoint-id"`) {
+		t.Errorf("expected composite import ID 'proj-123/endpoint-id', got:\n%s", dstContent)
+	}
+	// web should use the auto-resolved import ID
+	if !strings.Contains(dstContent, `id = "i-web123"`) {
+		t.Errorf("expected auto-resolved import ID 'i-web123', got:\n%s", dstContent)
+	}
+}
+
+func TestEngine_ProcessFiles_AllResourcesWithImportIDAndDestinationOverride(t *testing.T) {
+	// Move all resources, override both destination_address and import_id for one.
+	dir := t.TempDir()
+	srcLayer := filepath.Join(dir, "layers", "old")
+	dstLayer := filepath.Join(dir, "layers", "new")
+	if err := os.MkdirAll(srcLayer, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(dstLayer, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	migrationContent := `
+description: "Move all, rename and override import_id"
+operations:
+  - type: move
+    source_layer: "` + srcLayer + `"
+    destination_layer: "` + dstLayer + `"
+    all_resources: true
+    resources:
+      - address: "azuredevops_serviceendpoint_azurerm.key_vault"
+        destination_address: "azuredevops_serviceendpoint_azurerm.kv"
+        import_id: "{{ .Attributes.project_id }}/{{ .Attributes.id }}"
+`
+	migrationFile := filepath.Join(dir, "001_rename_import.yaml")
+	if err := os.WriteFile(migrationFile, []byte(migrationContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	mock := testutil.NewMockStateReader(map[string]*tfjson.State{
+		srcLayer: testutil.BuildState(
+			testutil.NewResource("aws_instance.web", "aws_instance", "web", nil,
+				map[string]interface{}{"id": "i-web123"}),
+			testutil.NewResource("azuredevops_serviceendpoint_azurerm.key_vault", "azuredevops_serviceendpoint_azurerm", "key_vault", nil,
+				map[string]interface{}{"id": "endpoint-id", "project_id": "proj-123"}),
+		),
+	})
+
+	engine := New(Config{StateReader: mock})
+
+	files, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	dstContent := readLayerFile(t, files, dstLayer)
+	// key_vault should be renamed to kv and use composite import ID
+	if !strings.Contains(dstContent, "azuredevops_serviceendpoint_azurerm.kv") {
+		t.Errorf("expected renamed address 'azuredevops_serviceendpoint_azurerm.kv', got:\n%s", dstContent)
+	}
+	if !strings.Contains(dstContent, `id = "proj-123/endpoint-id"`) {
+		t.Errorf("expected composite import ID, got:\n%s", dstContent)
+	}
+	// Original key_vault address should NOT appear in destination
+	if strings.Contains(dstContent, "azuredevops_serviceendpoint_azurerm.key_vault") {
+		t.Error("key_vault should have been renamed to kv in destination")
+	}
+}

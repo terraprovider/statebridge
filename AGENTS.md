@@ -184,7 +184,7 @@ Optional `resources` entries alongside `all_resources` serve as destination addr
       destination_address: "aws_instance.api"   # rename this one; all others keep their address
 ```
 
-Override constraints: `destination_address` is required, `keys` and `import_id` are not allowed, module addresses cannot be used as overrides, and `address_prefix` cannot be combined with `all_resources`.
+Override constraints: `destination_address` or `import_id` (or both) is required, `keys` is not allowed, module addresses cannot be used as overrides, and `address_prefix` cannot be combined with `all_resources`. Use `import_id` to override automatic import ID resolution for resources that need composite IDs (e.g., `"{{ .Attributes.project_id }}/{{ .Attributes.id }}"`).
 
 **`omit`** — Exclude resources from import during an `all_resources` move:
 
@@ -528,7 +528,7 @@ When generating YAML, ensure:
 4. `move` requires `source_layer`, `destination_layer`, and either non-empty `resources` list or `all_resources: true`
 5. Each resource requires `address` (except when using `all_resources` without overrides)
 5a. `all_resources` is only valid on `move` operations; cannot be combined with `address_prefix`
-5b. When `all_resources: true`, override entries require `destination_address`, cannot use `keys` or `import_id`, and cannot use module addresses
+5b. When `all_resources: true`, override entries require `destination_address` or `import_id` (or both), cannot use `keys`, and cannot use module addresses
 5c. `omit` is only valid with `all_resources: true`; each entry requires `address`; omit addresses cannot overlap with `resources` override addresses
 6. `keys` map entries: `*` only at the end of a pattern (e.g., `"prefix_*"`)
 7. `rename` requires `layer` and non-empty `renames` list; each entry requires `from` and `to`
