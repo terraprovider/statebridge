@@ -276,7 +276,6 @@ func (e *Engine) processMoveModule(
 			blocks = append(blocks, &generator.ImportBlock{
 				To:          destAddr,
 				ID:          importID,
-				Provider:    r.Provider,
 				Layer:       dstLayer,
 				Description: description,
 				Source:      e.currentSourceFile,
