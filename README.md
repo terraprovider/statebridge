@@ -448,7 +448,19 @@ Optional `resources` entries can be specified alongside `all_resources` to overr
       destination_address: "aws_instance.api"   # rename this one
 ```
 
-All other resources keep their addresses unchanged. Override constraints: `destination_address` is required, `keys` and `import_id` are not allowed, module addresses cannot be used as overrides, and `address_prefix` cannot be combined with `all_resources`.
+All other resources keep their addresses unchanged. Override constraints: `destination_address` or `import_id` (or both) is required, `keys` is not allowed, module addresses cannot be used as overrides, and `address_prefix` cannot be combined with `all_resources`.
+
+Use `import_id` on override entries to provide custom import IDs for resources whose auto-resolved `id` attribute doesn't match the provider's expected import format:
+
+```yaml
+- type: move
+  source_layer: "./layers/old"
+  destination_layer: "./layers/new"
+  all_resources: true
+  resources:
+    - address: "azuredevops_serviceendpoint_azurerm.key_vault"
+      import_id: "{{ .Attributes.project_id }}/{{ .Attributes.id }}"
+```
 
 **`omit`** — Exclude specific resources from import during an `all_resources` move:
 

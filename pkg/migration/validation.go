@@ -233,8 +233,9 @@ func validateResourceMove(opIndex, resIndex int, res *ResourceMove) []Validation
 }
 
 // validateAllResourcesOverride checks a ResourceMove entry used as an override
-// alongside all_resources: true. Overrides can only specify a destination_address
-// to rename a resource during a bulk move.
+// alongside all_resources: true. Overrides can specify a destination_address
+// to rename a resource during a bulk move and/or an import_id to override
+// automatic import ID resolution for specific resources.
 func validateAllResourcesOverride(opIndex, resIndex int, res *ResourceMove) []ValidationError {
 	var errs []ValidationError
 	fieldPrefix := fmt.Sprintf("resources[%d]", resIndex)
@@ -246,18 +247,11 @@ func validateAllResourcesOverride(opIndex, resIndex int, res *ResourceMove) []Va
 			Message:        "keys cannot be used with all_resources",
 		})
 	}
-	if res.ImportID != "" {
+	if res.DestinationAddress == "" && res.ImportID == "" {
 		errs = append(errs, ValidationError{
 			OperationIndex: opIndex,
-			Field:          fieldPrefix + ".import_id",
-			Message:        "import_id cannot be used with all_resources (auto-resolved from state)",
-		})
-	}
-	if res.DestinationAddress == "" {
-		errs = append(errs, ValidationError{
-			OperationIndex: opIndex,
-			Field:          fieldPrefix + ".destination_address",
-			Message:        "destination_address is required when using all_resources (otherwise the entry has no effect)",
+			Field:          fieldPrefix,
+			Message:        "override entry requires destination_address or import_id (otherwise the entry has no effect)",
 		})
 	}
 	if res.Address != "" && IsModuleAddress(res.Address) {

@@ -315,10 +315,17 @@ func (e *Engine) processMoveAllResources(
 		return nil, err
 	}
 
-	// Build override map: base address → destination address
-	overrideMap := make(map[string]string)
+	// Build override map: base address → override config (destination address and/or import ID)
+	type overrideConfig struct {
+		destinationAddress string
+		importID           string
+	}
+	overrideMap := make(map[string]overrideConfig)
 	for _, res := range overrides {
-		overrideMap[res.Address] = res.DestinationAddress
+		overrideMap[res.Address] = overrideConfig{
+			destinationAddress: res.DestinationAddress,
+			importID:           res.ImportID,
+		}
 	}
 
 	// Build omit map: address → destroy flag
@@ -365,8 +372,9 @@ func (e *Engine) processMoveAllResources(
 
 		// Determine destination base address (override or same)
 		destBase := g.baseAddr
-		if dst, ok := overrideMap[g.baseAddr]; ok {
-			destBase = dst
+		overrideCfg, hasOverride := overrideMap[g.baseAddr]
+		if hasOverride && overrideCfg.destinationAddress != "" {
+			destBase = overrideCfg.destinationAddress
 		}
 
 		// Emit removed block
@@ -380,7 +388,11 @@ func (e *Engine) processMoveAllResources(
 
 		// Emit import blocks for each instance
 		for _, r := range g.resources {
-			importID, err := e.resolver.ResolveImportID(r, "")
+			importIDExpr := ""
+			if hasOverride {
+				importIDExpr = overrideCfg.importID
+			}
+			importID, err := e.resolver.ResolveImportID(r, importIDExpr)
 			if err != nil {
 				return nil, fmt.Errorf("resolving import ID for %q: %w", r.Address, err)
 			}
