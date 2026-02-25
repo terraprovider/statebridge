@@ -4,6 +4,7 @@ package state
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	tfjson "github.com/hashicorp/terraform-json"
@@ -90,6 +91,8 @@ func (i *StateIndex) LookupResourcesByPrefix(baseAddress string) ([]*ResourceInf
 
 // ResourceExists checks whether any resource matching the given address exists
 // in the indexed state. Base addresses match any for_each instance.
+// Module paths (e.g., "module.foo") are checked by prefix — returns true if
+// any resource exists under that module.
 func (i *StateIndex) ResourceExists(address string) bool {
 	if i == nil {
 		return false
@@ -101,7 +104,63 @@ func (i *StateIndex) ResourceExists(address string) bool {
 	}
 
 	base := baseAddress(address)
-	return len(i.byBase[base]) > 0
+	if len(i.byBase[base]) > 0 {
+		return true
+	}
+
+	// Fall back to module prefix check: "module.foo" matches any resource
+	// whose address starts with "module.foo."
+	return i.HasResourcesWithPrefix(address)
+}
+
+// HasResourcesWithPrefix reports whether any resources exist in the index
+// with addresses starting with the given prefix followed by a dot.
+// Used for module-aware existence checks.
+func (i *StateIndex) HasResourcesWithPrefix(prefix string) bool {
+	if i == nil {
+		return false
+	}
+	pfx := prefix + "."
+	for baseAddr := range i.byBase {
+		if strings.HasPrefix(baseAddr, pfx) {
+			return true
+		}
+	}
+	return false
+}
+
+// ManagedBaseAddresses returns all unique base addresses of managed resources
+// in the index (excluding data sources), sorted alphabetically.
+func (i *StateIndex) ManagedBaseAddresses() []string {
+	if i == nil {
+		return nil
+	}
+	var result []string
+	for baseAddr, resources := range i.byBase {
+		if len(resources) > 0 && resources[0].Mode == "managed" {
+			result = append(result, baseAddr)
+		}
+	}
+	sort.Strings(result)
+	return result
+}
+
+// ManagedResourcesUnderModule returns all managed resource instances whose
+// address starts with modulePrefix followed by a dot. Returns resources at
+// any nesting depth, including individual for_each instances.
+// Data sources are excluded.
+func (i *StateIndex) ManagedResourcesUnderModule(modulePrefix string) []*ResourceInfo {
+	if i == nil {
+		return nil
+	}
+	pfx := modulePrefix + "."
+	var result []*ResourceInfo
+	for _, r := range i.resources {
+		if r.Mode == "managed" && strings.HasPrefix(r.Address, pfx) {
+			result = append(result, r)
+		}
+	}
+	return result
 }
 
 // FlattenState recursively walks the state module tree and returns all
