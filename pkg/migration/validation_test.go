@@ -707,3 +707,293 @@ func TestValidate_ModuleMoveWithNonModuleDestination(t *testing.T) {
 		t.Errorf("expected validation error for non-module destination_address, got %v", errs)
 	}
 }
+
+func TestValidate_AllResourcesValid(t *testing.T) {
+	mf := &MigrationFile{
+		Description: "All resources move",
+		Operations: []Operation{
+			{
+				Type:             OpMove,
+				SourceLayer:      "./src",
+				DestinationLayer: "./dst",
+				AllResources:     true,
+			},
+		},
+	}
+
+	errs := Validate(mf)
+	if len(errs) != 0 {
+		t.Errorf("expected no errors, got %v", errs)
+	}
+}
+
+func TestValidate_AllResourcesWithValidOverride(t *testing.T) {
+	mf := &MigrationFile{
+		Description: "All resources with rename",
+		Operations: []Operation{
+			{
+				Type:             OpMove,
+				SourceLayer:      "./src",
+				DestinationLayer: "./dst",
+				AllResources:     true,
+				Resources: []ResourceMove{
+					{Address: "aws_instance.web", DestinationAddress: "aws_instance.api"},
+				},
+			},
+		},
+	}
+
+	errs := Validate(mf)
+	if len(errs) != 0 {
+		t.Errorf("expected no errors, got %v", errs)
+	}
+}
+
+func TestValidate_AllResourcesWithAddressPrefix(t *testing.T) {
+	mf := &MigrationFile{
+		Description: "All resources with address prefix (invalid)",
+		Operations: []Operation{
+			{
+				Type:             OpMove,
+				SourceLayer:      "./src",
+				DestinationLayer: "./dst",
+				AllResources:     true,
+				AddressPrefix:    "module.ig",
+			},
+		},
+	}
+
+	errs := Validate(mf)
+	if !hasError(errs, "address_prefix") {
+		t.Errorf("expected validation error for address_prefix with all_resources, got %v", errs)
+	}
+}
+
+func TestValidate_AllResourcesOverrideMissingDestination(t *testing.T) {
+	mf := &MigrationFile{
+		Description: "All resources override without destination (invalid)",
+		Operations: []Operation{
+			{
+				Type:             OpMove,
+				SourceLayer:      "./src",
+				DestinationLayer: "./dst",
+				AllResources:     true,
+				Resources: []ResourceMove{
+					{Address: "aws_instance.web"},
+				},
+			},
+		},
+	}
+
+	errs := Validate(mf)
+	if !hasError(errs, "resources[0].destination_address") {
+		t.Errorf("expected validation error for missing destination_address, got %v", errs)
+	}
+}
+
+func TestValidate_AllResourcesOverrideWithKeys(t *testing.T) {
+	mf := &MigrationFile{
+		Description: "All resources override with keys (invalid)",
+		Operations: []Operation{
+			{
+				Type:             OpMove,
+				SourceLayer:      "./src",
+				DestinationLayer: "./dst",
+				AllResources:     true,
+				Resources: []ResourceMove{
+					{
+						Address:            "aws_instance.web",
+						DestinationAddress: "aws_instance.api",
+						Keys:               map[string]string{"*": "{{ .Key }}"},
+					},
+				},
+			},
+		},
+	}
+
+	errs := Validate(mf)
+	if !hasError(errs, "resources[0].keys") {
+		t.Errorf("expected validation error for keys with all_resources, got %v", errs)
+	}
+}
+
+func TestValidate_AllResourcesOverrideWithImportID(t *testing.T) {
+	mf := &MigrationFile{
+		Description: "All resources override with import_id (invalid)",
+		Operations: []Operation{
+			{
+				Type:             OpMove,
+				SourceLayer:      "./src",
+				DestinationLayer: "./dst",
+				AllResources:     true,
+				Resources: []ResourceMove{
+					{
+						Address:            "aws_instance.web",
+						DestinationAddress: "aws_instance.api",
+						ImportID:           "some-id",
+					},
+				},
+			},
+		},
+	}
+
+	errs := Validate(mf)
+	if !hasError(errs, "resources[0].import_id") {
+		t.Errorf("expected validation error for import_id with all_resources, got %v", errs)
+	}
+}
+
+func TestValidate_AllResourcesOverrideWithModuleAddress(t *testing.T) {
+	mf := &MigrationFile{
+		Description: "All resources override with module address (invalid)",
+		Operations: []Operation{
+			{
+				Type:             OpMove,
+				SourceLayer:      "./src",
+				DestinationLayer: "./dst",
+				AllResources:     true,
+				Resources: []ResourceMove{
+					{
+						Address:            "module.foo",
+						DestinationAddress: "module.bar",
+					},
+				},
+			},
+		},
+	}
+
+	errs := Validate(mf)
+	if !hasError(errs, "resources[0].address") {
+		t.Errorf("expected validation error for module address with all_resources, got %v", errs)
+	}
+}
+
+func TestValidate_AllResourcesOnRenameOperation(t *testing.T) {
+	mf := &MigrationFile{
+		Description: "All resources on rename (invalid)",
+		Operations: []Operation{
+			{
+				Type:         OpRename,
+				Layer:        "./src",
+				AllResources: true,
+				Renames: []RenameEntry{
+					{From: "aws_instance.old", To: "aws_instance.new"},
+				},
+			},
+		},
+	}
+
+	errs := Validate(mf)
+	if !hasError(errs, "all_resources") {
+		t.Errorf("expected validation error for all_resources on rename, got %v", errs)
+	}
+}
+
+func TestValidate_OmitValid(t *testing.T) {
+	mf := &MigrationFile{
+		Description: "All resources with omit",
+		Operations: []Operation{
+			{
+				Type:             OpMove,
+				SourceLayer:      "./src",
+				DestinationLayer: "./dst",
+				AllResources:     true,
+				Omit: []OmitEntry{
+					{Address: "aws_instance.ephemeral"},
+				},
+			},
+		},
+	}
+
+	errs := Validate(mf)
+	if len(errs) != 0 {
+		t.Errorf("expected no errors, got %v", errs)
+	}
+}
+
+func TestValidate_OmitWithoutAllResources(t *testing.T) {
+	mf := &MigrationFile{
+		Description: "Omit without all_resources",
+		Operations: []Operation{
+			{
+				Type:             OpMove,
+				SourceLayer:      "./src",
+				DestinationLayer: "./dst",
+				Resources:        []ResourceMove{{Address: "aws_instance.web"}},
+				Omit:             []OmitEntry{{Address: "aws_instance.ephemeral"}},
+			},
+		},
+	}
+
+	errs := Validate(mf)
+	if !hasError(errs, "omit") {
+		t.Errorf("expected validation error for omit without all_resources, got %v", errs)
+	}
+}
+
+func TestValidate_OmitMissingAddress(t *testing.T) {
+	mf := &MigrationFile{
+		Description: "Omit missing address",
+		Operations: []Operation{
+			{
+				Type:             OpMove,
+				SourceLayer:      "./src",
+				DestinationLayer: "./dst",
+				AllResources:     true,
+				Omit:             []OmitEntry{{Address: ""}},
+			},
+		},
+	}
+
+	errs := Validate(mf)
+	if !hasError(errs, "omit[0].address") {
+		t.Errorf("expected validation error for missing omit address, got %v", errs)
+	}
+}
+
+func TestValidate_OmitOverlapWithResources(t *testing.T) {
+	mf := &MigrationFile{
+		Description: "Omit overlapping with resources",
+		Operations: []Operation{
+			{
+				Type:             OpMove,
+				SourceLayer:      "./src",
+				DestinationLayer: "./dst",
+				AllResources:     true,
+				Resources: []ResourceMove{
+					{Address: "aws_instance.web", DestinationAddress: "aws_instance.api"},
+				},
+				Omit: []OmitEntry{
+					{Address: "aws_instance.web"},
+				},
+			},
+		},
+	}
+
+	errs := Validate(mf)
+	if !hasError(errs, "resources[0].address") {
+		t.Errorf("expected validation error for overlapping address, got %v", errs)
+	}
+}
+
+func TestValidate_OmitWithDestroy(t *testing.T) {
+	mf := &MigrationFile{
+		Description: "Omit with destroy",
+		Operations: []Operation{
+			{
+				Type:             OpMove,
+				SourceLayer:      "./src",
+				DestinationLayer: "./dst",
+				AllResources:     true,
+				Omit: []OmitEntry{
+					{Address: "aws_instance.ephemeral", Destroy: true},
+				},
+			},
+		},
+	}
+
+	errs := Validate(mf)
+	if len(errs) != 0 {
+		t.Errorf("expected no errors, got %v", errs)
+	}
+}

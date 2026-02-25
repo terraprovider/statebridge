@@ -99,6 +99,17 @@ type Operation struct {
 	// Resources lists the resources to move between layers (move operations).
 	Resources []ResourceMove `yaml:"resources,omitempty"`
 
+	// AllResources, when true, discovers all managed resources in the source
+	// layer's state and moves them. Individual resources entries can be specified
+	// alongside to override destination addresses for specific resources.
+	// Only valid for move operations.
+	AllResources bool `yaml:"all_resources,omitempty"`
+
+	// Omit lists resources that should get removed blocks in the source layer
+	// but NOT import blocks in the destination layer. Only valid with all_resources.
+	// Useful for resources that cannot be imported and need to be recreated.
+	Omit []OmitEntry `yaml:"omit,omitempty"`
+
 	// Layer is the filesystem path to the Terraform root module (rename, remove, import operations).
 	Layer string `yaml:"layer,omitempty"`
 
@@ -162,6 +173,18 @@ type ImportEntry struct {
 
 	// Provider is an optional provider alias override.
 	Provider string `yaml:"provider,omitempty"`
+}
+
+// OmitEntry specifies a resource to exclude from import generation during
+// an all_resources move. A removed block is still generated in the source
+// layer, but no import block is produced in the destination layer.
+type OmitEntry struct {
+	// Address is the base resource address to omit from import.
+	Address string `yaml:"address"`
+
+	// Destroy controls whether the removed block uses destroy = true or false.
+	// Defaults to false (resource keeps existing in the cloud, just removed from state).
+	Destroy bool `yaml:"destroy,omitempty"`
 }
 
 // DestroyValue returns the effective value of the Destroy field,
