@@ -1,0 +1,31 @@
+name: E2E Fast Tests
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'e2e/**'
+      - 'pkg/**'
+      - 'cmd/**'
+      - 'go.mod'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  e2e_fast:
+    runs-on: ubuntu-latest-8cpu
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
+        with:
+          go-version-file: go.mod
+
+      - uses: opentofu/setup-opentofu@9d84900f3238fab8cd84ce47d658d25dd008be2f # v1.0.8
+
+      - name: Run fast e2e tests
+        run: |
+          go test -tags=e2e_fast -v -timeout=10m -count=1 ./e2e/...
