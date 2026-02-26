@@ -113,8 +113,8 @@ func newTerraform(t *testing.T, workDir string) *tfexec.Terraform {
 	if err != nil {
 		t.Fatalf("initializing terraform-exec in %s: %v", workDir, err)
 	}
-	tf.SetStdout(os.Stderr)
-	tf.SetStderr(os.Stderr)
+	tf.SetStdout(io.Discard)
+	tf.SetStderr(io.Discard)
 	return tf
 }
 
