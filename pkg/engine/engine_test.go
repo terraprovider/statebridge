@@ -2517,3 +2517,481 @@ operations:
 		t.Fatalf("expected 1 file (condition met, proceeds), got %d", len(result.OutputFiles))
 	}
 }
+
+func TestEngine_ProcessFiles_ImportOperationLevelProvider(t *testing.T) {
+	// Test that operation-level provider is used as default, and entry-level provider overrides it.
+	dir := t.TempDir()
+	layerDir := filepath.Join(dir, "layers", "db")
+	if err := os.MkdirAll(layerDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	migrationContent := `
+description: "Import with operation-level and entry-level provider"
+operations:
+  - type: import
+    layer: "` + layerDir + `"
+    provider: "aws.useast1"
+    imports:
+      - address: "aws_db_instance.primary"
+        id: "db-primary-id"
+      - address: "aws_db_instance.replica"
+        id: "db-replica-id"
+        provider: "aws.uswest2"
+      - address: "aws_db_instance.analytics"
+        id: "db-analytics-id"
+`
+	migrationFile := filepath.Join(dir, "001_import_provider.yaml")
+	if err := os.WriteFile(migrationFile, []byte(migrationContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	engine := New(Config{StateReader: testutil.NewMockStateReader(nil)})
+
+	result, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(result.OutputFiles) != 1 {
+		t.Fatalf("expected 1 output file, got %d", len(result.OutputFiles))
+	}
+
+	content, err := os.ReadFile(result.OutputFiles[0])
+	if err != nil {
+		t.Fatalf("reading output: %v", err)
+	}
+	s := string(content)
+
+	// Count import blocks
+	if strings.Count(s, "import {") != 3 {
+		t.Errorf("expected 3 import blocks, got:\n%s", s)
+	}
+
+	// primary: should use operation-level provider aws.useast1
+	if !strings.Contains(s, "aws_db_instance.primary") {
+		t.Error("expected aws_db_instance.primary")
+	}
+
+	// replica: should use entry-level override aws.uswest2
+	if !strings.Contains(s, "provider = aws.uswest2") {
+		t.Error("expected provider = aws.uswest2 (entry-level override)")
+	}
+
+	// analytics: should use operation-level provider aws.useast1
+	// Both primary and analytics use aws.useast1, so it should appear at least twice
+	if strings.Count(s, "provider = aws.useast1") < 2 {
+		t.Errorf("expected at least 2 occurrences of 'provider = aws.useast1', got:\n%s", s)
+	}
+}
+
+func TestEngine_ProcessFiles_ModuleMoveNestedRename(t *testing.T) {
+	// Move module.foo to module.bar with nested submodules — prefix swap applies to all.
+	dir := t.TempDir()
+	srcLayer := filepath.Join(dir, "layers", "old")
+	dstLayer := filepath.Join(dir, "layers", "new")
+	if err := os.MkdirAll(srcLayer, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(dstLayer, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	migrationContent := `
+description: "Move module.foo to module.bar with nested modules"
+operations:
+  - type: move
+    source_layer: "` + srcLayer + `"
+    destination_layer: "` + dstLayer + `"
+    resources:
+      - from: "module.foo"
+        to: "module.bar"
+`
+	migrationFile := filepath.Join(dir, "001_nested_rename.yaml")
+	if err := os.WriteFile(migrationFile, []byte(migrationContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	mock := testutil.NewMockStateReader(map[string]*tfjson.State{
+		srcLayer: testutil.BuildState(
+			testutil.NewResource("module.foo.aws_instance.web", "aws_instance", "web", nil,
+				map[string]interface{}{"id": "i-123"}),
+			testutil.NewResource("module.foo.module.baz.aws_s3_bucket.logs", "aws_s3_bucket", "logs", nil,
+				map[string]interface{}{"id": "bucket-456"}),
+		),
+	})
+
+	engine := New(Config{StateReader: mock})
+
+	result, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(result.OutputFiles) != 2 {
+		t.Fatalf("expected 2 files (source + dest), got %d", len(result.OutputFiles))
+	}
+
+	dstContent := readLayerFile(t, result.OutputFiles, dstLayer)
+
+	// module.foo.aws_instance.web → module.bar.aws_instance.web
+	if !strings.Contains(dstContent, "module.bar.aws_instance.web") {
+		t.Errorf("expected module.bar.aws_instance.web in destination, got:\n%s", dstContent)
+	}
+
+	// module.foo.module.baz.aws_s3_bucket.logs → module.bar.module.baz.aws_s3_bucket.logs
+	if !strings.Contains(dstContent, "module.bar.module.baz.aws_s3_bucket.logs") {
+		t.Errorf("expected module.bar.module.baz.aws_s3_bucket.logs in destination, got:\n%s", dstContent)
+	}
+
+	// Original prefix should not appear in destination
+	if strings.Contains(dstContent, "module.foo") {
+		t.Errorf("destination should not contain module.foo, got:\n%s", dstContent)
+	}
+
+	// Source layer should have consolidated removed block for module.foo
+	srcContent := readLayerFile(t, result.OutputFiles, srcLayer)
+	if !strings.Contains(srcContent, "module.foo") {
+		t.Error("expected module.foo in source removed block")
+	}
+}
+
+func TestEngine_ProcessFiles_AutoSkipRename(t *testing.T) {
+	// Rename operation with non-existent layer should be auto-skipped in non-strict mode.
+	dir := t.TempDir()
+	nonExistentLayer := filepath.Join(dir, "layers", "gone")
+
+	migrationContent := `
+description: "Rename in missing layer"
+operations:
+  - type: rename
+    layer: "` + nonExistentLayer + `"
+    renames:
+      - from: "module.old"
+        to: "module.new"
+`
+	migrationFile := filepath.Join(dir, "001_rename_gone.yaml")
+	if err := os.WriteFile(migrationFile, []byte(migrationContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	engine := New(Config{StateReader: testutil.NewMockStateReader(nil)})
+
+	result, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
+	if err != nil {
+		t.Fatalf("expected no error (auto-skip), got: %v", err)
+	}
+	if len(result.OutputFiles) != 0 {
+		t.Errorf("expected 0 output files, got %d", len(result.OutputFiles))
+	}
+	if len(result.SkippedFiles) != 1 {
+		t.Fatalf("expected 1 skipped file, got %d", len(result.SkippedFiles))
+	}
+	if result.SkippedFiles[0].Reason != SkipLayerMissing {
+		t.Errorf("expected SkipLayerMissing, got %v", result.SkippedFiles[0].Reason)
+	}
+
+	// Strict mode should error
+	strictEngine := New(Config{StateReader: testutil.NewMockStateReader(nil), Strict: true})
+	_, err = strictEngine.ProcessFiles(context.Background(), []string{migrationFile})
+	if err == nil {
+		t.Fatal("expected error in strict mode for missing layer")
+	}
+}
+
+func TestEngine_ProcessFiles_AutoSkipRemove(t *testing.T) {
+	// Remove operation with non-existent layer should be auto-skipped.
+	dir := t.TempDir()
+	nonExistentLayer := filepath.Join(dir, "layers", "deleted")
+
+	migrationContent := `
+description: "Remove from missing layer"
+operations:
+  - type: remove
+    layer: "` + nonExistentLayer + `"
+    entries:
+      - address: "aws_iam_role.old"
+`
+	migrationFile := filepath.Join(dir, "001_remove_gone.yaml")
+	if err := os.WriteFile(migrationFile, []byte(migrationContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	engine := New(Config{StateReader: testutil.NewMockStateReader(nil)})
+
+	result, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
+	if err != nil {
+		t.Fatalf("expected no error (auto-skip), got: %v", err)
+	}
+	if len(result.OutputFiles) != 0 {
+		t.Errorf("expected 0 output files, got %d", len(result.OutputFiles))
+	}
+	if len(result.SkippedFiles) != 1 {
+		t.Fatalf("expected 1 skipped file, got %d", len(result.SkippedFiles))
+	}
+	if result.SkippedFiles[0].Reason != SkipLayerMissing {
+		t.Errorf("expected SkipLayerMissing, got %v", result.SkippedFiles[0].Reason)
+	}
+}
+
+func TestEngine_ProcessFiles_AutoSkipImport(t *testing.T) {
+	// Import operation with non-existent layer should be auto-skipped.
+	dir := t.TempDir()
+	nonExistentLayer := filepath.Join(dir, "layers", "missing")
+
+	migrationContent := `
+description: "Import to missing layer"
+operations:
+  - type: import
+    layer: "` + nonExistentLayer + `"
+    imports:
+      - address: "aws_db_instance.primary"
+        id: "db-123"
+`
+	migrationFile := filepath.Join(dir, "001_import_gone.yaml")
+	if err := os.WriteFile(migrationFile, []byte(migrationContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	engine := New(Config{StateReader: testutil.NewMockStateReader(nil)})
+
+	result, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
+	if err != nil {
+		t.Fatalf("expected no error (auto-skip), got: %v", err)
+	}
+	if len(result.OutputFiles) != 0 {
+		t.Errorf("expected 0 output files, got %d", len(result.OutputFiles))
+	}
+	if len(result.SkippedFiles) != 1 {
+		t.Fatalf("expected 1 skipped file, got %d", len(result.SkippedFiles))
+	}
+	if result.SkippedFiles[0].Reason != SkipLayerMissing {
+		t.Errorf("expected SkipLayerMissing, got %v", result.SkippedFiles[0].Reason)
+	}
+}
+
+func TestEngine_ProcessFiles_AutoSkipMixedFile(t *testing.T) {
+	// File with multiple operations where one references a missing layer.
+	// Since collectLayerPaths checks all ops, the whole file should be auto-skipped.
+	dir := t.TempDir()
+	existingLayer := filepath.Join(dir, "layers", "net")
+	if err := os.MkdirAll(existingLayer, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	nonExistentLayer := filepath.Join(dir, "layers", "gone")
+
+	migrationContent := `
+description: "Mixed operations with missing layer"
+operations:
+  - type: rename
+    layer: "` + existingLayer + `"
+    renames:
+      - from: "module.old"
+        to: "module.new"
+  - type: move
+    source_layer: "` + nonExistentLayer + `"
+    destination_layer: "` + existingLayer + `"
+    resources:
+      - from: "aws_instance.web"
+        import_id: "i-123"
+`
+	migrationFile := filepath.Join(dir, "001_mixed.yaml")
+	if err := os.WriteFile(migrationFile, []byte(migrationContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	engine := New(Config{StateReader: testutil.NewMockStateReader(nil)})
+
+	result, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
+	if err != nil {
+		t.Fatalf("expected no error (auto-skip), got: %v", err)
+	}
+	if len(result.OutputFiles) != 0 {
+		t.Errorf("expected 0 output files, got %d", len(result.OutputFiles))
+	}
+	if len(result.SkippedFiles) != 1 {
+		t.Fatalf("expected 1 skipped file, got %d", len(result.SkippedFiles))
+	}
+	if result.SkippedFiles[0].Reason != SkipLayerMissing {
+		t.Errorf("expected SkipLayerMissing, got %v", result.SkippedFiles[0].Reason)
+	}
+}
+
+func TestEngine_ProcessFiles_RemoveDestroyOverrides(t *testing.T) {
+	// Test operation-level destroy=true with entry-level override to false.
+	dir := t.TempDir()
+	layerDir := filepath.Join(dir, "layers", "cleanup")
+	if err := os.MkdirAll(layerDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	migrationContent := `
+description: "Remove with destroy overrides"
+operations:
+  - type: remove
+    layer: "` + layerDir + `"
+    destroy: true
+    entries:
+      - address: "aws_iam_role.deprecated"
+      - address: "aws_iam_policy.keep_infra"
+        destroy: false
+      - address: "aws_iam_policy.also_destroy"
+`
+	migrationFile := filepath.Join(dir, "001_remove_destroy.yaml")
+	if err := os.WriteFile(migrationFile, []byte(migrationContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	engine := New(Config{StateReader: testutil.NewMockStateReader(nil)})
+
+	result, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(result.OutputFiles) != 1 {
+		t.Fatalf("expected 1 output file, got %d", len(result.OutputFiles))
+	}
+
+	content, err := os.ReadFile(result.OutputFiles[0])
+	if err != nil {
+		t.Fatalf("reading output: %v", err)
+	}
+	s := string(content)
+
+	// Should have 3 removed blocks
+	if strings.Count(s, "removed {") != 3 {
+		t.Errorf("expected 3 removed blocks, got:\n%s", s)
+	}
+
+	// aws_iam_role.deprecated → destroy = true (from operation level)
+	// aws_iam_policy.keep_infra → destroy = false (entry-level override)
+	// aws_iam_policy.also_destroy → destroy = true (from operation level)
+	if strings.Count(s, "destroy = true") != 2 {
+		t.Errorf("expected 2 'destroy = true' blocks, got:\n%s", s)
+	}
+	if strings.Count(s, "destroy = false") != 1 {
+		t.Errorf("expected 1 'destroy = false' block, got:\n%s", s)
+	}
+}
+
+func TestEngine_ProcessFiles_DryRunContent(t *testing.T) {
+	// Verify dry-run returns an output path containing the expected content description,
+	// but does NOT write the file to disk.
+	dir := t.TempDir()
+	srcLayer := filepath.Join(dir, "layers", "compute")
+	dstLayer := filepath.Join(dir, "layers", "app")
+	if err := os.MkdirAll(srcLayer, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(dstLayer, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	migrationContent := `
+description: "Move in dry-run"
+operations:
+  - type: move
+    source_layer: "` + srcLayer + `"
+    destination_layer: "` + dstLayer + `"
+    resources:
+      - from: "aws_instance.web"
+        import_id: "i-0abc123"
+`
+	migrationFile := filepath.Join(dir, "001_move.yaml")
+	if err := os.WriteFile(migrationFile, []byte(migrationContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	mock := testutil.NewMockStateReader(map[string]*tfjson.State{
+		srcLayer: testutil.BuildState(
+			testutil.NewResource("aws_instance.web", "aws_instance", "web", nil,
+				map[string]interface{}{"id": "i-0abc123"}),
+		),
+	})
+
+	engine := New(Config{
+		StateReader: mock,
+		DryRun:      true,
+	})
+
+	result, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// The move produces 2 files: removed in source, import in destination
+	if len(result.OutputFiles) != 2 {
+		t.Fatalf("expected 2 file paths, got %d: %v", len(result.OutputFiles), result.OutputFiles)
+	}
+
+	// Verify NO files were actually written
+	for _, f := range result.OutputFiles {
+		if _, err := os.Stat(f); !os.IsNotExist(err) {
+			t.Errorf("expected file %q to NOT exist in dry-run mode", f)
+		}
+	}
+
+	// Verify output paths are in the expected layer directories
+	srcFile := findLayerFile(result.OutputFiles, srcLayer)
+	dstFile := findLayerFile(result.OutputFiles, dstLayer)
+	if srcFile == "" {
+		t.Error("expected output file in source layer directory")
+	}
+	if dstFile == "" {
+		t.Error("expected output file in destination layer directory")
+	}
+
+	// Verify no skipped files
+	if len(result.SkippedFiles) != 0 {
+		t.Errorf("expected 0 skipped files, got %d", len(result.SkippedFiles))
+	}
+}
+
+func TestEngine_ProcessFiles_StrictWithValidLayers(t *testing.T) {
+	// Strict mode should succeed when all referenced layers exist on disk.
+	dir := t.TempDir()
+	layerDir := filepath.Join(dir, "layers", "net")
+	if err := os.MkdirAll(layerDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	migrationContent := `
+description: "Rename in strict mode"
+operations:
+  - type: rename
+    layer: "` + layerDir + `"
+    renames:
+      - from: "module.old_vpc"
+        to: "module.new_vpc"
+`
+	migrationFile := filepath.Join(dir, "001_rename.yaml")
+	if err := os.WriteFile(migrationFile, []byte(migrationContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	engine := New(Config{
+		StateReader: testutil.NewMockStateReader(nil),
+		Strict:      true,
+	})
+
+	result, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
+	if err != nil {
+		t.Fatalf("unexpected error in strict mode with valid layers: %v", err)
+	}
+	if len(result.OutputFiles) != 1 {
+		t.Fatalf("expected 1 output file, got %d", len(result.OutputFiles))
+	}
+
+	content, err := os.ReadFile(result.OutputFiles[0])
+	if err != nil {
+		t.Fatalf("reading output: %v", err)
+	}
+	s := string(content)
+	if !strings.Contains(s, "module.old_vpc") {
+		t.Error("expected module.old_vpc in moved block")
+	}
+	if !strings.Contains(s, "module.new_vpc") {
+		t.Error("expected module.new_vpc in moved block")
+	}
+}

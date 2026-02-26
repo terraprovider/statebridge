@@ -419,3 +419,141 @@ func TestConsolidateModuleRemovals_DataSourcesIgnored(t *testing.T) {
 		t.Errorf("expected module.foo consolidated (data source should not prevent consolidation), got %q", removedBlocks[0].From)
 	}
 }
+
+func TestConsolidateModuleRemovals_ThreeLevelNesting(t *testing.T) {
+	// Three levels: module.a.module.b.module.c — all removed → consolidate to module.a
+	srcLayer := "/layers/compute"
+
+	mock := testutil.NewMockStateReader(map[string]*tfjson.State{
+		srcLayer: testutil.BuildState(
+			testutil.NewResource("module.a.aws_instance.root", "aws_instance", "root", "",
+				map[string]interface{}{"id": "i-root"}),
+			testutil.NewResource("module.a.module.b.aws_instance.mid", "aws_instance", "mid", "",
+				map[string]interface{}{"id": "i-mid"}),
+			testutil.NewResource("module.a.module.b.module.c.aws_s3_bucket.deep", "aws_s3_bucket", "deep", "",
+				map[string]interface{}{"id": "bucket-deep"}),
+		),
+	})
+
+	engine := New(Config{StateReader: mock})
+
+	blocks := []generator.Block{
+		makeRemovedBlock("module.a.aws_instance.root", srcLayer, "001.yaml"),
+		makeRemovedBlock("module.a.module.b.aws_instance.mid", srcLayer, "001.yaml"),
+		makeRemovedBlock("module.a.module.b.module.c.aws_s3_bucket.deep", srcLayer, "001.yaml"),
+	}
+
+	result := engine.consolidateModuleRemovals(context.Background(), blocks)
+
+	var removedBlocks []*generator.RemovedBlock
+	for _, b := range result {
+		if rb, ok := b.(*generator.RemovedBlock); ok {
+			removedBlocks = append(removedBlocks, rb)
+		}
+	}
+
+	if len(removedBlocks) != 1 {
+		t.Fatalf("expected 1 consolidated removed block, got %d", len(removedBlocks))
+	}
+	if removedBlocks[0].From != "module.a" {
+		t.Errorf("expected consolidated to module.a, got %q", removedBlocks[0].From)
+	}
+}
+
+func TestConsolidateModuleRemovals_ThreeLevelPartial(t *testing.T) {
+	// Three levels but only module.a.module.b.module.c fully removed;
+	// module.a.module.b has other resources → consolidate only module.c
+	srcLayer := "/layers/compute"
+
+	mock := testutil.NewMockStateReader(map[string]*tfjson.State{
+		srcLayer: testutil.BuildState(
+			testutil.NewResource("module.a.module.b.aws_instance.stays", "aws_instance", "stays", "",
+				map[string]interface{}{"id": "i-stays"}),
+			testutil.NewResource("module.a.module.b.module.c.aws_s3_bucket.deep1", "aws_s3_bucket", "deep1", "",
+				map[string]interface{}{"id": "bucket-deep1"}),
+			testutil.NewResource("module.a.module.b.module.c.aws_s3_bucket.deep2", "aws_s3_bucket", "deep2", "",
+				map[string]interface{}{"id": "bucket-deep2"}),
+		),
+	})
+
+	engine := New(Config{StateReader: mock})
+
+	// Only remove module.c resources, not module.b's own resource
+	blocks := []generator.Block{
+		makeRemovedBlock("module.a.module.b.module.c.aws_s3_bucket.deep1", srcLayer, "001.yaml"),
+		makeRemovedBlock("module.a.module.b.module.c.aws_s3_bucket.deep2", srcLayer, "001.yaml"),
+	}
+
+	result := engine.consolidateModuleRemovals(context.Background(), blocks)
+
+	var removedBlocks []*generator.RemovedBlock
+	for _, b := range result {
+		if rb, ok := b.(*generator.RemovedBlock); ok {
+			removedBlocks = append(removedBlocks, rb)
+		}
+	}
+
+	if len(removedBlocks) != 1 {
+		t.Fatalf("expected 1 consolidated removed block, got %d", len(removedBlocks))
+	}
+	if removedBlocks[0].From != "module.a.module.b.module.c" {
+		t.Errorf("expected consolidated to module.a.module.b.module.c, got %q", removedBlocks[0].From)
+	}
+}
+
+func TestConsolidateModuleRemovals_MixedSiblingConsolidation(t *testing.T) {
+	// Two sibling modules under module.a: module.b (fully removed) and module.c (partially removed).
+	// module.b should consolidate; module.c should not; module.a should not consolidate.
+	srcLayer := "/layers/compute"
+
+	mock := testutil.NewMockStateReader(map[string]*tfjson.State{
+		srcLayer: testutil.BuildState(
+			testutil.NewResource("module.a.module.b.aws_instance.web", "aws_instance", "web", "",
+				map[string]interface{}{"id": "i-b-web"}),
+			testutil.NewResource("module.a.module.c.aws_instance.api", "aws_instance", "api", "",
+				map[string]interface{}{"id": "i-c-api"}),
+			testutil.NewResource("module.a.module.c.aws_s3_bucket.logs", "aws_s3_bucket", "logs", "",
+				map[string]interface{}{"id": "bucket-c-logs"}),
+		),
+	})
+
+	engine := New(Config{StateReader: mock})
+
+	blocks := []generator.Block{
+		// All of module.b removed
+		makeRemovedBlock("module.a.module.b.aws_instance.web", srcLayer, "001.yaml"),
+		// Only part of module.c removed
+		makeRemovedBlock("module.a.module.c.aws_instance.api", srcLayer, "001.yaml"),
+	}
+
+	result := engine.consolidateModuleRemovals(context.Background(), blocks)
+
+	var removedBlocks []*generator.RemovedBlock
+	for _, b := range result {
+		if rb, ok := b.(*generator.RemovedBlock); ok {
+			removedBlocks = append(removedBlocks, rb)
+		}
+	}
+
+	if len(removedBlocks) != 2 {
+		t.Fatalf("expected 2 removed blocks, got %d", len(removedBlocks))
+	}
+
+	fromAddrs := map[string]bool{}
+	for _, rb := range removedBlocks {
+		fromAddrs[rb.From] = true
+	}
+
+	// module.b should be consolidated
+	if !fromAddrs["module.a.module.b"] {
+		t.Error("expected module.a.module.b consolidated")
+	}
+	// module.c should remain individual (not consolidated)
+	if !fromAddrs["module.a.module.c.aws_instance.api"] {
+		t.Error("expected module.a.module.c.aws_instance.api to remain individual")
+	}
+	// module.a should NOT be consolidated (module.c is partial)
+	if fromAddrs["module.a"] {
+		t.Error("module.a should not be consolidated (module.c is partial)")
+	}
+}
