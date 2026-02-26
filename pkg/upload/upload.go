@@ -30,22 +30,24 @@ type GuardChecker func(ctx context.Context, blobContent []byte, layerPath string
 // Manager orchestrates upload of generated migration files to Azure Blob Storage.
 // It discovers backend configuration per layer and manages uploader lifecycle.
 type Manager struct {
-	cred            azcore.TokenCredential
-	uploaderFactory UploaderFactory
-	initArgs        []string
-	uploaderCache   map[string]BlobUploader // keyed by "account|container"
-	force           bool
-	guardChecker    GuardChecker
+	cred              azcore.TokenCredential
+	uploaderFactory   UploaderFactory
+	initArgs          []string
+	uploaderCache     map[string]BlobUploader // keyed by "account|container"
+	uploadedInSession map[string]bool         // track blobs uploaded in this session to avoid cleanup
+	force             bool
+	guardChecker      GuardChecker
 }
 
 // NewManager creates an upload Manager with the given credential and
 // init args (used for backend config discovery in all layers).
 func NewManager(cred azcore.TokenCredential, initArgs []string, opts ...ManagerOption) *Manager {
 	m := &Manager{
-		cred:            cred,
-		uploaderFactory: DefaultUploaderFactory,
-		initArgs:        initArgs,
-		uploaderCache:   make(map[string]BlobUploader),
+		cred:              cred,
+		uploaderFactory:   DefaultUploaderFactory,
+		initArgs:          initArgs,
+		uploaderCache:     make(map[string]BlobUploader),
+		uploadedInSession: make(map[string]bool),
 	}
 	for _, opt := range opts {
 		opt(m)
@@ -195,15 +197,19 @@ func (m *Manager) getUploader(layerPath string) (BlobUploader, error) {
 
 // uploadFile handles guard check, cleanup of old versions, and upload of a single file.
 func (m *Manager) uploadFile(ctx context.Context, uploader BlobUploader, filename string, content []byte, layerPath string) error {
+	blobName := "migrations/" + filename
+
+	// Track this blob as uploaded in current session BEFORE cleanup
+	m.uploadedInSession[blobName] = true
+
 	if err := m.checkActiveBlobs(ctx, uploader, filename, layerPath); err != nil {
 		return err
 	}
 
-	if err := cleanupOldVersions(ctx, uploader, filename); err != nil {
+	if err := m.cleanupOldVersions(ctx, uploader, filename); err != nil {
 		return err
 	}
 
-	blobName := "migrations/" + filename
 	if err := uploader.Upload(ctx, blobName, content); err != nil {
 		return err
 	}
@@ -270,7 +276,10 @@ func (m *Manager) checkActiveBlobs(ctx context.Context, uploader BlobUploader, f
 // "migration.001_move.a1b2c3d4.tf", it lists blobs with prefix
 // "migrations/migration.001_move." and deletes any that end with ".tf"
 // but differ from the new filename.
-func cleanupOldVersions(ctx context.Context, uploader BlobUploader, filename string) error {
+//
+// Blobs uploaded in the current session are skipped - they're part of the
+// current migration set (e.g., different layers from same YAML), not old versions.
+func (m *Manager) cleanupOldVersions(ctx context.Context, uploader BlobUploader, filename string) error {
 	stem, err := YamlStemFromFilename(filename)
 	if err != nil {
 		return err
@@ -284,12 +293,20 @@ func cleanupOldVersions(ctx context.Context, uploader BlobUploader, filename str
 
 	newBlobName := "migrations/" + filename
 	for _, blobName := range existing {
-		if strings.HasSuffix(blobName, ".tf") && blobName != newBlobName {
-			if err := uploader.DeleteBlob(ctx, blobName); err != nil {
-				return fmt.Errorf("removing old version %q: %w", blobName, err)
-			}
-			fmt.Fprintf(os.Stderr, "Removed old version: %s\n", blobName)
+		if !strings.HasSuffix(blobName, ".tf") || blobName == newBlobName {
+			continue
 		}
+
+		// Skip if this blob was uploaded in the current session
+		// (it's part of the current migration set, not an old version)
+		if m.uploadedInSession[blobName] {
+			continue
+		}
+
+		if err := uploader.DeleteBlob(ctx, blobName); err != nil {
+			return fmt.Errorf("removing old version %q: %w", blobName, err)
+		}
+		fmt.Fprintf(os.Stderr, "Removed old version: %s\n", blobName)
 	}
 
 	return nil

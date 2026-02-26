@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/redtenant/tfmigrate/pkg/download"
@@ -29,7 +30,81 @@ func TestE2E_MoveResource(t *testing.T) {
 	rootDir, prefix, vars := setupTestProject(t)
 
 	sharedDir := filepath.Join(rootDir, "layers", "shared")
+
+	updateTfFile(t, sharedDir, "main.tf", `
+terraform {
+	required_providers {
+		azurerm = {
+			source = "hashicorp/azurerm"
+		}
+	}
+}
+
+provider "azurerm" {
+	features {}
+}
+
+resource "azurerm_resource_group" "test" {
+	name     = "${var.prefix}-e2e-shared"
+	location = var.location
+}
+
+resource "azurerm_resource_group" "importable" {
+	name     = "${var.prefix}-e2e-importable"
+	location = var.location
+}
+`)
+
+	updateTfFile(t, sharedDir, "main.tf", `
+terraform {
+	required_providers {
+		azurerm = {
+			source = "hashicorp/azurerm"
+		}
+	}
+}
+
+provider "azurerm" {
+	features {}
+}
+
+resource "azurerm_resource_group" "test" {
+	name     = "${var.prefix}-e2e-shared"
+	location = var.location
+}
+
+resource "azurerm_resource_group" "importable" {
+	name     = "${var.prefix}-e2e-importable"
+	location = var.location
+}
+`)
 	networkingDir := filepath.Join(rootDir, "layers", "networking")
+
+	updateTfFile(t, sharedDir, "main.tf", `
+terraform {
+	required_providers {
+		azurerm = {
+			source = "hashicorp/azurerm"
+		}
+	}
+}
+
+provider "azurerm" {
+	features {}
+}
+
+resource "azurerm_resource_group" "test" {
+	name     = "${var.prefix}-e2e-shared"
+	location = var.location
+}
+
+resource "azurerm_virtual_network" "main" {
+	name                = "${var.prefix}-e2e-vnet"
+	address_space       = ["10.0.0.0/16"]
+	location            = azurerm_resource_group.test.location
+	resource_group_name = azurerm_resource_group.test.name
+}
+`)
 
 	// Initialize and apply shared layer to create resources
 	tofuInit(t, sharedDir)
@@ -95,27 +170,10 @@ resource "azurerm_resource_group" "test" {
   name     = "${var.prefix}-e2e-shared"
   location = var.location
 }
-
-resource "azurerm_network_security_group" "nsgs" {
-  for_each = toset(["alpha", "beta", "gamma"])
-
-  name                = "${var.prefix}-e2e-${each.key}"
-  location            = azurerm_resource_group.test.location
-  resource_group_name = azurerm_resource_group.test.name
-}
-
-resource "azurerm_resource_group" "importable" {
-  name     = "${var.prefix}-e2e-importable"
-  location = var.location
-}
 `)
 
 	// Run the migration engine
-	files := runGenerate(t, []string{migDir})
-	if len(files) == 0 {
-		t.Fatal("expected generated migration files, got none")
-	}
-	t.Logf("Generated %d migration file(s): %v", len(files), files)
+	requireGenerate(t, migDir)
 
 	// Initialize and apply networking layer (import the VNet)
 	tofuInit(t, networkingDir)
@@ -129,10 +187,7 @@ resource "azurerm_resource_group" "importable" {
 	assertResourceNotInState(t, sharedDir, "azurerm_virtual_network.main")
 
 	// Verify clean plans in both layers
-	cleanupMigrationFiles(t, sharedDir)
-	cleanupMigrationFiles(t, networkingDir)
-	assertCleanPlan(t, sharedDir, vars)
-	assertCleanPlan(t, networkingDir, vars)
+	cleanupAndAssertClean(t, vars, sharedDir, networkingDir)
 }
 
 // TestE2E_KeyedMove tests moving for_each resources (NSGs) from
@@ -143,6 +198,33 @@ func TestE2E_KeyedMove(t *testing.T) {
 
 	sharedDir := filepath.Join(rootDir, "layers", "shared")
 	appDir := filepath.Join(rootDir, "layers", "app")
+
+	updateTfFile(t, sharedDir, "main.tf", `
+terraform {
+	required_providers {
+		azurerm = {
+			source = "hashicorp/azurerm"
+		}
+	}
+}
+
+provider "azurerm" {
+	features {}
+}
+
+resource "azurerm_resource_group" "test" {
+	name     = "${var.prefix}-e2e-shared"
+	location = var.location
+}
+
+resource "azurerm_network_security_group" "nsgs" {
+	for_each = toset(["alpha", "beta", "gamma"])
+
+	name                = "${var.prefix}-e2e-${each.key}"
+	location            = azurerm_resource_group.test.location
+	resource_group_name = azurerm_resource_group.test.name
+}
+`)
 
 	// Initialize and apply shared layer
 	tofuInit(t, sharedDir)
@@ -217,26 +299,10 @@ resource "azurerm_resource_group" "test" {
   name     = "${var.prefix}-e2e-shared"
   location = var.location
 }
-
-resource "azurerm_virtual_network" "main" {
-  name                = "${var.prefix}-e2e-vnet"
-  address_space       = ["10.0.0.0/16"]
-  location            = azurerm_resource_group.test.location
-  resource_group_name = azurerm_resource_group.test.name
-}
-
-resource "azurerm_resource_group" "importable" {
-  name     = "${var.prefix}-e2e-importable"
-  location = var.location
-}
 `)
 
 	// Run the migration engine
-	files := runGenerate(t, []string{migDir})
-	if len(files) == 0 {
-		t.Fatal("expected generated migration files, got none")
-	}
-	t.Logf("Generated %d migration file(s): %v", len(files), files)
+	requireGenerate(t, migDir)
 
 	// Initialize and apply app layer (import NSGs with new keys)
 	tofuInit(t, appDir)
@@ -251,10 +317,387 @@ resource "azurerm_resource_group" "importable" {
 	}
 
 	// Verify clean plans
-	cleanupMigrationFiles(t, sharedDir)
-	cleanupMigrationFiles(t, appDir)
-	assertCleanPlan(t, sharedDir, vars)
-	assertCleanPlan(t, appDir, vars)
+	cleanupAndAssertClean(t, vars, sharedDir, appDir)
+}
+
+// TestE2E_ModuleMove tests moving a module between layers.
+func TestE2E_ModuleMove(t *testing.T) {
+	t.Parallel()
+	rootDir, prefix, vars := setupTestProject(t)
+
+	sharedDir := filepath.Join(rootDir, "layers", "shared")
+	appDir := filepath.Join(rootDir, "layers", "app")
+
+	updateTfFile(t, sharedDir, "main.tf", `
+terraform {
+  required_providers {
+    azurerm = {
+      source = "hashicorp/azurerm"
+    }
+  }
+}
+
+provider "azurerm" {
+  features {}
+}
+
+resource "azurerm_resource_group" "test" {
+  name     = "${var.prefix}-e2e-shared"
+  location = var.location
+}
+
+module "mod_nsg" {
+  source              = "../../modules/nsg"
+  prefix              = var.prefix
+  suffix              = "module"
+  location            = var.location
+  resource_group_name = azurerm_resource_group.test.name
+}
+`)
+
+	// Initialize and apply shared layer
+	tofuInit(t, sharedDir)
+	tofuApply(t, sharedDir, vars)
+	t.Cleanup(func() {
+		tofuDestroy(t, appDir, vars)
+		tofuDestroy(t, sharedDir, vars)
+	})
+
+	// Verify module resource exists in shared state
+	assertResourceInState(t, sharedDir, "module.mod_nsg.azurerm_network_security_group.nsg")
+
+	// Write module move migration YAML with absolute layer paths
+	migDir := writeMigration(t, rootDir, "001_move_module.yaml", fmt.Sprintf(`
+description: "Move module NSG from shared to app"
+operations:
+  - type: move
+    source_layer: "%s"
+    destination_layer: "%s"
+    resources:
+      - from: "module.mod_nsg"
+`, sharedDir, appDir))
+
+	// Add the module to the app layer
+	updateTfFile(t, appDir, "main.tf", fmt.Sprintf(`
+terraform {
+  required_providers {
+    azurerm = {
+      source = "hashicorp/azurerm"
+    }
+  }
+}
+
+provider "azurerm" {
+  features {}
+}
+
+module "mod_nsg" {
+  source              = "../../modules/nsg"
+  prefix              = var.prefix
+  suffix              = "module"
+  location            = var.location
+  resource_group_name = "%s-e2e-shared"
+}
+`, prefix))
+
+	// Remove the module from shared layer config
+	updateTfFile(t, sharedDir, "main.tf", `
+terraform {
+  required_providers {
+    azurerm = {
+      source = "hashicorp/azurerm"
+    }
+  }
+}
+
+provider "azurerm" {
+  features {}
+}
+
+resource "azurerm_resource_group" "test" {
+  name     = "${var.prefix}-e2e-shared"
+  location = var.location
+}
+`)
+
+	// Run the migration engine
+	files := requireGenerate(t, migDir)
+	var sharedMigration string
+	for _, file := range files {
+		if filepath.Dir(file) == sharedDir {
+			sharedMigration = file
+			break
+		}
+	}
+	if sharedMigration == "" {
+		t.Fatal("expected a generated migration file in the shared layer")
+	}
+	assertFileContains(t, sharedMigration, "from = module.mod_nsg")
+
+	// Initialize and apply app layer (import module resources)
+	tofuInit(t, appDir)
+	tofuApply(t, appDir, vars)
+
+	// Apply shared layer (remove module from state)
+	tofuApply(t, sharedDir, vars)
+
+	// Verify: module resources are in app state, not in shared state
+	assertResourceInState(t, appDir, "module.mod_nsg.azurerm_network_security_group.nsg")
+	assertResourceNotInState(t, sharedDir, "module.mod_nsg.azurerm_network_security_group.nsg")
+
+	// Verify clean plans
+	cleanupAndAssertClean(t, vars, sharedDir, appDir)
+}
+
+// TestE2E_AllResourcesMoveWithOverridesOmit tests a bulk move with overrides and omit entries.
+func TestE2E_AllResourcesMoveWithOverridesOmit(t *testing.T) {
+	t.Parallel()
+	rootDir, _, vars := setupTestProject(t)
+
+	sharedDir := filepath.Join(rootDir, "layers", "shared")
+	appDir := filepath.Join(rootDir, "layers", "app")
+
+	updateTfFile(t, sharedDir, "main.tf", `
+terraform {
+  required_providers {
+    azurerm = {
+      source = "hashicorp/azurerm"
+    }
+  }
+}
+
+provider "azurerm" {
+  features {}
+}
+
+resource "azurerm_resource_group" "bulk" {
+  name     = "${var.prefix}-e2e-bulk"
+  location = var.location
+}
+
+resource "azurerm_network_security_group" "bulk" {
+  name                = "${var.prefix}-e2e-bulk-nsg"
+  location            = azurerm_resource_group.bulk.location
+  resource_group_name = azurerm_resource_group.bulk.name
+}
+
+resource "azurerm_network_security_group" "omit" {
+  name                = "${var.prefix}-e2e-omit-nsg"
+  location            = azurerm_resource_group.bulk.location
+  resource_group_name = azurerm_resource_group.bulk.name
+}
+`)
+
+	// Initialize and apply shared layer
+	tofuInit(t, sharedDir)
+	tofuApply(t, sharedDir, vars)
+	t.Cleanup(func() {
+		tofuDestroy(t, appDir, vars)
+		tofuDestroy(t, sharedDir, vars)
+	})
+
+	assertResourceInState(t, sharedDir, "azurerm_resource_group.bulk")
+	assertResourceInState(t, sharedDir, "azurerm_network_security_group.bulk")
+	assertResourceInState(t, sharedDir, "azurerm_network_security_group.omit")
+
+	// Write bulk move migration YAML
+	migDir := writeMigration(t, rootDir, "001_move_all.yaml", fmt.Sprintf(`
+description: "Move all resources with overrides and omit"
+operations:
+  - type: move
+    source_layer: "%s"
+    destination_layer: "%s"
+    all_resources: true
+    overrides:
+      - from: "azurerm_network_security_group.bulk"
+        to: "azurerm_network_security_group.renamed"
+    omit:
+      - address: "azurerm_network_security_group.omit"
+        destroy: true
+`, sharedDir, appDir))
+
+	// Add resources to app layer with override name
+	updateTfFile(t, appDir, "main.tf", `
+terraform {
+  required_providers {
+    azurerm = {
+      source = "hashicorp/azurerm"
+    }
+  }
+}
+
+provider "azurerm" {
+  features {}
+}
+
+resource "azurerm_resource_group" "bulk" {
+  name     = "${var.prefix}-e2e-bulk"
+  location = var.location
+}
+
+resource "azurerm_network_security_group" "renamed" {
+  name                = "${var.prefix}-e2e-bulk-nsg"
+  location            = azurerm_resource_group.bulk.location
+  resource_group_name = azurerm_resource_group.bulk.name
+}
+`)
+
+	// Remove resources from shared layer config
+	updateTfFile(t, sharedDir, "main.tf", `
+terraform {
+  required_providers {
+    azurerm = {
+      source = "hashicorp/azurerm"
+    }
+  }
+}
+
+provider "azurerm" {
+  features {}
+}
+`)
+
+	// Run the migration engine
+	requireGenerate(t, migDir)
+
+	// Initialize and apply app layer (import resources)
+	tofuInit(t, appDir)
+	tofuApply(t, appDir, vars)
+
+	// Apply shared layer (remove resources from state)
+	tofuApply(t, sharedDir, vars)
+
+	// Verify: resources are in app state with override name, omitted is gone
+	assertResourceInState(t, appDir, "azurerm_resource_group.bulk")
+	assertResourceInState(t, appDir, "azurerm_network_security_group.renamed")
+	assertResourceNotInState(t, appDir, "azurerm_network_security_group.omit")
+	assertResourceNotInState(t, sharedDir, "azurerm_network_security_group.bulk")
+
+	// Verify clean plans
+	cleanupAndAssertClean(t, vars, sharedDir, appDir)
+}
+
+// TestE2E_KeyPatternMove tests key pattern mapping with prefix and catch-all rules.
+func TestE2E_KeyPatternMove(t *testing.T) {
+	t.Parallel()
+	rootDir, _, vars := setupTestProject(t)
+
+	sharedDir := filepath.Join(rootDir, "layers", "shared")
+	appDir := filepath.Join(rootDir, "layers", "app")
+
+	updateTfFile(t, sharedDir, "main.tf", `
+terraform {
+  required_providers {
+    azurerm = {
+      source = "hashicorp/azurerm"
+    }
+  }
+}
+
+provider "azurerm" {
+  features {}
+}
+
+resource "azurerm_resource_group" "test" {
+  name     = "${var.prefix}-e2e-shared"
+  location = var.location
+}
+
+resource "azurerm_network_security_group" "nsgs" {
+  for_each = toset(["app_alpha", "app_beta", "core_gamma"])
+
+  name                = "${var.prefix}-e2e-${each.key}"
+  location            = azurerm_resource_group.test.location
+  resource_group_name = azurerm_resource_group.test.name
+}
+`)
+
+	// Initialize and apply shared layer
+	tofuInit(t, sharedDir)
+	tofuApply(t, sharedDir, vars)
+	t.Cleanup(func() {
+		tofuDestroy(t, appDir, vars)
+		tofuDestroy(t, sharedDir, vars)
+	})
+
+	// Write key-pattern move migration YAML
+	migDir := writeMigration(t, rootDir, "001_move_nsgs_key_patterns.yaml", fmt.Sprintf(`
+description: "Move NSGs with key patterns"
+operations:
+  - type: move
+    source_layer: "%s"
+    destination_layer: "%s"
+    resources:
+      - from: "azurerm_network_security_group.nsgs"
+        keys:
+          "app_*": '{{ .Key | trimPrefix "app_" }}'
+          "*": '{{ .Key }}'
+`, sharedDir, appDir))
+
+	// Add NSG resource to the app layer with new keys
+	updateTfFile(t, appDir, "main.tf", `
+terraform {
+  required_providers {
+    azurerm = {
+      source = "hashicorp/azurerm"
+    }
+  }
+}
+
+provider "azurerm" {
+  features {}
+}
+
+resource "azurerm_network_security_group" "nsgs" {
+  for_each = {
+    alpha      = "app_alpha"
+    beta       = "app_beta"
+    core_gamma = "core_gamma"
+  }
+
+  name                = "${var.prefix}-e2e-${each.value}"
+  resource_group_name = "${var.prefix}-e2e-shared"
+  location            = var.location
+}
+`)
+
+	// Remove NSGs from shared layer config
+	updateTfFile(t, sharedDir, "main.tf", `
+terraform {
+  required_providers {
+    azurerm = {
+      source = "hashicorp/azurerm"
+    }
+  }
+}
+
+provider "azurerm" {
+  features {}
+}
+
+resource "azurerm_resource_group" "test" {
+  name     = "${var.prefix}-e2e-shared"
+  location = var.location
+}
+`)
+
+	// Run the migration engine
+	requireGenerate(t, migDir)
+
+	// Initialize and apply app layer (import NSGs with new keys)
+	tofuInit(t, appDir)
+	tofuApply(t, appDir, vars)
+
+	// Apply shared layer (remove NSGs from state)
+	tofuApply(t, sharedDir, vars)
+
+	// Verify: NSGs in app state with remapped keys
+	for _, key := range []string{"alpha", "beta", "core_gamma"} {
+		assertResourceInState(t, appDir, fmt.Sprintf(`azurerm_network_security_group.nsgs["%s"]`, key))
+	}
+
+	// Verify clean plans
+	cleanupAndAssertClean(t, vars, sharedDir, appDir)
 }
 
 // TestE2E_RenameResource tests renaming a resource within a single layer.
@@ -304,21 +747,6 @@ resource "azurerm_resource_group" "test" {
   location = var.location
 }
 
-resource "azurerm_network_security_group" "nsgs" {
-  for_each = toset(["alpha", "beta", "gamma"])
-
-  name                = "${var.prefix}-e2e-${each.key}"
-  location            = azurerm_resource_group.test.location
-  resource_group_name = azurerm_resource_group.test.name
-}
-
-resource "azurerm_virtual_network" "main" {
-  name                = "${var.prefix}-e2e-vnet"
-  address_space       = ["10.0.0.0/16"]
-  location            = azurerm_resource_group.test.location
-  resource_group_name = azurerm_resource_group.test.name
-}
-
 resource "azurerm_resource_group" "secondary" {
   name     = "${var.prefix}-e2e-importable"
   location = var.location
@@ -326,11 +754,7 @@ resource "azurerm_resource_group" "secondary" {
 `)
 
 	// Run the migration engine
-	files := runGenerate(t, []string{migDir})
-	if len(files) == 0 {
-		t.Fatal("expected generated migration files, got none")
-	}
-	t.Logf("Generated %d migration file(s): %v", len(files), files)
+	requireGenerate(t, migDir)
 
 	// Apply the rename
 	tofuApply(t, sharedDir, vars)
@@ -340,8 +764,7 @@ resource "azurerm_resource_group" "secondary" {
 	assertResourceInState(t, sharedDir, "azurerm_resource_group.secondary")
 
 	// Verify clean plan
-	cleanupMigrationFiles(t, sharedDir)
-	assertCleanPlan(t, sharedDir, vars)
+	cleanupAndAssertClean(t, vars, sharedDir)
 }
 
 // TestE2E_RemoveAndImport tests removing a resource from state (keeping the
@@ -353,6 +776,30 @@ func TestE2E_RemoveAndImport(t *testing.T) {
 
 	sharedDir := filepath.Join(rootDir, "layers", "shared")
 	subscriptionID := os.Getenv("ARM_SUBSCRIPTION_ID")
+
+	updateTfFile(t, sharedDir, "main.tf", `
+terraform {
+	required_providers {
+		azurerm = {
+			source = "hashicorp/azurerm"
+		}
+	}
+}
+
+provider "azurerm" {
+	features {}
+}
+
+resource "azurerm_resource_group" "test" {
+	name     = "${var.prefix}-e2e-shared"
+	location = var.location
+}
+
+resource "azurerm_resource_group" "importable" {
+	name     = "${var.prefix}-e2e-importable"
+	location = var.location
+}
+`)
 
 	// Initialize and apply shared layer
 	tofuInit(t, sharedDir)
@@ -394,29 +841,10 @@ resource "azurerm_resource_group" "test" {
   name     = "${var.prefix}-e2e-shared"
   location = var.location
 }
-
-resource "azurerm_network_security_group" "nsgs" {
-  for_each = toset(["alpha", "beta", "gamma"])
-
-  name                = "${var.prefix}-e2e-${each.key}"
-  location            = azurerm_resource_group.test.location
-  resource_group_name = azurerm_resource_group.test.name
-}
-
-resource "azurerm_virtual_network" "main" {
-  name                = "${var.prefix}-e2e-vnet"
-  address_space       = ["10.0.0.0/16"]
-  location            = azurerm_resource_group.test.location
-  resource_group_name = azurerm_resource_group.test.name
-}
 `)
 
 	// Run the migration engine for remove
-	files := runGenerate(t, []string{migDir})
-	if len(files) == 0 {
-		t.Fatal("expected generated migration files for remove, got none")
-	}
-	t.Logf("Remove phase: generated %d migration file(s)", len(files))
+	requireGenerate(t, migDir)
 
 	// Apply the removal
 	tofuApply(t, sharedDir, vars)
@@ -425,8 +853,7 @@ resource "azurerm_virtual_network" "main" {
 	assertResourceNotInState(t, sharedDir, "azurerm_resource_group.importable")
 
 	// Verify clean plan (resource removed from both config and state)
-	cleanupMigrationFiles(t, sharedDir)
-	assertCleanPlan(t, sharedDir, vars)
+	cleanupAndAssertClean(t, vars, sharedDir)
 
 	// --- Phase 2: Import ---
 
@@ -466,21 +893,6 @@ resource "azurerm_resource_group" "test" {
   location = var.location
 }
 
-resource "azurerm_network_security_group" "nsgs" {
-  for_each = toset(["alpha", "beta", "gamma"])
-
-  name                = "${var.prefix}-e2e-${each.key}"
-  location            = azurerm_resource_group.test.location
-  resource_group_name = azurerm_resource_group.test.name
-}
-
-resource "azurerm_virtual_network" "main" {
-  name                = "${var.prefix}-e2e-vnet"
-  address_space       = ["10.0.0.0/16"]
-  location            = azurerm_resource_group.test.location
-  resource_group_name = azurerm_resource_group.test.name
-}
-
 resource "azurerm_resource_group" "importable" {
   name     = "${var.prefix}-e2e-importable"
   location = var.location
@@ -488,11 +900,7 @@ resource "azurerm_resource_group" "importable" {
 `)
 
 	// Run the migration engine for import
-	files = runGenerate(t, []string{migDir})
-	if len(files) == 0 {
-		t.Fatal("expected generated migration files for import, got none")
-	}
-	t.Logf("Import phase: generated %d migration file(s)", len(files))
+	requireGenerate(t, migDir)
 
 	// Apply the import
 	tofuApply(t, sharedDir, vars)
@@ -501,8 +909,7 @@ resource "azurerm_resource_group" "importable" {
 	assertResourceInState(t, sharedDir, "azurerm_resource_group.importable")
 
 	// Verify clean plan
-	cleanupMigrationFiles(t, sharedDir)
-	assertCleanPlan(t, sharedDir, vars)
+	cleanupAndAssertClean(t, vars, sharedDir)
 }
 
 // TestE2E_ConditionSkip tests that the condition system correctly skips
@@ -580,21 +987,6 @@ resource "azurerm_resource_group" "test" {
   location = var.location
 }
 
-resource "azurerm_network_security_group" "nsgs" {
-  for_each = toset(["alpha", "beta", "gamma"])
-
-  name                = "${var.prefix}-e2e-${each.key}"
-  location            = azurerm_resource_group.test.location
-  resource_group_name = azurerm_resource_group.test.name
-}
-
-resource "azurerm_virtual_network" "main" {
-  name                = "${var.prefix}-e2e-vnet"
-  address_space       = ["10.0.0.0/16"]
-  location            = azurerm_resource_group.test.location
-  resource_group_name = azurerm_resource_group.test.name
-}
-
 resource "azurerm_resource_group" "secondary" {
   name     = "${var.prefix}-e2e-importable"
   location = var.location
@@ -618,8 +1010,7 @@ resource "azurerm_resource_group" "secondary" {
 	assertResourceNotInState(t, sharedDir, "azurerm_resource_group.importable")
 
 	// Verify clean plan
-	cleanupMigrationFiles(t, sharedDir)
-	assertCleanPlan(t, sharedDir, vars)
+	cleanupAndAssertClean(t, vars, sharedDir)
 }
 
 // TestE2E_UploadDownload tests the full upload/download pipeline: generate
@@ -638,6 +1029,32 @@ func TestE2E_UploadDownload(t *testing.T) {
 
 	sharedDir := filepath.Join(rootDir, "layers", "shared")
 	networkingDir := filepath.Join(rootDir, "layers", "networking")
+
+	updateTfFile(t, sharedDir, "main.tf", `
+terraform {
+	required_providers {
+		azurerm = {
+			source = "hashicorp/azurerm"
+		}
+	}
+}
+
+provider "azurerm" {
+	features {}
+}
+
+resource "azurerm_resource_group" "test" {
+	name     = "${var.prefix}-e2e-shared"
+	location = var.location
+}
+
+resource "azurerm_virtual_network" "main" {
+	name                = "${var.prefix}-e2e-vnet"
+	address_space       = ["10.0.0.0/16"]
+	location            = azurerm_resource_group.test.location
+	resource_group_name = azurerm_resource_group.test.name
+}
+`)
 
 	// Initialize and apply shared layer to create resources
 	tofuInit(t, sharedDir)
@@ -701,27 +1118,10 @@ resource "azurerm_resource_group" "test" {
   name     = "${var.prefix}-e2e-shared"
   location = var.location
 }
-
-resource "azurerm_network_security_group" "nsgs" {
-  for_each = toset(["alpha", "beta", "gamma"])
-
-  name                = "${var.prefix}-e2e-${each.key}"
-  location            = azurerm_resource_group.test.location
-  resource_group_name = azurerm_resource_group.test.name
-}
-
-resource "azurerm_resource_group" "importable" {
-  name     = "${var.prefix}-e2e-importable"
-  location = var.location
-}
 `)
 
 	// Generate migration files (writes to disk in both layers)
-	files := runGenerate(t, []string{migDir})
-	if len(files) == 0 {
-		t.Fatal("expected generated migration files, got none")
-	}
-	t.Logf("Generated %d migration file(s): %v", len(files), files)
+	requireGenerate(t, migDir)
 
 	// Initialize networking layer (needed for state reads during download condition evaluation)
 	tofuInit(t, networkingDir)
@@ -775,8 +1175,176 @@ resource "azurerm_resource_group" "importable" {
 	assertResourceNotInState(t, sharedDir, "azurerm_virtual_network.main")
 
 	// Verify clean plans in both layers
-	cleanupMigrationFiles(t, sharedDir)
+	cleanupAndAssertClean(t, vars, sharedDir, networkingDir)
+}
+
+// TestE2E_UploadGuard tests the upload guard that prevents overwriting active migrations.
+func TestE2E_UploadGuard(t *testing.T) {
+	t.Parallel()
+
+	storageAccountName := os.Getenv("E2E_STORAGE_ACCOUNT_NAME")
+	if storageAccountName == "" {
+		t.Skip("skipping: E2E_STORAGE_ACCOUNT_NAME not set")
+	}
+
+	rootDir, prefix, vars := setupTestProject(t)
+	ctx := context.Background()
+
+	sharedDir := filepath.Join(rootDir, "layers", "shared")
+	networkingDir := filepath.Join(rootDir, "layers", "networking")
+
+	updateTfFile(t, sharedDir, "main.tf", `
+terraform {
+  required_providers {
+    azurerm = {
+      source = "hashicorp/azurerm"
+    }
+  }
+}
+
+provider "azurerm" {
+  features {}
+}
+
+resource "azurerm_resource_group" "test" {
+  name     = "${var.prefix}-e2e-shared"
+  location = var.location
+}
+
+resource "azurerm_network_security_group" "guard" {
+  name                = "${var.prefix}-e2e-guard-nsg"
+  location            = azurerm_resource_group.test.location
+  resource_group_name = azurerm_resource_group.test.name
+}
+`)
+
+	// Initialize and apply shared layer to create resources
+	tofuInit(t, sharedDir)
+	tofuApply(t, sharedDir, vars)
+	t.Cleanup(func() {
+		tofuDestroy(t, networkingDir, vars)
+		tofuDestroy(t, sharedDir, vars)
+	})
+
+	assertResourceInState(t, sharedDir, "azurerm_network_security_group.guard")
+
+	// Write migration YAML to move NSG to networking
+	migDir := writeMigration(t, rootDir, "001_guard_move.yaml", fmt.Sprintf(`
+description: "Move guard NSG from shared to networking"
+operations:
+  - type: move
+    source_layer: "%s"
+    destination_layer: "%s"
+    resources:
+      - from: "azurerm_network_security_group.guard"
+`, sharedDir, networkingDir))
+
+	// Add NSG resource to the networking layer
+	updateTfFile(t, networkingDir, "main.tf", fmt.Sprintf(`
+terraform {
+  required_providers {
+    azurerm = {
+      source = "hashicorp/azurerm"
+    }
+  }
+}
+
+provider "azurerm" {
+  features {}
+}
+
+resource "azurerm_network_security_group" "guard" {
+  name                = "${var.prefix}-e2e-guard-nsg"
+  location            = var.location
+  resource_group_name = "%s-e2e-shared"
+}
+`, prefix))
+
+	// Remove NSG from shared layer config
+	updateTfFile(t, sharedDir, "main.tf", `
+terraform {
+  required_providers {
+    azurerm = {
+      source = "hashicorp/azurerm"
+    }
+  }
+}
+
+provider "azurerm" {
+  features {}
+}
+
+resource "azurerm_resource_group" "test" {
+  name     = "${var.prefix}-e2e-shared"
+  location = var.location
+}
+`)
+
+	// Generate migration files (writes to disk in both layers)
+	files := runGenerate(t, []string{migDir})
+	if len(files) == 0 {
+		t.Fatal("expected generated migration files, got none")
+	}
+
+	// Initialize networking layer for guard state evaluation
+	tofuInit(t, networkingDir)
+
+	// Create unique blob container for this test
+	containerName := prefix
+	cred := getCredential(t)
+
+	createContainer(t, ctx, cred, storageAccountName, containerName)
+	t.Cleanup(func() {
+		deleteContainer(t, context.Background(), cred, storageAccountName, containerName)
+	})
+
+	initArgs := []string{
+		"-backend-config=storage_account_name=" + storageAccountName,
+		"-backend-config=container_name=" + containerName,
+	}
+
+	guardedMgr := upload.NewManager(cred, initArgs, upload.WithTofuPath(tofuExecPath(t), initArgs))
+	if err := guardedMgr.UploadFromDisk(ctx, []string{networkingDir}); err != nil {
+		t.Fatalf("initial upload failed: %v", err)
+	}
+
+	// Remove local migration files and regenerate with a different metadata set
 	cleanupMigrationFiles(t, networkingDir)
-	assertCleanPlan(t, sharedDir, vars)
-	assertCleanPlan(t, networkingDir, vars)
+	cleanupMigrationFiles(t, sharedDir)
+
+	writeMigration(t, rootDir, "001_guard_move.yaml", fmt.Sprintf(`
+description: "Move guard NSG from shared to networking (guarded)"
+condition:
+  layer_exists:
+    - "%s"
+operations:
+  - type: move
+    source_layer: "%s"
+    destination_layer: "%s"
+    resources:
+      - from: "azurerm_network_security_group.guard"
+`, sharedDir, sharedDir, networkingDir))
+
+	files = runGenerate(t, []string{migDir})
+	if len(files) == 0 {
+		t.Fatal("expected regenerated migration files, got none")
+	}
+
+	// Guard should refuse to overwrite the active migration
+	if err := guardedMgr.UploadFromDisk(ctx, []string{networkingDir}); err == nil {
+		t.Fatal("expected guard to refuse overwrite, but upload succeeded")
+	} else if !strings.Contains(err.Error(), "refusing to overwrite") {
+		t.Fatalf("unexpected guard error: %v", err)
+	}
+
+	// Force should bypass guard and succeed
+	forceMgr := upload.NewManager(
+		cred,
+		initArgs,
+		upload.WithTofuPath(tofuExecPath(t), initArgs),
+		upload.WithForce(true),
+	)
+	if err := forceMgr.UploadFromDisk(ctx, []string{networkingDir}); err != nil {
+		t.Fatalf("force upload failed: %v", err)
+	}
 }
