@@ -306,3 +306,34 @@ func YamlStemFromFilename(filename string) (string, error) {
 	}
 	return base[:lastDot], nil
 }
+
+// PruneStems removes migration blobs matching the given stems from the specified layers.
+// For each stem, it lists blobs with prefix "migrations/migration.<stem>." and deletes
+// all matching .tf files. Returns the total number of blobs pruned.
+func (m *Manager) PruneStems(ctx context.Context, stems []string, layerPaths []string) (int, error) {
+	var totalPruned int
+	for _, layerPath := range layerPaths {
+		uploader, err := m.getUploader(layerPath)
+		if err != nil {
+			return totalPruned, fmt.Errorf("getting uploader for %q: %w", layerPath, err)
+		}
+		for _, stem := range stems {
+			prefix := "migrations/migration." + stem + "."
+			blobs, err := uploader.ListBlobs(ctx, prefix)
+			if err != nil {
+				return totalPruned, fmt.Errorf("listing blobs for stem %q in %q: %w", stem, layerPath, err)
+			}
+			for _, blob := range blobs {
+				if !strings.HasSuffix(blob, ".tf") {
+					continue
+				}
+				if err := uploader.DeleteBlob(ctx, blob); err != nil {
+					return totalPruned, fmt.Errorf("deleting blob %q: %w", blob, err)
+				}
+				fmt.Fprintf(os.Stderr, "  Auto-pruned: %s\n", filepath.Base(blob))
+				totalPruned++
+			}
+		}
+	}
+	return totalPruned, nil
+}

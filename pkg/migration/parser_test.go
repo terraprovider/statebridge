@@ -650,6 +650,68 @@ func TestFullAddress(t *testing.T) {
 	}
 }
 
+func TestParseFile_WithStatusRetired(t *testing.T) {
+	content := `
+description: "Old migration"
+status: retired
+operations:
+  - type: remove
+    layer: "./l"
+    entries:
+      - address: "aws_instance.x"
+`
+	path := writeTestFile(t, "010_retired.yaml", content)
+	parser := NewParser()
+
+	mf, err := parser.ParseFile(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if mf.Status != "retired" {
+		t.Errorf("expected status %q, got %q", "retired", mf.Status)
+	}
+}
+
+func TestParseFile_WithLayerConditions(t *testing.T) {
+	content := `
+description: "Move with layer conditions"
+condition:
+  layer_exists:
+    - "./layers/source"
+  layer_not_exists:
+    - "./layers/deprecated"
+operations:
+  - type: remove
+    layer: "./l"
+    entries:
+      - address: "aws_instance.x"
+`
+	path := writeTestFile(t, "011_layer_cond.yaml", content)
+	parser := NewParser()
+
+	mf, err := parser.ParseFile(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if mf.Condition == nil {
+		t.Fatal("expected condition to be parsed")
+	}
+	if len(mf.Condition.LayerExists) != 1 {
+		t.Fatalf("expected 1 layer_exists entry, got %d", len(mf.Condition.LayerExists))
+	}
+	if mf.Condition.LayerExists[0] != "./layers/source" {
+		t.Errorf("expected layer_exists[0] %q, got %q", "./layers/source", mf.Condition.LayerExists[0])
+	}
+	if len(mf.Condition.LayerNotExists) != 1 {
+		t.Fatalf("expected 1 layer_not_exists entry, got %d", len(mf.Condition.LayerNotExists))
+	}
+	if mf.Condition.LayerNotExists[0] != "./layers/deprecated" {
+		t.Errorf("expected layer_not_exists[0] %q, got %q", "./layers/deprecated", mf.Condition.LayerNotExists[0])
+	}
+}
+
 // writeTestFile creates a temporary YAML file and returns its path.
 func writeTestFile(t *testing.T, name, content string) string {
 	t.Helper()

@@ -1029,6 +1029,101 @@ func TestValidate_OmitOverlapWithOverrides(t *testing.T) {
 	}
 }
 
+func TestValidate_StatusRetired(t *testing.T) {
+	mf := &MigrationFile{
+		Status: StatusRetired,
+		// No description, no operations — retired skips all validation.
+	}
+
+	errs := Validate(mf)
+	if len(errs) != 0 {
+		t.Errorf("expected no errors for retired status, got %v", errs)
+	}
+}
+
+func TestValidate_UnknownStatus(t *testing.T) {
+	mf := &MigrationFile{
+		Status:      "draft",
+		Description: "Bad status",
+		Operations: []Operation{
+			{
+				Type:    OpRemove,
+				Layer:   "./l",
+				Entries: []RemoveEntry{{Address: "aws_instance.x"}},
+			},
+		},
+	}
+
+	errs := Validate(mf)
+	if !hasError(errs, "status") {
+		t.Errorf("expected validation error for unknown status, got %v", errs)
+	}
+}
+
+func TestValidate_LayerExistsEmpty(t *testing.T) {
+	mf := &MigrationFile{
+		Description: "Layer exists empty path",
+		Condition: &Condition{
+			LayerExists: []string{"./valid/path", ""},
+		},
+		Operations: []Operation{
+			{
+				Type:    OpRemove,
+				Layer:   "./l",
+				Entries: []RemoveEntry{{Address: "aws_instance.x"}},
+			},
+		},
+	}
+
+	errs := Validate(mf)
+	if !hasError(errs, "condition.layer_exists[1]") {
+		t.Errorf("expected validation error for empty layer_exists path, got %v", errs)
+	}
+}
+
+func TestValidate_LayerNotExistsEmpty(t *testing.T) {
+	mf := &MigrationFile{
+		Description: "Layer not exists empty path",
+		Condition: &Condition{
+			LayerNotExists: []string{""},
+		},
+		Operations: []Operation{
+			{
+				Type:    OpRemove,
+				Layer:   "./l",
+				Entries: []RemoveEntry{{Address: "aws_instance.x"}},
+			},
+		},
+	}
+
+	errs := Validate(mf)
+	if !hasError(errs, "condition.layer_not_exists[0]") {
+		t.Errorf("expected validation error for empty layer_not_exists path, got %v", errs)
+	}
+}
+
+func TestValidate_LayerConditionsValid(t *testing.T) {
+	mf := &MigrationFile{
+		Description: "Valid layer conditions",
+		Condition: &Condition{
+			LayerExists:    []string{"./layers/source"},
+			LayerNotExists: []string{"./layers/deprecated"},
+		},
+		Operations: []Operation{
+			{
+				Type:    OpRemove,
+				Layer:   "./l",
+				Entries: []RemoveEntry{{Address: "aws_instance.x"}},
+			},
+		},
+	}
+
+	errs := Validate(mf)
+	if len(errs) != 0 {
+		t.Errorf("expected no errors for valid layer conditions, got %v", errs)
+	}
+}
+
 func TestValidate_OmitWithDestroy(t *testing.T) {
 	mf := &MigrationFile{
 		Description: "Omit with destroy",

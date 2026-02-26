@@ -91,8 +91,11 @@ tfmigrate generate migrations/001_move.yaml other_migrations/
 | `--upload` | Upload generated files to Azure Blob Storage after generation |
 | `--backend-config` | Backend configuration passed to tofu init, as `key=value` or path to a file (repeatable) |
 | `--force` | Force upload even if existing migrations are still active (overwrite protection bypass; only relevant with `--upload`) |
+| `--strict` | Treat missing layer directories as hard errors instead of auto-skipping |
 
 ### Dry Run
+
+By default, migration files referencing non-existent layer directories (e.g., `source_layer` that was deleted after a migration was applied) are automatically skipped with a message. Use `--strict` to make missing layers a hard error.
 
 Preview what would be generated without writing any files:
 
@@ -170,6 +173,12 @@ Error: refusing to overwrite "migrations/migration.001_move.a1b2c3d4.tf": migrat
 This protects against a common CI failure mode: a pipeline partially applies migrations across layers (e.g., L10 applied, L30 fails, L50 pending), then re-runs `generate --upload` which would otherwise overwrite the still-needed import blocks.
 
 The guard requires the `tofu` binary to read layer state. If `tofu` is not available, the guard is silently disabled and upload proceeds without protection. Use `--force` to explicitly bypass the guard when intentional overwrite is needed.
+
+#### Auto-Pruning Stale Blobs
+
+When using `generate --upload`, migration blobs for retired files (`status: retired`) and files whose source layers no longer exist are automatically pruned from blob storage. This keeps storage clean without manual intervention.
+
+Auto-pruning only applies to layers that active migrations are uploading to. For complete cleanup across all layers, use the `prune` command.
 
 #### Authentication
 
@@ -272,6 +281,27 @@ if [ $? -eq 2 ]; then
 fi
 ```
 
+### `prune`
+
+Removes completed migration blobs from Azure Blob Storage.
+
+```bash
+# Dry run: see what would be pruned
+tfmigrate prune --dry-run ./layers/compute ./layers/networking
+
+# Prune completed migrations (evaluates embedded conditions)
+tfmigrate prune ./layers/compute ./layers/networking
+
+# Force delete all migration blobs
+tfmigrate prune --force ./layers/compute
+```
+
+**Flags:**
+- `--dry-run`: List what would be pruned without deleting
+- `--backend-config`: Backend configuration for tofu init (repeatable)
+- `--tofu-path`: Path to the tofu binary (default: auto-detect)
+- `--force`: Delete all migration blobs without evaluating conditions
+
 ### CI Workflow
 
 The full workflow for applying migrations in CI:
@@ -370,6 +400,8 @@ operations:
   - type: <move|rename|remove|import>
     # ... operation-specific fields
 ```
+
+- `status` (optional): `"retired"` to skip the file entirely (no state reads, no processing)
 
 ### Common Fields
 
@@ -525,6 +557,18 @@ Imports existing cloud resources into OpenTofu state. Generates `import` blocks.
       provider: "aws.uswest2"               # per-entry override
 ```
 
+### Retiring Migration Files
+
+When a migration has been fully applied and is no longer needed, mark it as retired rather than deleting it:
+
+```yaml
+description: "Moved compute resources (completed 2024-01)"
+status: retired
+operations: []
+```
+
+Retired files are skipped immediately during processing — no validation, no state reads, no condition evaluation. This is the cheapest way to disable old migration files.
+
 ## Keyed Moves
 
 For `for_each` resources, use the `keys` map to specify how individual state keys are routed to destination keys.
@@ -631,6 +675,20 @@ operations:
 | `resources_not_exist` | NONE of the listed addresses must be found in the layer's state |
 
 All condition checks are ANDed — every check must pass for the migration to proceed.
+
+#### `layer_exists` / `layer_not_exists`
+
+Check directory existence without reading state (much cheaper than `resources_exist`):
+
+```yaml
+condition:
+  layer_exists:
+    - "./layers/source"              # all paths must exist on disk
+  layer_not_exists:
+    - "./layers/deprecated"          # none of the paths may exist
+```
+
+Useful for skipping migrations after a source layer has been intentionally deleted.
 
 ### Address Matching
 

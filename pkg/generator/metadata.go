@@ -21,6 +21,8 @@ type MigrationMetadata struct {
 type MetadataCondition struct {
 	ResourcesExist    []MetadataResourceCheck `json:"resources_exist,omitempty"`
 	ResourcesNotExist []MetadataResourceCheck `json:"resources_not_exist,omitempty"`
+	LayerExists       []string                `json:"layer_exists,omitempty"`
+	LayerNotExists    []string                `json:"layer_not_exists,omitempty"`
 }
 
 // MetadataResourceCheck mirrors migration.ResourceCheck with JSON tags.
@@ -146,7 +148,19 @@ func RelativizeCondition(cond *MetadataCondition, layerPath string) *MetadataCon
 		})
 	}
 
-	if len(result.ResourcesExist) == 0 && len(result.ResourcesNotExist) == 0 {
+	// Layer existence conditions are copied through unchanged — they reference
+	// directory paths, not state-relative resources.
+	if len(cond.LayerExists) > 0 {
+		result.LayerExists = make([]string, len(cond.LayerExists))
+		copy(result.LayerExists, cond.LayerExists)
+	}
+	if len(cond.LayerNotExists) > 0 {
+		result.LayerNotExists = make([]string, len(cond.LayerNotExists))
+		copy(result.LayerNotExists, cond.LayerNotExists)
+	}
+
+	if len(result.ResourcesExist) == 0 && len(result.ResourcesNotExist) == 0 &&
+		len(result.LayerExists) == 0 && len(result.LayerNotExists) == 0 {
 		return nil
 	}
 	return result
@@ -234,6 +248,22 @@ func MergeConditions(a, b *MetadataCondition) *MetadataCondition {
 	collectChecks(a.ResourcesNotExist, notExistByLayer)
 	collectChecks(b.ResourcesNotExist, notExistByLayer)
 
+	// Merge layer existence conditions (deduplicate)
+	layerExistSet := make(map[string]bool)
+	layerNotExistSet := make(map[string]bool)
+	for _, path := range a.LayerExists {
+		layerExistSet[path] = true
+	}
+	for _, path := range b.LayerExists {
+		layerExistSet[path] = true
+	}
+	for _, path := range a.LayerNotExists {
+		layerNotExistSet[path] = true
+	}
+	for _, path := range b.LayerNotExists {
+		layerNotExistSet[path] = true
+	}
+
 	result := &MetadataCondition{}
 
 	for _, layer := range sortedKeys(existByLayer) {
@@ -248,8 +278,15 @@ func MergeConditions(a, b *MetadataCondition) *MetadataCondition {
 			Addresses: sortedKeys(notExistByLayer[layer]),
 		})
 	}
+	if len(layerExistSet) > 0 {
+		result.LayerExists = sortedKeys(layerExistSet)
+	}
+	if len(layerNotExistSet) > 0 {
+		result.LayerNotExists = sortedKeys(layerNotExistSet)
+	}
 
-	if len(result.ResourcesExist) == 0 && len(result.ResourcesNotExist) == 0 {
+	if len(result.ResourcesExist) == 0 && len(result.ResourcesNotExist) == 0 &&
+		len(result.LayerExists) == 0 && len(result.LayerNotExists) == 0 {
 		return nil
 	}
 	return result

@@ -30,6 +30,18 @@ func (e ValidationError) Error() string {
 // It collects all validation errors rather than failing on the first one,
 // enabling users to fix all problems in a single pass.
 func Validate(mf *MigrationFile) []ValidationError {
+	// Check status first — retired files skip all other validation.
+	if mf.Status == StatusRetired {
+		return nil
+	}
+	if mf.Status != StatusActive {
+		return []ValidationError{{
+			OperationIndex: -1,
+			Field:          "status",
+			Message:        fmt.Sprintf("unknown status %q (valid: retired)", mf.Status),
+		}}
+	}
+
 	var errs []ValidationError
 
 	if mf.Description == "" {
@@ -392,6 +404,26 @@ func validateCondition(cond *Condition) []ValidationError {
 
 	for i := range cond.ResourcesNotExist {
 		errs = append(errs, validateResourceCheck("condition.resources_not_exist", i, &cond.ResourcesNotExist[i])...)
+	}
+
+	for i, path := range cond.LayerExists {
+		if path == "" {
+			errs = append(errs, ValidationError{
+				OperationIndex: -1,
+				Field:          fmt.Sprintf("condition.layer_exists[%d]", i),
+				Message:        "layer path must not be empty",
+			})
+		}
+	}
+
+	for i, path := range cond.LayerNotExists {
+		if path == "" {
+			errs = append(errs, ValidationError{
+				OperationIndex: -1,
+				Field:          fmt.Sprintf("condition.layer_not_exists[%d]", i),
+				Message:        "layer path must not be empty",
+			})
+		}
 	}
 
 	return errs

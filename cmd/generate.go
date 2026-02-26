@@ -21,6 +21,7 @@ var (
 	flagUpload                bool
 	flagGenerateBackendConfig []string
 	flagGenerateForce         bool
+	flagStrict                bool
 )
 
 // generateCmd represents the generate command.
@@ -68,6 +69,8 @@ func init() {
 		"Backend configuration passed to tofu init, as key=value or path to a file (repeatable)")
 	generateCmd.Flags().BoolVar(&flagGenerateForce, "force", false,
 		"Force upload even if existing migrations are still active (overwrite protection bypass)")
+	generateCmd.Flags().BoolVar(&flagStrict, "strict", false,
+		"Treat missing layer directories as errors instead of auto-skipping")
 }
 
 func runGenerate(cmd *cobra.Command, args []string) error {
@@ -105,12 +108,13 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 	cfg := engine.Config{
 		StateReader: stateReader,
 		DryRun:      flagDryRun,
+		Strict:      flagStrict,
 	}
 
 	eng := engine.New(cfg)
 	ctx := context.Background()
 
-	files, err := eng.ProcessFiles(ctx, args)
+	result, err := eng.ProcessFiles(ctx, args)
 	if err != nil {
 		return err
 	}
@@ -130,13 +134,13 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 			fmt.Fprintln(os.Stdout, rendered[p])
 		}
 	} else {
-		for _, f := range files {
+		for _, f := range result.OutputFiles {
 			fmt.Fprintf(os.Stdout, "Generated: %s\n", f)
 		}
 	}
 
 	if flagUpload {
-		if err := runUploadAfterGenerate(ctx, eng, resolvedTofuPath); err != nil {
+		if err := runUploadAfterGenerate(ctx, eng, resolvedTofuPath, result.SkippedFiles); err != nil {
 			return fmt.Errorf("uploading migration files: %w", err)
 		}
 	}
@@ -145,8 +149,9 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 }
 
 // runUploadAfterGenerate handles uploading generated files to Azure Blob Storage
-// after the generate pipeline completes.
-func runUploadAfterGenerate(ctx context.Context, eng *engine.Engine, tofuPath string) error {
+// after the generate pipeline completes. It also auto-prunes stale blobs for
+// migration files that were retired or skipped due to missing layers.
+func runUploadAfterGenerate(ctx context.Context, eng *engine.Engine, tofuPath string, skippedFiles []engine.SkippedFile) error {
 	credCfg, err := auth.NewCredentialConfiguration(
 		auth.WithDefaultEnvironmentVariables(),
 	)
@@ -174,7 +179,32 @@ func runUploadAfterGenerate(ctx context.Context, eng *engine.Engine, tofuPath st
 	mgr := upload.NewManager(cred, initArgs, opts...)
 	rendered := eng.Writer().RenderAll()
 
-	return mgr.UploadRendered(ctx, rendered)
+	if err := mgr.UploadRendered(ctx, rendered); err != nil {
+		return err
+	}
+
+	// Auto-prune stale blobs for retired/layer-missing migrations.
+	// Only prune from layers we're actively uploading to.
+	var pruneStems []string
+	for _, sf := range skippedFiles {
+		if sf.Reason == engine.SkipRetired || sf.Reason == engine.SkipLayerMissing {
+			pruneStems = append(pruneStems, sf.Stem)
+		}
+	}
+	if len(pruneStems) > 0 && len(rendered) > 0 {
+		var layerPaths []string
+		for lp := range rendered {
+			layerPaths = append(layerPaths, lp)
+		}
+		pruned, err := mgr.PruneStems(ctx, pruneStems, layerPaths)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: auto-prune failed: %v\n", err)
+		} else if pruned > 0 {
+			fmt.Fprintf(os.Stderr, "Auto-pruned %d stale migration blob(s)\n", pruned)
+		}
+	}
+
+	return nil
 }
 
 // noopStateReader is used as a fallback when the tofu binary is not found.

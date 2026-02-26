@@ -26,6 +26,7 @@ Every migration file has this top-level structure:
 ```yaml
 description: "<required: what this migration does>"
 schema_version: "2"  # optional: documents current schema version for forward compatibility
+status: retired      # optional: "retired" skips file entirely (no state reads, no processing)
 condition:           # optional: skip file if checks fail
   resources_exist:
     - layer: "<layer path>"
@@ -35,6 +36,10 @@ condition:           # optional: skip file if checks fail
     - layer: "<layer path>"
       addresses:
         - "<resource address>"
+  layer_exists:                    # check directory existence (no state reading)
+    - "<layer path>"
+  layer_not_exists:
+    - "<layer path>"
 operations:
   - type: <move|rename|remove|import>
     # ... fields depend on type
@@ -73,6 +78,21 @@ Conditions are automatically inferred from block types and embedded in generated
 | `moved`    | `resources_exist` for `from` + `resources_not_exist` for `to` | Skip if rename already done |
 
 Inferred conditions always use layer `"."` (the owning layer). Explicit YAML conditions are merged additively with inferred ones (addresses deduplicated per layer).
+
+### Status Field: `status`
+
+The optional `status` field controls the lifecycle state of a migration file:
+
+- Omitted or empty: active — processed normally
+- `"retired"`: skipped entirely — no validation, no state reads, no condition evaluation
+
+Use `status: retired` to disable completed migration files cheaply, without deleting them. This is the recommended way to "archive" old migration files that have already been applied.
+
+```yaml
+description: "Moved compute resources (completed 2024-01)"
+status: retired
+operations: []
+```
 
 ### Common Field: `address_prefix`
 
@@ -501,6 +521,22 @@ operations:
       - from: "<resource address>"
 ```
 
+### "Skip migration when source layer no longer exists"
+
+```yaml
+condition:
+  layer_exists:
+    - "./layers/source"
+```
+
+`layer_exists` and `layer_not_exists` conditions check directory existence without reading state — much cheaper than `resources_exist`. Use `layer_exists` to skip migrations whose source layers have been deleted. Use `layer_not_exists` to skip migrations once a destination has been removed.
+
+```yaml
+condition:
+  layer_not_exists:
+    - "./layers/deprecated"
+```
+
 ### "Run in CI where backends aren't initialized" / "Auto-init layers"
 
 Use the `--backend-config` CLI flag on `generate`, `upload`, or `download` to pass backend configuration to `tofu init`. This mirrors the `tofu init -backend-config=...` syntax:
@@ -517,9 +553,29 @@ tfmigrate download --backend-config=storage_account_name=myacct
 
 # Point to a backend config file
 tfmigrate generate --backend-config=backend.hcl migrations/
+
+# Strict mode: treat missing layer directories as errors
+tfmigrate generate --strict migrations/
 ```
 
+- `--strict` (generate only): Treat missing layer directories as hard errors instead of auto-skipping
+
 ---
+
+### "Clean up old migration blobs" / "Remove completed migrations"
+
+```bash
+# Dry run: see what would be pruned
+tfmigrate prune --dry-run ./layers/compute ./layers/networking
+
+# Prune completed migrations (evaluates conditions)
+tfmigrate prune ./layers/compute ./layers/networking
+
+# Force delete all migration blobs
+tfmigrate prune --force ./layers/compute
+```
+
+The prune command lists migration blobs in Azure Blob Storage, evaluates their embedded conditions, and deletes blobs whose conditions no longer hold (migration completed). Blobs without conditions are kept.
 
 ## Validation Rules
 
@@ -544,6 +600,9 @@ When generating YAML, ensure:
 14. `condition` is optional; if present, each resource check requires `layer` (non-empty) and `addresses` (non-empty list of non-empty strings)
 15. `resources_exist`: all listed addresses must exist in the specified layer's state for the migration to proceed
 16. `resources_not_exist`: none of the listed addresses may exist in the specified layer's state
+17. `status` is optional; if present, must be `"retired"` (unknown values are errors). Retired files skip all validation.
+18. `condition.layer_exists` and `condition.layer_not_exists` entries must be non-empty strings
+19. Non-strict mode (default): migration files referencing non-existent operational layers (`source_layer`, `layer`) are auto-skipped. Strict mode (`--strict`) makes these hard errors.
 
 ## File Naming Convention
 
@@ -720,6 +779,12 @@ The guard requires the `tofu` binary to read layer state. If `tofu` is not avail
 
 The guard logic lives in `pkg/upload/upload.go` (`checkActiveBlobs` method) and uses shared condition evaluation from `pkg/conditions/evaluate.go`.
 
+### Auto-Pruning Stale Blobs
+
+When using `--upload`, migration files that are retired (`status: retired`) or auto-skipped due to missing layers have their previously-uploaded blobs automatically pruned from blob storage. This keeps storage clean without requiring manual `tfmigrate prune` for the common case.
+
+Only blobs in layers that are being actively uploaded to are auto-pruned. For fully orphaned layers (no active migrations target them), use `tfmigrate prune` manually.
+
 ## Downloading Migrations from Azure Blob Storage
 
 ```bash
@@ -804,6 +869,10 @@ import {
 - `resources` — all resource addresses touched by blocks in the file (used for `-target` flags)
 
 The metadata is produced by the generator during `ProcessFiles()` and embedded by the `Writer` at render time. The `download` and `plan` commands parse it using `generator.ParseMetadataComment()`.
+
+`ProcessFiles` returns `*ProcessResult` containing:
+- `OutputFiles []string` — paths of generated `.tf` files written to disk
+- `SkippedFiles []SkippedFile` — files that were skipped, each with `Stem` (the YAML file stem) and `Reason` (why it was skipped, e.g., retired status, missing layer)
 
 ## E2E Tests
 

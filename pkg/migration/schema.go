@@ -2,7 +2,10 @@
 // and provides parsing and validation functionality.
 package migration
 
-import "strings"
+import (
+	"path/filepath"
+	"strings"
+)
 
 // OperationType enumerates the supported migration operation types.
 type OperationType string
@@ -25,6 +28,17 @@ const (
 	OpImport OperationType = "import"
 )
 
+const (
+	// StatusActive is the default migration file status (empty string).
+	// Active files are processed normally.
+	StatusActive = ""
+
+	// StatusRetired marks a migration file as completed/retired.
+	// Retired files are skipped entirely during processing — no validation,
+	// no state reads, no condition evaluation.
+	StatusRetired = "retired"
+)
+
 // MigrationFile represents a parsed YAML migration file.
 type MigrationFile struct {
 	// Description is a human-readable summary of what this migration does.
@@ -34,6 +48,12 @@ type MigrationFile struct {
 	// Used for forward compatibility: future schema changes will increment
 	// this value, allowing the tool to handle multiple versions.
 	SchemaVersion string `yaml:"schema_version,omitempty"`
+
+	// Status controls the lifecycle state of this migration file.
+	// Valid values: "" (active, default), "retired" (skip entirely).
+	// Retired files are skipped without any validation, state reads, or
+	// condition evaluation — the cheapest way to disable an old migration.
+	Status string `yaml:"status,omitempty"`
 
 	// Condition defines optional preconditions that must all be met for this
 	// migration file to be processed. If any condition is not met, the entire
@@ -58,6 +78,16 @@ type Condition struct {
 	// ResourcesNotExist requires that NONE of the listed addresses exist in
 	// their respective layer's state. If any address is found, the condition fails.
 	ResourcesNotExist []ResourceCheck `yaml:"resources_not_exist,omitempty"`
+
+	// LayerExists requires that ALL listed layer paths exist on disk.
+	// If any path is missing, the condition fails. This is cheaper than
+	// resources_exist because it does not read state — just checks directory existence.
+	LayerExists []string `yaml:"layer_exists,omitempty"`
+
+	// LayerNotExists requires that NONE of the listed layer paths exist on disk.
+	// If any path exists, the condition fails. Useful for skipping migrations
+	// after a source layer has been intentionally deleted.
+	LayerNotExists []string `yaml:"layer_not_exists,omitempty"`
 }
 
 // ResourceCheck specifies a layer path and a set of resource addresses to
@@ -274,4 +304,11 @@ func IsModuleAddress(address string) bool {
 		}
 	}
 	return true
+}
+
+// YamlStem extracts the stem (base name without extension) from a migration file path.
+// For example, "migrations/001_move.yaml" → "001_move".
+func YamlStem(filePath string) string {
+	base := filepath.Base(filePath)
+	return strings.TrimSuffix(base, filepath.Ext(base))
 }

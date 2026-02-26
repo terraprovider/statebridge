@@ -75,18 +75,18 @@ operations:
 
 	engine := New(Config{StateReader: mock})
 
-	files, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
+	result, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if len(files) != 2 {
-		t.Fatalf("expected 2 files, got %d: %v", len(files), files)
+	if len(result.OutputFiles) != 2 {
+		t.Fatalf("expected 2 files, got %d: %v", len(result.OutputFiles), result.OutputFiles)
 	}
 
 	// Find source and destination files from returned paths
 	var srcFile, dstFile string
-	for _, f := range files {
+	for _, f := range result.OutputFiles {
 		if strings.HasPrefix(f, srcLayer) {
 			srcFile = f
 		} else if strings.HasPrefix(f, dstLayer) {
@@ -94,7 +94,7 @@ operations:
 		}
 	}
 	if srcFile == "" || dstFile == "" {
-		t.Fatalf("expected one file per layer, got: %v", files)
+		t.Fatalf("expected one file per layer, got: %v", result.OutputFiles)
 	}
 
 	srcContent, err := os.ReadFile(srcFile)
@@ -144,16 +144,16 @@ operations:
 
 	engine := New(Config{StateReader: testutil.NewMockStateReader(nil)})
 
-	files, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
+	result, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if len(files) != 1 {
-		t.Fatalf("expected 1 file, got %d", len(files))
+	if len(result.OutputFiles) != 1 {
+		t.Fatalf("expected 1 file, got %d", len(result.OutputFiles))
 	}
 
-	content, err := os.ReadFile(files[0])
+	content, err := os.ReadFile(result.OutputFiles[0])
 	if err != nil {
 		t.Fatalf("reading output: %v", err)
 	}
@@ -190,12 +190,12 @@ operations:
 
 	engine := New(Config{StateReader: testutil.NewMockStateReader(nil)})
 
-	files, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
+	result, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	content, err := os.ReadFile(files[0])
+	content, err := os.ReadFile(result.OutputFiles[0])
 	if err != nil {
 		t.Fatalf("reading output: %v", err)
 	}
@@ -231,12 +231,12 @@ operations:
 
 	engine := New(Config{StateReader: testutil.NewMockStateReader(nil)})
 
-	files, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
+	result, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	content, err := os.ReadFile(files[0])
+	content, err := os.ReadFile(result.OutputFiles[0])
 	if err != nil {
 		t.Fatalf("reading output: %v", err)
 	}
@@ -292,21 +292,21 @@ operations:
 
 	engine := New(Config{StateReader: mock})
 
-	files, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
+	result, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if len(files) != 2 {
-		t.Fatalf("expected 2 files, got %d: %v", len(files), files)
+	if len(result.OutputFiles) != 2 {
+		t.Fatalf("expected 2 files, got %d: %v", len(result.OutputFiles), result.OutputFiles)
 	}
 
-	srcContent := readLayerFile(t, files, srcLayer)
+	srcContent := readLayerFile(t, result.OutputFiles, srcLayer)
 	if strings.Count(srcContent, "removed {") != 1 {
 		t.Errorf("expected 1 removed block, got:\n%s", srcContent)
 	}
 
-	dstContent := readLayerFile(t, files, dstLayer)
+	dstContent := readLayerFile(t, result.OutputFiles, dstLayer)
 	if strings.Count(dstContent, "import {") != 2 {
 		t.Errorf("expected 2 import blocks, got:\n%s", dstContent)
 	}
@@ -366,21 +366,21 @@ operations:
 
 	engine := New(Config{StateReader: mock})
 
-	files, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
+	result, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if len(files) != 2 {
-		t.Fatalf("expected 2 files, got %d: %v", len(files), files)
+	if len(result.OutputFiles) != 2 {
+		t.Fatalf("expected 2 files, got %d: %v", len(result.OutputFiles), result.OutputFiles)
 	}
 
-	srcContent := readLayerFile(t, files, srcLayer)
+	srcContent := readLayerFile(t, result.OutputFiles, srcLayer)
 	if strings.Count(srcContent, "removed {") != 1 {
 		t.Errorf("expected 1 removed block, got:\n%s", srcContent)
 	}
 
-	dstContent := readLayerFile(t, files, dstLayer)
+	dstContent := readLayerFile(t, result.OutputFiles, dstLayer)
 	if strings.Count(dstContent, "import {") != 3 {
 		t.Errorf("expected 3 import blocks, got:\n%s", dstContent)
 	}
@@ -444,16 +444,16 @@ operations:
 
 	engine := New(Config{StateReader: mock})
 
-	files, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
+	result, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if len(files) != 2 {
-		t.Fatalf("expected 2 files, got %d: %v", len(files), files)
+	if len(result.OutputFiles) != 2 {
+		t.Fatalf("expected 2 files, got %d: %v", len(result.OutputFiles), result.OutputFiles)
 	}
 
-	dstContent := readLayerFile(t, files, dstLayer)
+	dstContent := readLayerFile(t, result.OutputFiles, dstLayer)
 	// Address prefix should be applied: module.ig.azuread_access_package_catalog.all["customer_approval"]
 	if !strings.Contains(dstContent, `module.ig.azuread_access_package_catalog.all["customer_approval"]`) {
 		t.Errorf("expected address prefix applied to destination, got:\n%s", dstContent)
@@ -521,26 +521,26 @@ operations:
 
 	engine := New(Config{StateReader: mock})
 
-	files, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
+	result, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if len(files) != 3 {
-		t.Fatalf("expected 3 files (source + 2 destinations), got %d: %v", len(files), files)
+	if len(result.OutputFiles) != 3 {
+		t.Fatalf("expected 3 files (source + 2 destinations), got %d: %v", len(result.OutputFiles), result.OutputFiles)
 	}
 
-	srcContent := readLayerFile(t, files, srcLayer)
+	srcContent := readLayerFile(t, result.OutputFiles, srcLayer)
 	if strings.Count(srcContent, "removed {") != 1 {
 		t.Errorf("expected exactly 1 removed block in source, got:\n%s", srcContent)
 	}
 
-	engContent := readLayerFile(t, files, engLayer)
+	engContent := readLayerFile(t, result.OutputFiles, engLayer)
 	if strings.Count(engContent, "import {") != 2 {
 		t.Errorf("expected 2 import blocks in engineering, got:\n%s", engContent)
 	}
 
-	finContent := readLayerFile(t, files, finLayer)
+	finContent := readLayerFile(t, result.OutputFiles, finLayer)
 	if strings.Count(finContent, "import {") != 2 {
 		t.Errorf("expected 2 import blocks in finance, got:\n%s", finContent)
 	}
@@ -648,16 +648,16 @@ operations:
 		DryRun:      true,
 	})
 
-	files, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
+	result, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(files) != 1 {
-		t.Fatalf("expected 1 file path, got %d", len(files))
+	if len(result.OutputFiles) != 1 {
+		t.Fatalf("expected 1 file path, got %d", len(result.OutputFiles))
 	}
 
 	// Verify file was NOT written in dry run mode
-	if _, statErr := os.Stat(files[0]); !os.IsNotExist(statErr) {
+	if _, statErr := os.Stat(result.OutputFiles[0]); !os.IsNotExist(statErr) {
 		t.Error("expected file to not exist in dry-run mode")
 	}
 }
@@ -694,16 +694,16 @@ operations:
 
 	engine := New(Config{StateReader: testutil.NewMockStateReader(nil)})
 
-	files, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
+	result, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if len(files) != 1 {
-		t.Fatalf("expected 1 file, got %d", len(files))
+	if len(result.OutputFiles) != 1 {
+		t.Fatalf("expected 1 file, got %d", len(result.OutputFiles))
 	}
 
-	content, err := os.ReadFile(files[0])
+	content, err := os.ReadFile(result.OutputFiles[0])
 	if err != nil {
 		t.Fatalf("reading output: %v", err)
 	}
@@ -745,12 +745,12 @@ operations:
 
 	engine := New(Config{StateReader: testutil.NewMockStateReader(nil)})
 
-	files, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
+	result, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	content, err := os.ReadFile(files[0])
+	content, err := os.ReadFile(result.OutputFiles[0])
 	if err != nil {
 		t.Fatalf("reading output: %v", err)
 	}
@@ -782,12 +782,12 @@ operations:
 
 	engine := New(Config{StateReader: testutil.NewMockStateReader(nil)})
 
-	files, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
+	result, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	content, err := os.ReadFile(files[0])
+	content, err := os.ReadFile(result.OutputFiles[0])
 	if err != nil {
 		t.Fatalf("reading output: %v", err)
 	}
@@ -820,12 +820,12 @@ operations:
 
 	engine := New(Config{StateReader: testutil.NewMockStateReader(nil)})
 
-	files, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
+	result, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	content, err := os.ReadFile(files[0])
+	content, err := os.ReadFile(result.OutputFiles[0])
 	if err != nil {
 		t.Fatalf("reading output: %v", err)
 	}
@@ -876,19 +876,19 @@ operations:
 
 	engine := New(Config{StateReader: mock})
 
-	files, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
+	result, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	srcContent := readLayerFile(t, files, srcLayer)
+	srcContent := readLayerFile(t, result.OutputFiles, srcLayer)
 	// With module consolidation, the entire module.old is removed since
 	// all managed resources within it are being moved.
 	if !strings.Contains(srcContent, "module.old") {
 		t.Error("expected module.old in removed block (consolidated)")
 	}
 
-	dstContent := readLayerFile(t, files, dstLayer)
+	dstContent := readLayerFile(t, result.OutputFiles, dstLayer)
 	if !strings.Contains(dstContent, `module.new.resource.all["key1"]`) {
 		t.Errorf("expected destination_address override in import, got:\n%s", dstContent)
 	}
@@ -935,13 +935,13 @@ operations:
 
 	engine := New(Config{StateReader: mock})
 
-	files, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
+	result, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if len(files) != 2 {
-		t.Fatalf("expected 2 files (condition met, migration proceeds), got %d", len(files))
+	if len(result.OutputFiles) != 2 {
+		t.Fatalf("expected 2 files (condition met, migration proceeds), got %d", len(result.OutputFiles))
 	}
 }
 
@@ -987,13 +987,13 @@ operations:
 
 	engine := New(Config{StateReader: mock})
 
-	files, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
+	result, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
 	if err != nil {
 		t.Fatalf("unexpected error (should silently skip): %v", err)
 	}
 
-	if len(files) != 0 {
-		t.Errorf("expected 0 files (condition not met, migration skipped), got %d", len(files))
+	if len(result.OutputFiles) != 0 {
+		t.Errorf("expected 0 files (condition not met, migration skipped), got %d", len(result.OutputFiles))
 	}
 }
 
@@ -1043,13 +1043,13 @@ operations:
 
 	engine := New(Config{StateReader: mock})
 
-	files, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
+	result, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
 	if err != nil {
 		t.Fatalf("unexpected error (should silently skip): %v", err)
 	}
 
-	if len(files) != 0 {
-		t.Errorf("expected 0 files (resource already exists in destination), got %d", len(files))
+	if len(result.OutputFiles) != 0 {
+		t.Errorf("expected 0 files (resource already exists in destination), got %d", len(result.OutputFiles))
 	}
 }
 
@@ -1078,16 +1078,35 @@ operations:
 
 	// MockStateReader returns error for unknown layers
 	mock := testutil.NewMockStateReader(nil)
-	engine := New(Config{StateReader: mock})
 
-	// State read errors during condition evaluation cause the file to be skipped.
-	// Since it's the only file, ProcessFiles returns "all migration files were skipped".
-	_, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
+	// In strict mode, missing layers cause hard errors.
+	engine := New(Config{StateReader: mock, Strict: true})
+	result, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
 	if err == nil {
-		t.Fatal("expected error when all files are skipped due to state read failure")
+		t.Fatal("expected error in strict mode when layer does not exist")
 	}
-	if !strings.Contains(err.Error(), "skipped") {
-		t.Errorf("expected error to mention files were skipped, got: %v", err)
+	if result != nil {
+		t.Error("expected nil result in strict mode error")
+	}
+	if !strings.Contains(err.Error(), "does not exist") {
+		t.Errorf("expected error to mention layer does not exist, got: %v", err)
+	}
+
+	// In non-strict mode (default), missing layers are gracefully auto-skipped.
+	// Auto-skipped files do NOT count toward "all files skipped" error.
+	engine2 := New(Config{StateReader: mock})
+	result, err = engine2.ProcessFiles(context.Background(), []string{migrationFile})
+	if err != nil {
+		t.Fatalf("expected no error in non-strict mode (graceful auto-skip), got: %v", err)
+	}
+	if result == nil {
+		t.Fatal("expected non-nil result in non-strict mode")
+	}
+	if len(result.SkippedFiles) != 1 {
+		t.Fatalf("expected 1 skipped file, got %d", len(result.SkippedFiles))
+	}
+	if result.SkippedFiles[0].Reason != SkipLayerMissing {
+		t.Errorf("expected SkipLayerMissing reason, got %v", result.SkippedFiles[0].Reason)
 	}
 }
 
@@ -1115,12 +1134,12 @@ operations:
 
 	engine := New(Config{StateReader: testutil.NewMockStateReader(nil)})
 
-	files, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
+	result, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(files) != 1 {
-		t.Fatalf("expected 1 file (no condition, proceeds normally), got %d", len(files))
+	if len(result.OutputFiles) != 1 {
+		t.Fatalf("expected 1 file (no condition, proceeds normally), got %d", len(result.OutputFiles))
 	}
 }
 
@@ -1174,16 +1193,16 @@ operations:
 
 	engine := New(Config{StateReader: mock})
 
-	files, err := engine.ProcessFiles(context.Background(), []string{moveFile, renameFile})
+	result, err := engine.ProcessFiles(context.Background(), []string{moveFile, renameFile})
 	if err != nil {
 		t.Fatalf("expected partial success (first skipped, second succeeds), got error: %v", err)
 	}
 
-	if len(files) != 1 {
-		t.Fatalf("expected 1 output file from the rename, got %d: %v", len(files), files)
+	if len(result.OutputFiles) != 1 {
+		t.Fatalf("expected 1 output file from the rename, got %d: %v", len(result.OutputFiles), result.OutputFiles)
 	}
 
-	content, err := os.ReadFile(files[0])
+	content, err := os.ReadFile(result.OutputFiles[0])
 	if err != nil {
 		t.Fatalf("reading output: %v", err)
 	}
@@ -1294,16 +1313,16 @@ operations:
 
 	engine := New(Config{StateReader: mock})
 
-	files, err := engine.ProcessFiles(context.Background(), []string{condFile, renameFile})
+	result, err := engine.ProcessFiles(context.Background(), []string{condFile, renameFile})
 	if err != nil {
 		t.Fatalf("expected partial success, got error: %v", err)
 	}
 
-	if len(files) != 1 {
-		t.Fatalf("expected 1 output file from the rename, got %d: %v", len(files), files)
+	if len(result.OutputFiles) != 1 {
+		t.Fatalf("expected 1 output file from the rename, got %d: %v", len(result.OutputFiles), result.OutputFiles)
 	}
 
-	content, err := os.ReadFile(files[0])
+	content, err := os.ReadFile(result.OutputFiles[0])
 	if err != nil {
 		t.Fatalf("reading output: %v", err)
 	}
@@ -1350,23 +1369,23 @@ operations:
 
 	engine := New(Config{StateReader: mock})
 
-	files, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
+	result, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if len(files) != 2 {
-		t.Fatalf("expected 2 files (source + destination), got %d: %v", len(files), files)
+	if len(result.OutputFiles) != 2 {
+		t.Fatalf("expected 2 files (source + destination), got %d: %v", len(result.OutputFiles), result.OutputFiles)
 	}
 
 	// Source layer: consolidated removed block for module.foo
-	srcContent := readLayerFile(t, files, srcLayer)
+	srcContent := readLayerFile(t, result.OutputFiles, srcLayer)
 	if !strings.Contains(srcContent, "module.foo") {
 		t.Error("expected module.foo in removed block (consolidated)")
 	}
 
 	// Destination layer: 2 import blocks
-	dstContent := readLayerFile(t, files, dstLayer)
+	dstContent := readLayerFile(t, result.OutputFiles, dstLayer)
 	if strings.Count(dstContent, "import {") != 2 {
 		t.Errorf("expected 2 import blocks, got:\n%s", dstContent)
 	}
@@ -1420,12 +1439,12 @@ operations:
 
 	engine := New(Config{StateReader: mock})
 
-	files, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
+	result, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	dstContent := readLayerFile(t, files, dstLayer)
+	dstContent := readLayerFile(t, result.OutputFiles, dstLayer)
 	// module.foo.aws_instance.web → module.bar.aws_instance.web
 	if !strings.Contains(dstContent, "module.bar.aws_instance.web") {
 		t.Errorf("expected module prefix swapped to module.bar, got:\n%s", dstContent)
@@ -1472,12 +1491,12 @@ operations:
 
 	engine := New(Config{StateReader: mock})
 
-	files, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
+	result, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	dstContent := readLayerFile(t, files, dstLayer)
+	dstContent := readLayerFile(t, result.OutputFiles, dstLayer)
 	if !strings.Contains(dstContent, "module.ig.module.foo.aws_instance.web") {
 		t.Errorf("expected full prefixed address in destination, got:\n%s", dstContent)
 	}
@@ -1520,12 +1539,12 @@ operations:
 
 	engine := New(Config{StateReader: mock})
 
-	files, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
+	result, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	dstContent := readLayerFile(t, files, dstLayer)
+	dstContent := readLayerFile(t, result.OutputFiles, dstLayer)
 	if strings.Count(dstContent, "import {") != 2 {
 		t.Errorf("expected 2 import blocks for nested module resources, got:\n%s", dstContent)
 	}
@@ -1537,7 +1556,7 @@ operations:
 	}
 
 	// Source should have module-level consolidated removed block
-	srcContent := readLayerFile(t, files, srcLayer)
+	srcContent := readLayerFile(t, result.OutputFiles, srcLayer)
 	if strings.Count(srcContent, "removed {") != 1 {
 		t.Errorf("expected 1 consolidated removed block, got:\n%s", srcContent)
 	}
@@ -1586,12 +1605,12 @@ operations:
 
 	engine := New(Config{StateReader: mock})
 
-	files, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
+	result, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	dstContent := readLayerFile(t, files, dstLayer)
+	dstContent := readLayerFile(t, result.OutputFiles, dstLayer)
 	if strings.Count(dstContent, "import {") != 3 {
 		t.Errorf("expected 3 import blocks, got:\n%s", dstContent)
 	}
@@ -1686,16 +1705,16 @@ operations:
 
 	engine := New(Config{StateReader: mock})
 
-	files, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
+	result, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if len(files) != 2 {
-		t.Fatalf("expected 2 files (source + destination), got %d: %v", len(files), files)
+	if len(result.OutputFiles) != 2 {
+		t.Fatalf("expected 2 files (source + destination), got %d: %v", len(result.OutputFiles), result.OutputFiles)
 	}
 
-	dstContent := readLayerFile(t, files, dstLayer)
+	dstContent := readLayerFile(t, result.OutputFiles, dstLayer)
 	if strings.Count(dstContent, "import {") != 3 {
 		t.Errorf("expected 3 import blocks, got:\n%s", dstContent)
 	}
@@ -1749,12 +1768,12 @@ operations:
 
 	engine := New(Config{StateReader: mock})
 
-	files, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
+	result, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	dstContent := readLayerFile(t, files, dstLayer)
+	dstContent := readLayerFile(t, result.OutputFiles, dstLayer)
 	// aws_instance.web should be renamed to aws_instance.api
 	if !strings.Contains(dstContent, "aws_instance.api") {
 		t.Errorf("expected aws_instance.api (renamed), got:\n%s", dstContent)
@@ -1805,12 +1824,12 @@ operations:
 
 	engine := New(Config{StateReader: mock})
 
-	files, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
+	result, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	dstContent := readLayerFile(t, files, dstLayer)
+	dstContent := readLayerFile(t, result.OutputFiles, dstLayer)
 	if strings.Count(dstContent, "import {") != 2 {
 		t.Errorf("expected 2 import blocks for for_each instances, got:\n%s", dstContent)
 	}
@@ -1821,7 +1840,7 @@ operations:
 		t.Error("expected key-b import")
 	}
 
-	srcContent := readLayerFile(t, files, srcLayer)
+	srcContent := readLayerFile(t, result.OutputFiles, srcLayer)
 	if strings.Count(srcContent, "removed {") != 1 {
 		t.Errorf("expected 1 removed block (base address), got:\n%s", srcContent)
 	}
@@ -1865,12 +1884,12 @@ operations:
 
 	engine := New(Config{StateReader: mock})
 
-	files, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
+	result, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	srcContent := readLayerFile(t, files, srcLayer)
+	srcContent := readLayerFile(t, result.OutputFiles, srcLayer)
 	// Should have 2 removed blocks: aws_instance.standalone (root) + module.foo (consolidated)
 	if strings.Count(srcContent, "removed {") != 2 {
 		t.Errorf("expected 2 removed blocks (root + consolidated module), got:\n%s", srcContent)
@@ -1963,16 +1982,16 @@ operations:
 
 	engine := New(Config{StateReader: mock})
 
-	files, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
+	result, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if len(files) != 2 {
-		t.Fatalf("expected 2 files (source + destination), got %d: %v", len(files), files)
+	if len(result.OutputFiles) != 2 {
+		t.Fatalf("expected 2 files (source + destination), got %d: %v", len(result.OutputFiles), result.OutputFiles)
 	}
 
-	dstContent := readLayerFile(t, files, dstLayer)
+	dstContent := readLayerFile(t, result.OutputFiles, dstLayer)
 	// Destination should have 2 import blocks (web + data), NOT ephemeral.
 	if strings.Count(dstContent, "import {") != 2 {
 		t.Errorf("expected 2 import blocks in destination, got:\n%s", dstContent)
@@ -1987,7 +2006,7 @@ operations:
 		t.Error("aws_instance.ephemeral should be omitted from destination imports")
 	}
 
-	srcContent := readLayerFile(t, files, srcLayer)
+	srcContent := readLayerFile(t, result.OutputFiles, srcLayer)
 	// Source should have 3 removed blocks (web, data, ephemeral).
 	if strings.Count(srcContent, "removed {") != 3 {
 		t.Errorf("expected 3 removed blocks in source, got:\n%s", srcContent)
@@ -2036,18 +2055,18 @@ operations:
 
 	engine := New(Config{StateReader: mock})
 
-	files, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
+	result, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	srcContent := readLayerFile(t, files, srcLayer)
+	srcContent := readLayerFile(t, result.OutputFiles, srcLayer)
 	// Should have removed block for ephemeral with destroy = true
 	if !strings.Contains(srcContent, "destroy = true") {
 		t.Errorf("expected 'destroy = true' for omitted resource, got:\n%s", srcContent)
 	}
 
-	dstContent := readLayerFile(t, files, dstLayer)
+	dstContent := readLayerFile(t, result.OutputFiles, dstLayer)
 	// Only aws_instance.web should have an import block
 	if strings.Count(dstContent, "import {") != 1 {
 		t.Errorf("expected 1 import block, got:\n%s", dstContent)
@@ -2100,12 +2119,12 @@ operations:
 
 	engine := New(Config{StateReader: mock})
 
-	files, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
+	result, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	dstContent := readLayerFile(t, files, dstLayer)
+	dstContent := readLayerFile(t, result.OutputFiles, dstLayer)
 	// aws_instance.web → aws_instance.api (renamed), aws_s3_bucket.data (unchanged)
 	if strings.Count(dstContent, "import {") != 2 {
 		t.Errorf("expected 2 import blocks, got:\n%s", dstContent)
@@ -2163,12 +2182,12 @@ operations:
 
 	engine := New(Config{StateReader: mock})
 
-	files, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
+	result, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	dstContent := readLayerFile(t, files, dstLayer)
+	dstContent := readLayerFile(t, result.OutputFiles, dstLayer)
 	// Both resources should have import blocks
 	if strings.Count(dstContent, "import {") != 2 {
 		t.Errorf("expected 2 import blocks, got:\n%s", dstContent)
@@ -2223,12 +2242,12 @@ operations:
 
 	engine := New(Config{StateReader: mock})
 
-	files, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
+	result, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	dstContent := readLayerFile(t, files, dstLayer)
+	dstContent := readLayerFile(t, result.OutputFiles, dstLayer)
 	// key_vault should be renamed to kv and use composite import ID
 	if !strings.Contains(dstContent, "azuredevops_serviceendpoint_azurerm.kv") {
 		t.Errorf("expected renamed address 'azuredevops_serviceendpoint_azurerm.kv', got:\n%s", dstContent)
@@ -2239,5 +2258,262 @@ operations:
 	// Original key_vault address should NOT appear in destination
 	if strings.Contains(dstContent, "azuredevops_serviceendpoint_azurerm.key_vault") {
 		t.Error("key_vault should have been renamed to kv in destination")
+	}
+}
+
+func TestEngine_ProcessFiles_StatusRetired(t *testing.T) {
+	dir := t.TempDir()
+	layerDir := filepath.Join(dir, "layers", "net")
+	if err := os.MkdirAll(layerDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// First file: status retired → should be skipped entirely
+	retiredContent := `
+description: "Old migration"
+status: retired
+operations:
+  - type: rename
+    layer: "` + layerDir + `"
+    renames:
+      - from: "module.old"
+        to: "module.new"
+`
+	retiredFile := filepath.Join(dir, "001_retired.yaml")
+	if err := os.WriteFile(retiredFile, []byte(retiredContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	engine := New(Config{StateReader: testutil.NewMockStateReader(nil)})
+
+	// Retired-only: should return empty results with no error
+	result, err := engine.ProcessFiles(context.Background(), []string{retiredFile})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.OutputFiles) != 0 {
+		t.Errorf("expected 0 files for retired migration, got %d: %v", len(result.OutputFiles), result.OutputFiles)
+	}
+	if len(result.SkippedFiles) != 1 {
+		t.Fatalf("expected 1 skipped file, got %d", len(result.SkippedFiles))
+	}
+	if result.SkippedFiles[0].Reason != SkipRetired {
+		t.Errorf("expected SkipRetired reason, got %v", result.SkippedFiles[0].Reason)
+	}
+
+	// Second file: active rename → should produce output
+	activeContent := `
+description: "Active rename"
+operations:
+  - type: rename
+    layer: "` + layerDir + `"
+    renames:
+      - from: "module.alpha"
+        to: "module.beta"
+`
+	activeFile := filepath.Join(dir, "002_active.yaml")
+	if err := os.WriteFile(activeFile, []byte(activeContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	engine2 := New(Config{StateReader: testutil.NewMockStateReader(nil)})
+
+	result, err = engine2.ProcessFiles(context.Background(), []string{retiredFile, activeFile})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.OutputFiles) != 1 {
+		t.Fatalf("expected 1 file (only active), got %d: %v", len(result.OutputFiles), result.OutputFiles)
+	}
+
+	content, err := os.ReadFile(result.OutputFiles[0])
+	if err != nil {
+		t.Fatalf("reading output: %v", err)
+	}
+	if !strings.Contains(string(content), "module.alpha") {
+		t.Error("expected module.alpha from active file")
+	}
+	if !strings.Contains(string(content), "module.beta") {
+		t.Error("expected module.beta from active file")
+	}
+}
+
+func TestEngine_ProcessFiles_LayerAutoSkip(t *testing.T) {
+	// Migration file references a non-existent source_layer.
+	// In non-strict mode, it should be auto-skipped gracefully.
+	dir := t.TempDir()
+	dstLayer := filepath.Join(dir, "layers", "app")
+	if err := os.MkdirAll(dstLayer, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	nonExistentLayer := filepath.Join(dir, "layers", "nonexistent")
+
+	migrationContent := `
+description: "Move from nonexistent layer"
+operations:
+  - type: move
+    source_layer: "` + nonExistentLayer + `"
+    destination_layer: "` + dstLayer + `"
+    resources:
+      - from: "aws_instance.web"
+        import_id: "i-0abc123"
+`
+	migrationFile := filepath.Join(dir, "001_missing_layer.yaml")
+	if err := os.WriteFile(migrationFile, []byte(migrationContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	engine := New(Config{StateReader: testutil.NewMockStateReader(nil)})
+
+	// Non-strict mode: auto-skipped, no error (does NOT count toward "all skipped")
+	result, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
+	if err != nil {
+		t.Fatalf("expected no error in non-strict mode (auto-skip), got: %v", err)
+	}
+	if len(result.OutputFiles) != 0 {
+		t.Errorf("expected 0 files for auto-skipped migration, got %d: %v", len(result.OutputFiles), result.OutputFiles)
+	}
+	if len(result.SkippedFiles) != 1 {
+		t.Fatalf("expected 1 skipped file, got %d", len(result.SkippedFiles))
+	}
+	if result.SkippedFiles[0].Reason != SkipLayerMissing {
+		t.Errorf("expected SkipLayerMissing reason, got %v", result.SkippedFiles[0].Reason)
+	}
+}
+
+func TestEngine_ProcessFiles_LayerExistsCondition(t *testing.T) {
+	dir := t.TempDir()
+	layerDir := filepath.Join(dir, "layers", "net")
+	existingDir := filepath.Join(dir, "layers", "source")
+	if err := os.MkdirAll(layerDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(existingDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	nonExistentDir := filepath.Join(dir, "layers", "gone")
+
+	// Test 1: layer_exists pointing to existing directory → proceeds
+	content1 := `
+description: "Rename with existing layer condition"
+condition:
+  layer_exists:
+    - "` + existingDir + `"
+operations:
+  - type: rename
+    layer: "` + layerDir + `"
+    renames:
+      - from: "module.old"
+        to: "module.new"
+`
+	file1 := filepath.Join(dir, "001_exists.yaml")
+	if err := os.WriteFile(file1, []byte(content1), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	engine := New(Config{StateReader: testutil.NewMockStateReader(nil)})
+	result, err := engine.ProcessFiles(context.Background(), []string{file1})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.OutputFiles) != 1 {
+		t.Fatalf("expected 1 file (condition met), got %d", len(result.OutputFiles))
+	}
+
+	// Test 2: layer_exists pointing to non-existent directory → skipped
+	content2 := `
+description: "Rename with missing layer condition"
+condition:
+  layer_exists:
+    - "` + nonExistentDir + `"
+operations:
+  - type: rename
+    layer: "` + layerDir + `"
+    renames:
+      - from: "module.alpha"
+        to: "module.beta"
+`
+	file2 := filepath.Join(dir, "002_missing.yaml")
+	if err := os.WriteFile(file2, []byte(content2), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	engine2 := New(Config{StateReader: testutil.NewMockStateReader(nil)})
+	result, err = engine2.ProcessFiles(context.Background(), []string{file2})
+	if err != nil {
+		t.Fatalf("unexpected error (should skip silently): %v", err)
+	}
+	if len(result.OutputFiles) != 0 {
+		t.Errorf("expected 0 files (condition not met, skipped), got %d", len(result.OutputFiles))
+	}
+}
+
+func TestEngine_ProcessFiles_LayerNotExistsCondition(t *testing.T) {
+	dir := t.TempDir()
+	layerDir := filepath.Join(dir, "layers", "net")
+	existingDir := filepath.Join(dir, "layers", "still_here")
+	if err := os.MkdirAll(layerDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(existingDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	nonExistentDir := filepath.Join(dir, "layers", "deleted")
+
+	// Test 1: layer_not_exists pointing to existing directory → skipped
+	content1 := `
+description: "Rename blocked by existing layer"
+condition:
+  layer_not_exists:
+    - "` + existingDir + `"
+operations:
+  - type: rename
+    layer: "` + layerDir + `"
+    renames:
+      - from: "module.old"
+        to: "module.new"
+`
+	file1 := filepath.Join(dir, "001_blocked.yaml")
+	if err := os.WriteFile(file1, []byte(content1), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	engine := New(Config{StateReader: testutil.NewMockStateReader(nil)})
+	result, err := engine.ProcessFiles(context.Background(), []string{file1})
+	if err != nil {
+		t.Fatalf("unexpected error (should skip silently): %v", err)
+	}
+	if len(result.OutputFiles) != 0 {
+		t.Errorf("expected 0 files (layer exists, condition fails), got %d", len(result.OutputFiles))
+	}
+
+	// Test 2: layer_not_exists pointing to non-existent directory → proceeds
+	content2 := `
+description: "Rename when layer is gone"
+condition:
+  layer_not_exists:
+    - "` + nonExistentDir + `"
+operations:
+  - type: rename
+    layer: "` + layerDir + `"
+    renames:
+      - from: "module.alpha"
+        to: "module.beta"
+`
+	file2 := filepath.Join(dir, "002_allowed.yaml")
+	if err := os.WriteFile(file2, []byte(content2), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	engine2 := New(Config{StateReader: testutil.NewMockStateReader(nil)})
+	result, err = engine2.ProcessFiles(context.Background(), []string{file2})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.OutputFiles) != 1 {
+		t.Fatalf("expected 1 file (condition met, proceeds), got %d", len(result.OutputFiles))
 	}
 }
