@@ -163,6 +163,11 @@ func validateMove(index int, op *Operation) []ValidationError {
 				})
 			}
 		}
+
+		// Check for duplicate 'from' addresses in overrides.
+		errs = append(errs, checkDuplicates(index, "overrides", op.Overrides, func(r ResourceMove) string { return r.From })...)
+		// Check for duplicate addresses in omit.
+		errs = append(errs, checkDuplicates(index, "omit", op.Omit, func(e OmitEntry) string { return e.Address })...)
 	} else if len(op.Resources) == 0 {
 		errs = append(errs, ValidationError{
 			OperationIndex: index,
@@ -190,6 +195,9 @@ func validateMove(index int, op *Operation) []ValidationError {
 	for i, res := range op.Resources {
 		errs = append(errs, validateResourceMove(index, i, &res)...)
 	}
+
+	// Check for duplicate 'from' addresses in resources.
+	errs = append(errs, checkDuplicates(index, "resources", op.Resources, func(r ResourceMove) string { return r.From })...)
 
 	return errs
 }
@@ -321,6 +329,9 @@ func validateRename(index int, op *Operation) []ValidationError {
 		}
 	}
 
+	// Check for duplicate 'from' addresses in renames.
+	errs = append(errs, checkDuplicates(index, "renames", op.Renames, func(e RenameEntry) string { return e.From })...)
+
 	return errs
 }
 
@@ -351,6 +362,9 @@ func validateRemove(index int, op *Operation) []ValidationError {
 			})
 		}
 	}
+
+	// Check for duplicate addresses in entries.
+	errs = append(errs, checkDuplicates(index, "entries", op.Entries, func(e RemoveEntry) string { return e.Address })...)
 
 	return errs
 }
@@ -391,6 +405,9 @@ func validateImport(index int, op *Operation) []ValidationError {
 		}
 	}
 
+	// Check for duplicate addresses in imports.
+	errs = append(errs, checkDuplicates(index, "imports", op.Imports, func(e ImportEntry) string { return e.Address })...)
+
 	return errs
 }
 
@@ -406,6 +423,27 @@ func validateCondition(cond *Condition) []ValidationError {
 		errs = append(errs, validateResourceCheck("condition.resources_not_exist", i, &cond.ResourcesNotExist[i])...)
 	}
 
+	// Check for contradictory conditions: same (layer, address) in both exist and not_exist.
+	existAddrs := make(map[string]bool)
+	for _, rc := range cond.ResourcesExist {
+		for _, addr := range rc.Addresses {
+			existAddrs[rc.Layer+"\x00"+addr] = true
+		}
+	}
+	for _, rc := range cond.ResourcesNotExist {
+		for _, addr := range rc.Addresses {
+			if existAddrs[rc.Layer+"\x00"+addr] {
+				errs = append(errs, ValidationError{
+					OperationIndex: -1,
+					Field:          "condition",
+					Message:        fmt.Sprintf("contradictory condition: %q in layer %q appears in both resources_exist and resources_not_exist", addr, rc.Layer),
+				})
+			}
+		}
+	}
+
+	// Check for contradictory layer conditions: same path in both layer_exists and layer_not_exists.
+	layerExistSet := make(map[string]bool)
 	for i, path := range cond.LayerExists {
 		if path == "" {
 			errs = append(errs, ValidationError{
@@ -414,6 +452,7 @@ func validateCondition(cond *Condition) []ValidationError {
 				Message:        "layer path must not be empty",
 			})
 		}
+		layerExistSet[path] = true
 	}
 
 	for i, path := range cond.LayerNotExists {
@@ -422,6 +461,13 @@ func validateCondition(cond *Condition) []ValidationError {
 				OperationIndex: -1,
 				Field:          fmt.Sprintf("condition.layer_not_exists[%d]", i),
 				Message:        "layer path must not be empty",
+			})
+		}
+		if layerExistSet[path] {
+			errs = append(errs, ValidationError{
+				OperationIndex: -1,
+				Field:          "condition",
+				Message:        fmt.Sprintf("contradictory condition: layer %q appears in both layer_exists and layer_not_exists", path),
 			})
 		}
 	}
@@ -460,5 +506,28 @@ func validateResourceCheck(parentField string, index int, rc *ResourceCheck) []V
 		}
 	}
 
+	return errs
+}
+
+// checkDuplicates detects duplicate keys in a slice of entries, using keyFn to extract
+// the key from each entry. Returns validation errors for any duplicates found.
+func checkDuplicates[T any](opIndex int, fieldName string, entries []T, keyFn func(T) string) []ValidationError {
+	var errs []ValidationError
+	seen := make(map[string]int) // key -> first index
+	for i, entry := range entries {
+		key := keyFn(entry)
+		if key == "" {
+			continue // empty keys are caught by other validation
+		}
+		if firstIdx, ok := seen[key]; ok {
+			errs = append(errs, ValidationError{
+				OperationIndex: opIndex,
+				Field:          fmt.Sprintf("%s[%d]", fieldName, i),
+				Message:        fmt.Sprintf("duplicate address %q (first at %s[%d])", key, fieldName, firstIdx),
+			})
+		} else {
+			seen[key] = i
+		}
+	}
 	return errs
 }

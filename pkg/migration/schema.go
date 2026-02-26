@@ -249,31 +249,30 @@ type OmitEntry struct {
 	Destroy *bool `yaml:"destroy,omitempty"`
 }
 
+// boolPtrDefault returns the value of a *bool pointer, or defaultVal if nil.
+func boolPtrDefault(p *bool, defaultVal bool) bool {
+	if p != nil {
+		return *p
+	}
+	return defaultVal
+}
+
 // DestroyValue returns the effective value of the Destroy field,
 // defaulting to false if not explicitly set.
 func (o *Operation) DestroyValue() bool {
-	if o.Destroy == nil {
-		return false
-	}
-	return *o.Destroy
+	return boolPtrDefault(o.Destroy, false)
 }
 
 // DestroyValue returns the effective value of the Destroy field,
 // defaulting to false if not explicitly set.
 func (e *RemoveEntry) DestroyValue() bool {
-	if e.Destroy == nil {
-		return false
-	}
-	return *e.Destroy
+	return boolPtrDefault(e.Destroy, false)
 }
 
 // DestroyValue returns the effective value of the Destroy field,
 // defaulting to false if not explicitly set.
 func (e *OmitEntry) DestroyValue() bool {
-	if e.Destroy == nil {
-		return false
-	}
-	return *e.Destroy
+	return boolPtrDefault(e.Destroy, false)
 }
 
 // FullAddress prepends the address prefix (with a dot separator) if non-empty.
