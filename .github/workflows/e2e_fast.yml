@@ -11,11 +11,16 @@ on:
   workflow_dispatch:
 
 permissions:
+  id-token: write
   contents: read
+
+env:
+  ARM_USE_OIDC: "true"
 
 jobs:
   e2e_fast:
     runs-on: ubuntu-latest-8cpu
+    environment: e2e
 
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -27,5 +32,10 @@ jobs:
       - uses: opentofu/setup-opentofu@9d84900f3238fab8cd84ce47d658d25dd008be2f # v1.0.8
 
       - name: Run fast e2e tests
+        env:
+          ARM_CLIENT_ID: ${{ vars.ARM_CLIENT_ID }}
+          ARM_TENANT_ID: ${{ vars.ARM_TENANT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ vars.ARM_SUBSCRIPTION_ID }}
+          E2E_STORAGE_ACCOUNT_NAME: ${{ vars.E2E_STORAGE_ACCOUNT_NAME }}
         run: |
           go test -tags=e2e_fast -v -timeout=10m -count=1 ./e2e/...

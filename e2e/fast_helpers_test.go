@@ -17,9 +17,12 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
+	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob"
 	"github.com/hashicorp/terraform-exec/tfexec"
 	tfjson "github.com/hashicorp/terraform-json"
 
+	"github.com/redtenant/tfmigrate/pkg/auth"
 	"github.com/redtenant/tfmigrate/pkg/engine"
 	"github.com/redtenant/tfmigrate/pkg/state"
 )
@@ -175,11 +178,18 @@ func tofuPlan(t *testing.T, workDir string, vars map[string]string) bool {
 }
 
 // tofuDestroy runs tofu destroy in the given directory with the provided variables.
-// Errors are logged but do not fail the test (cleanup best-effort).
+// It re-runs tofu init first to ensure the lock file and provider cache are
+// consistent (they can become stale when tests rewrite .tf files between init
+// and cleanup). Errors are logged but do not fail the test (cleanup best-effort).
 func tofuDestroy(t *testing.T, workDir string, vars map[string]string) {
 	t.Helper()
 	tf := newTerraform(t, workDir)
 	ctx := context.Background()
+
+	// Re-init to refresh the lock file before destroying.
+	if err := tf.Init(ctx); err != nil {
+		t.Logf("WARNING: tofu init in %s before destroy failed: %v", workDir, err)
+	}
 
 	var opts []tfexec.DestroyOption
 	for _, v := range varOpts(vars) {
@@ -398,5 +408,73 @@ func cleanupMigrationFiles(t *testing.T, layerDir string) {
 		if err := os.Remove(m); err != nil {
 			t.Logf("WARNING: removing %s: %v", m, err)
 		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Azure Blob Storage helpers (gated by E2E_STORAGE_ACCOUNT_NAME)
+// ---------------------------------------------------------------------------
+
+// requireEnv returns the value of the named environment variable,
+// skipping the test if it is not set or empty.
+func requireEnv(t *testing.T, key string) string {
+	t.Helper()
+	v := os.Getenv(key)
+	if v == "" {
+		t.Skipf("skipping: %s not set", key)
+	}
+	return v
+}
+
+// getCredential creates an azcore.TokenCredential from ARM_* environment variables.
+func getCredential(t *testing.T) azcore.TokenCredential {
+	t.Helper()
+	cfg, err := auth.NewCredentialConfiguration(auth.WithDefaultEnvironmentVariables())
+	if err != nil {
+		t.Fatalf("creating credential config: %v", err)
+	}
+	cred, err := cfg.TokenCredential()
+	if err != nil {
+		t.Fatalf("creating token credential: %v", err)
+	}
+	return cred
+}
+
+// createContainer creates a blob container in the given storage account.
+func createContainer(t *testing.T, ctx context.Context, cred azcore.TokenCredential, storageAccountName, containerName string) {
+	t.Helper()
+	serviceURL := fmt.Sprintf("https://%s.blob.core.windows.net", storageAccountName)
+	client, err := azblob.NewClient(serviceURL, cred, nil)
+	if err != nil {
+		t.Fatalf("creating blob client for %s: %v", storageAccountName, err)
+	}
+	if _, err = client.CreateContainer(ctx, containerName, nil); err != nil {
+		t.Fatalf("creating container %s: %v", containerName, err)
+	}
+}
+
+// deleteContainer deletes a blob container. Errors are logged but do not fail
+// the test (cleanup best-effort).
+func deleteContainer(t *testing.T, ctx context.Context, cred azcore.TokenCredential, storageAccountName, containerName string) {
+	t.Helper()
+	serviceURL := fmt.Sprintf("https://%s.blob.core.windows.net", storageAccountName)
+	client, err := azblob.NewClient(serviceURL, cred, nil)
+	if err != nil {
+		t.Logf("WARNING: creating blob client for cleanup: %v", err)
+		return
+	}
+	if _, err = client.DeleteContainer(ctx, containerName, nil); err != nil {
+		t.Logf("WARNING: deleting container %s: %v", containerName, err)
+	}
+}
+
+// storageInitArgs returns init arguments that provide backend-config for
+// DiscoverBackendConfig. Since fastproject layers use local backend (no
+// azurerm backend block), these init args are the sole source of storage
+// account and container name.
+func storageInitArgs(storageAccountName, containerName string) []string {
+	return []string{
+		"-backend-config=storage_account_name=" + storageAccountName,
+		"-backend-config=container_name=" + containerName,
 	}
 }
