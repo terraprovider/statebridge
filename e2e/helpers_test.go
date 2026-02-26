@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
@@ -297,6 +298,18 @@ func assertCleanPlan(t *testing.T, layerDir string, vars map[string]string) {
 	t.Helper()
 	if hasChanges := tofuPlan(t, layerDir, vars); hasChanges {
 		t.Errorf("expected clean plan in %s, but changes were detected", layerDir)
+	}
+}
+
+// assertFileContains asserts that the file at path contains the provided substring.
+func assertFileContains(t *testing.T, path, substr string) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("reading %s: %v", path, err)
+	}
+	if !strings.Contains(string(data), substr) {
+		t.Errorf("expected %s to contain %q", path, substr)
 	}
 }
 
