@@ -57,7 +57,7 @@ operations:
     source_layer: "` + srcLayer + `"
     destination_layer: "` + dstLayer + `"
     resources:
-      - address: "aws_instance.web"
+      - from: "aws_instance.web"
         import_id: "i-0abc123"
 `
 	migrationFile := filepath.Join(dir, "001_move.yaml")
@@ -180,8 +180,8 @@ description: "Remove deprecated resource"
 operations:
   - type: remove
     layer: "` + layerDir + `"
-    addresses:
-      - "aws_iam_role.deprecated"
+    entries:
+      - address: "aws_iam_role.deprecated"
 `
 	migrationFile := filepath.Join(dir, "001_remove.yaml")
 	if err := os.WriteFile(migrationFile, []byte(migrationContent), 0o644); err != nil {
@@ -221,7 +221,7 @@ operations:
     layer: "` + layerDir + `"
     imports:
       - address: "aws_db_instance.primary"
-        import_id: "my-database"
+        id: "my-database"
         provider: "aws.useast1"
 `
 	migrationFile := filepath.Join(dir, "001_import.yaml")
@@ -270,7 +270,7 @@ operations:
     source_layer: "` + srcLayer + `"
     destination_layer: "` + dstLayer + `"
     resources:
-      - address: "aws_s3_bucket.data"
+      - from: "aws_s3_bucket.data"
 `
 	migrationFile := filepath.Join(dir, "001_all.yaml")
 	if err := os.WriteFile(migrationFile, []byte(migrationContent), 0o644); err != nil {
@@ -337,7 +337,7 @@ operations:
     source_layer: "` + srcLayer + `"
     destination_layer: "` + dstLayer + `"
     resources:
-      - address: "aws_resource.items"
+      - from: "aws_resource.items"
         keys:
           exact_key: new_exact
           "prefix_*": '{{ .Key | trimPrefix "prefix_" }}'
@@ -417,7 +417,7 @@ operations:
     destination_layer: "` + dstLayer + `"
     address_prefix: "module.ig"
     resources:
-      - address: "azuread_access_package_catalog.all"
+      - from: "azuread_access_package_catalog.all"
         keys:
           mrt_customer: customer_approval
           mrt_vaw: vaw
@@ -482,14 +482,14 @@ operations:
     source_layer: "` + srcLayer + `"
     destination_layer: "` + engLayer + `"
     resources:
-      - address: "aws_resource.items"
+      - from: "aws_resource.items"
         keys:
           "eng_*": '{{ .Key }}'
   - type: move
     source_layer: "` + srcLayer + `"
     destination_layer: "` + finLayer + `"
     resources:
-      - address: "aws_resource.items"
+      - from: "aws_resource.items"
         keys:
           "fin_*": '{{ .Key }}'
 `
@@ -564,7 +564,7 @@ operations:
     source_layer: "` + srcLayer + `"
     destination_layer: "` + dstLayer + `"
     resources:
-      - address: "aws_resource.items"
+      - from: "aws_resource.items"
         keys:
           "eng_*": '{{ .Key }}'
 `
@@ -679,13 +679,13 @@ operations:
         to: "module.new_vpc"
   - type: remove
     layer: "` + layerDir + `"
-    addresses:
-      - "aws_security_group.legacy"
+    entries:
+      - address: "aws_security_group.legacy"
   - type: import
     layer: "` + layerDir + `"
     imports:
       - address: "aws_route_table.new"
-        import_id: "rtb-0abc123"
+        id: "rtb-0abc123"
 `
 	migrationFile := filepath.Join(dir, "001_multi.yaml")
 	if err := os.WriteFile(migrationFile, []byte(migrationContent), 0o644); err != nil {
@@ -771,9 +771,9 @@ description: "Multiple removals"
 operations:
   - type: remove
     layer: "` + layerDir + `"
-    addresses:
-      - "aws_iam_role.deprecated"
-      - "aws_iam_policy.old"
+    entries:
+      - address: "aws_iam_role.deprecated"
+      - address: "aws_iam_policy.old"
 `
 	migrationFile := filepath.Join(dir, "001_multi_removes.yaml")
 	if err := os.WriteFile(migrationFile, []byte(migrationContent), 0o644); err != nil {
@@ -855,8 +855,8 @@ operations:
     source_layer: "` + srcLayer + `"
     destination_layer: "` + dstLayer + `"
     resources:
-      - address: "module.old.resource.all"
-        destination_address: "module.new.resource.all"
+      - from: "module.old.resource.all"
+        to: "module.new.resource.all"
         keys:
           key1: key1
 `
@@ -917,7 +917,7 @@ operations:
     source_layer: "` + srcLayer + `"
     destination_layer: "` + dstLayer + `"
     resources:
-      - address: "aws_instance.web"
+      - from: "aws_instance.web"
         import_id: "i-0abc123"
 `
 	migrationFile := filepath.Join(dir, "001_cond.yaml")
@@ -969,7 +969,7 @@ operations:
     source_layer: "` + srcLayer + `"
     destination_layer: "` + dstLayer + `"
     resources:
-      - address: "aws_instance.web"
+      - from: "aws_instance.web"
         import_id: "i-0abc123"
 `
 	migrationFile := filepath.Join(dir, "001_cond_fail.yaml")
@@ -1020,7 +1020,7 @@ operations:
     source_layer: "` + srcLayer + `"
     destination_layer: "` + dstLayer + `"
     resources:
-      - address: "aws_instance.web"
+      - from: "aws_instance.web"
         import_id: "i-0abc123"
 `
 	migrationFile := filepath.Join(dir, "001_not_exist_fail.yaml")
@@ -1068,7 +1068,7 @@ operations:
     source_layer: "/nonexistent/layer"
     destination_layer: "/other/layer"
     resources:
-      - address: "aws_instance.web"
+      - from: "aws_instance.web"
         import_id: "i-0abc123"
 `
 	migrationFile := filepath.Join(dir, "001_state_err.yaml")
@@ -1145,7 +1145,7 @@ operations:
     source_layer: "` + srcLayer + `"
     destination_layer: "` + dstLayer + `"
     resources:
-      - address: "aws_instance.gone"
+      - from: "aws_instance.gone"
         import_id: "i-gone"
 `
 	moveFile := filepath.Join(dir, "001_move.yaml")
@@ -1214,7 +1214,7 @@ operations:
     source_layer: "` + srcLayer + `"
     destination_layer: "` + dstLayer + `"
     resources:
-      - address: "aws_instance.missing` + fmt.Sprintf("%d", i) + `"
+      - from: "aws_instance.missing` + fmt.Sprintf("%d", i) + `"
         import_id: "i-missing"
 `
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
@@ -1267,7 +1267,7 @@ operations:
     source_layer: "/nonexistent/layer"
     destination_layer: "/other/layer"
     resources:
-      - address: "aws_instance.web"
+      - from: "aws_instance.web"
         import_id: "i-0abc123"
 `
 	condFile := filepath.Join(dir, "001_cond_err.yaml")
@@ -1332,7 +1332,7 @@ operations:
     source_layer: "` + srcLayer + `"
     destination_layer: "` + dstLayer + `"
     resources:
-      - address: "module.foo"
+      - from: "module.foo"
 `
 	migrationFile := filepath.Join(dir, "001_module_move.yaml")
 	if err := os.WriteFile(migrationFile, []byte(migrationContent), 0o644); err != nil {
@@ -1403,8 +1403,8 @@ operations:
     source_layer: "` + srcLayer + `"
     destination_layer: "` + dstLayer + `"
     resources:
-      - address: "module.foo"
-        destination_address: "module.bar"
+      - from: "module.foo"
+        to: "module.bar"
 `
 	migrationFile := filepath.Join(dir, "001_module_rename.yaml")
 	if err := os.WriteFile(migrationFile, []byte(migrationContent), 0o644); err != nil {
@@ -1456,7 +1456,7 @@ operations:
     destination_layer: "` + dstLayer + `"
     address_prefix: "module.ig"
     resources:
-      - address: "module.foo"
+      - from: "module.foo"
 `
 	migrationFile := filepath.Join(dir, "001_prefix_module.yaml")
 	if err := os.WriteFile(migrationFile, []byte(migrationContent), 0o644); err != nil {
@@ -1502,7 +1502,7 @@ operations:
     source_layer: "` + srcLayer + `"
     destination_layer: "` + dstLayer + `"
     resources:
-      - address: "module.foo"
+      - from: "module.foo"
 `
 	migrationFile := filepath.Join(dir, "001_nested.yaml")
 	if err := os.WriteFile(migrationFile, []byte(migrationContent), 0o644); err != nil {
@@ -1565,8 +1565,8 @@ operations:
     source_layer: "` + srcLayer + `"
     destination_layer: "` + dstLayer + `"
     resources:
-      - address: "module.foo"
-        destination_address: "module.bar"
+      - from: "module.foo"
+        to: "module.bar"
 `
 	migrationFile := filepath.Join(dir, "001_foreach.yaml")
 	if err := os.WriteFile(migrationFile, []byte(migrationContent), 0o644); err != nil {
@@ -1626,7 +1626,7 @@ operations:
     source_layer: "` + srcLayer + `"
     destination_layer: "` + dstLayer + `"
     resources:
-      - address: "module.empty"
+      - from: "module.empty"
 `
 	migrationFile := filepath.Join(dir, "001_empty_module.yaml")
 	if err := os.WriteFile(migrationFile, []byte(migrationContent), 0o644); err != nil {
@@ -1729,9 +1729,9 @@ operations:
     source_layer: "` + srcLayer + `"
     destination_layer: "` + dstLayer + `"
     all_resources: true
-    resources:
-      - address: "aws_instance.web"
-        destination_address: "aws_instance.api"
+    overrides:
+      - from: "aws_instance.web"
+        to: "aws_instance.api"
 `
 	migrationFile := filepath.Join(dir, "001_rename.yaml")
 	if err := os.WriteFile(migrationFile, []byte(migrationContent), 0o644); err != nil {
@@ -2076,9 +2076,9 @@ operations:
     source_layer: "` + srcLayer + `"
     destination_layer: "` + dstLayer + `"
     all_resources: true
-    resources:
-      - address: "aws_instance.web"
-        destination_address: "aws_instance.api"
+    overrides:
+      - from: "aws_instance.web"
+        to: "aws_instance.api"
     omit:
       - address: "aws_instance.ephemeral"
 `
@@ -2143,8 +2143,8 @@ operations:
     source_layer: "` + srcLayer + `"
     destination_layer: "` + dstLayer + `"
     all_resources: true
-    resources:
-      - address: "azuredevops_serviceendpoint_azurerm.key_vault"
+    overrides:
+      - from: "azuredevops_serviceendpoint_azurerm.key_vault"
         import_id: "{{ .Attributes.project_id }}/{{ .Attributes.id }}"
 `
 	migrationFile := filepath.Join(dir, "001_import_override.yaml")
@@ -2202,9 +2202,9 @@ operations:
     source_layer: "` + srcLayer + `"
     destination_layer: "` + dstLayer + `"
     all_resources: true
-    resources:
-      - address: "azuredevops_serviceendpoint_azurerm.key_vault"
-        destination_address: "azuredevops_serviceendpoint_azurerm.kv"
+    overrides:
+      - from: "azuredevops_serviceendpoint_azurerm.key_vault"
+        to: "azuredevops_serviceendpoint_azurerm.kv"
         import_id: "{{ .Attributes.project_id }}/{{ .Attributes.id }}"
 `
 	migrationFile := filepath.Join(dir, "001_rename_import.yaml")

@@ -25,7 +25,7 @@ Every migration file has this top-level structure:
 
 ```yaml
 description: "<required: what this migration does>"
-schema_version: "2"  # optional
+schema_version: "2"  # optional: documents current schema version for forward compatibility
 condition:           # optional: skip file if checks fail
   resources_exist:
     - layer: "<layer path>"
@@ -82,7 +82,7 @@ All operation types support an optional `address_prefix` field that is prepended
 - type: move
   address_prefix: "module.identity_governance"
   resources:
-    - address: "azuread_access_package.all"
+    - from: "azuread_access_package.all"
     # Resolved address: module.identity_governance.azuread_access_package.all
 ```
 
@@ -91,8 +91,8 @@ All operation types support an optional `address_prefix` field that is prepended
 Moves resources between two layers. Generates `removed` in source + `import` in destination.
 
 Required fields: `source_layer`, `destination_layer`, and either `resources` (non-empty list) or `all_resources: true`
-Each resource requires: `address`
-Optional fields: `description`, `address_prefix`, `all_resources`, per-resource `destination_address`, `keys`, `import_id`
+Each resource requires: `from`
+Optional fields: `description`, `address_prefix`, `all_resources`, per-resource `to`, `keys`, `import_id`
 
 **Simple move (single or non-for_each resource):**
 
@@ -102,7 +102,7 @@ Optional fields: `description`, `address_prefix`, `all_resources`, per-resource 
   source_layer: "./layers/compute"
   destination_layer: "./layers/app"
   resources:
-    - address: "aws_instance.web"
+    - from: "aws_instance.web"
       import_id: "i-0abc123def456"  # omit to auto-resolve from source state
 ```
 
@@ -113,7 +113,7 @@ Optional fields: `description`, `address_prefix`, `all_resources`, per-resource 
   source_layer: "./layers/old"
   destination_layer: "./layers/new"
   resources:
-    - address: "azuread_access_package_catalog.all"
+    - from: "azuread_access_package_catalog.all"
       keys:
         mrt_customer: customer_approval               # exact key → exact key
         mrt_outbound_provisioning: resource_tenant_access
@@ -140,12 +140,12 @@ Match priority: exact > longest prefix > catch-all.
 - Single resource: generates one `removed` + one `import`
 - For_each resource: expands all instances with same keys
 
-**`destination_address`** — Override when the destination base address differs from source:
+**`to`** — Override when the destination base address differs from source:
 
 ```yaml
 resources:
-  - address: "module.old.resource.all"
-    destination_address: "module.new.resource.all"
+  - from: "module.old.resource.all"
+    to: "module.new.resource.all"
     keys:
       key1: key1
 ```
@@ -154,12 +154,12 @@ resources:
 
 ```yaml
 resources:
-  - address: "module.foo"                        # moves all resources under module.foo
-  - address: "module.foo"
-    destination_address: "module.bar"            # remaps module prefix
+  - from: "module.foo"                           # moves all resources under module.foo
+  - from: "module.foo"
+    to: "module.bar"                             # remaps module prefix
 ```
 
-Constraints: `keys` and `import_id` are not allowed on module moves. `destination_address` must also be a module address if specified. Import IDs are auto-resolved from state. Works with `address_prefix` and at any nesting depth (nested sub-modules are included). The removed blocks are automatically consolidated into a single module-level `removed { from = module.foo }`.
+Constraints: `keys` and `import_id` are not allowed on module moves. `to` must also be a module address if specified. Import IDs are auto-resolved from state. Works with `address_prefix` and at any nesting depth (nested sub-modules are included). The removed blocks are automatically consolidated into a single module-level `removed { from = module.foo }`.
 
 **Full-layer move (`all_resources: true`)** — move all managed resources from the source layer:
 
@@ -172,19 +172,19 @@ Constraints: `keys` and `import_id` are not allowed on module moves. `destinatio
 
 Discovers all managed resources from the source layer's state and generates removed + import blocks for each. Data sources are excluded. Module-level consolidation applies automatically.
 
-Optional `resources` entries alongside `all_resources` serve as destination address overrides (renaming during bulk move):
+Optional `overrides` entries alongside `all_resources` serve as destination address overrides (renaming during bulk move):
 
 ```yaml
 - type: move
   source_layer: "./layers/old"
   destination_layer: "./layers/new"
   all_resources: true
-  resources:
-    - address: "aws_instance.web"
-      destination_address: "aws_instance.api"   # rename this one; all others keep their address
+  overrides:
+    - from: "aws_instance.web"
+      to: "aws_instance.api"                    # rename this one; all others keep their address
 ```
 
-Override constraints: `destination_address` or `import_id` (or both) is required, `keys` is not allowed, module addresses cannot be used as overrides, and `address_prefix` cannot be combined with `all_resources`. Use `import_id` to override automatic import ID resolution for resources that need composite IDs (e.g., `"{{ .Attributes.project_id }}/{{ .Attributes.id }}"`).
+Override constraints: `to` or `import_id` (or both) is required, `keys` is not allowed, module addresses cannot be used as overrides, and `address_prefix` cannot be combined with `all_resources`. Use `import_id` to override automatic import ID resolution for resources that need composite IDs (e.g., `"{{ .Attributes.project_id }}/{{ .Attributes.id }}"`).
 
 **`omit`** — Exclude resources from import during an `all_resources` move:
 
@@ -199,7 +199,7 @@ Override constraints: `destination_address` or `import_id` (or both) is required
       destroy: true
 ```
 
-Omitted resources get `removed` blocks in the source layer (with `destroy = false` by default) but no `import` blocks in the destination layer. Set `destroy: true` per entry to also destroy the resource. `omit` is only valid with `all_resources: true`, and omit addresses cannot overlap with `resources` override addresses.
+Omitted resources get `removed` blocks in the source layer (with `destroy = false` by default) but no `import` blocks in the destination layer. Set `destroy: true` per entry to also destroy the resource. `omit` is only valid with `all_resources: true`, and omit addresses cannot overlap with `overrides` addresses.
 
 ### Operation: `rename`
 
@@ -224,17 +224,19 @@ Each rename requires: `from`, `to`
 
 Removes resources from state. Generates `removed` blocks. Default: `destroy = false` (keeps infrastructure).
 
-Required fields: `layer`, `addresses` (non-empty list)
-Optional fields: `destroy` (default: false)
+Required fields: `layer`, `entries` (non-empty list)
+Each entry requires: `address`
+Optional fields: `destroy` (default: false), per-entry `destroy` override
 
 ```yaml
 - type: remove
   description: "Stop managing deprecated resources"
   layer: "./layers/iam"
   destroy: false
-  addresses:
-    - "aws_iam_role.deprecated"
-    - "aws_iam_policy.old_policy"
+  entries:
+    - address: "aws_iam_role.deprecated"
+    - address: "aws_iam_policy.old_policy"
+      destroy: true                              # per-entry override
 ```
 
 ### Operation: `import`
@@ -242,19 +244,20 @@ Optional fields: `destroy` (default: false)
 Imports existing resources into state. Generates `import` blocks.
 
 Required fields: `layer`, `imports` (non-empty list)
-Each import requires: `address`, `import_id`
-Optional per-import: `provider`
+Each import requires: `address`, `id`
+Optional: `provider` at operation level (default for all entries), per-entry `provider` override
 
 ```yaml
 - type: import
   description: "Import existing databases"
   layer: "./layers/database"
+  provider: "aws.useast1"                       # optional: operation-level default
   imports:
     - address: "aws_db_instance.primary"
-      import_id: "my-database-identifier"
-      provider: "aws.useast1"
+      id: "my-database-identifier"
     - address: "aws_db_instance.replica"
-      import_id: "my-replica-identifier"
+      id: "my-replica-identifier"
+      provider: "aws.uswest2"                   # per-entry override
 ```
 
 ---
@@ -322,7 +325,7 @@ Use these patterns to translate natural language into the correct YAML.
   source_layer: "<layer A path>"
   destination_layer: "<layer B path>"
   resources:
-    - address: "<resource address>"
+    - from: "<resource address>"
 ```
 
 If the user provides a specific import ID, add `import_id` to the resource. Otherwise omit it (auto-resolved from state).
@@ -335,9 +338,9 @@ If the user provides a specific import ID, add `import_id` to the resource. Othe
   destination_layer: "<destination>"
   address_prefix: "<common module path>"     # if resources share a prefix
   resources:
-    - address: "<resource 1>"
-    - address: "<resource 2>"
-    - address: "<resource 3>"
+    - from: "<resource 1>"
+    - from: "<resource 2>"
+    - from: "<resource 3>"
 ```
 
 ### "Move entire module from layer A to layer B"
@@ -347,9 +350,9 @@ If the user provides a specific import ID, add `import_id` to the resource. Othe
   source_layer: "<layer A path>"
   destination_layer: "<layer B path>"
   resources:
-    - address: "module.<module_name>"
-    - address: "module.<module_name>"
-      destination_address: "module.<new_name>"   # if renaming the module
+    - from: "module.<module_name>"
+    - from: "module.<module_name>"
+      to: "module.<new_name>"                    # if renaming the module
 ```
 
 Module addresses (`module.foo`, `module.foo.module.bar`) are automatically detected. All managed resources under the module are discovered from state and moved. No `keys` or `import_id` needed.
@@ -383,11 +386,11 @@ Works for resources, modules, and for_each key changes.
 ```yaml
 - type: remove
   layer: "<layer A path>"
-  addresses:
-    - "<resource address>"
+  entries:
+    - address: "<resource address>"
 ```
 
-If the user says "delete" or "destroy", set `destroy: true`. If they say "remove from state" or "stop managing", use the default `destroy: false`.
+If the user says "delete" or "destroy", set `destroy: true` (either at operation level or per-entry). If they say "remove from state" or "stop managing", use the default `destroy: false`.
 
 ### "Import X into layer A"
 
@@ -396,7 +399,7 @@ If the user says "delete" or "destroy", set `destroy: true`. If they say "remove
   layer: "<layer A path>"
   imports:
     - address: "<resource address>"
-      import_id: "<cloud resource ID>"
+      id: "<cloud resource ID>"
 ```
 
 The user must provide the import ID (ARN, resource ID, etc.) or you must ask for it.
@@ -410,7 +413,7 @@ Use a keyed move with exact key mappings:
   source_layer: "<layer path>"
   destination_layer: "<layer path>"          # can be the same layer
   resources:
-    - address: "<resource>.all"
+    - from: "<resource>.all"
       keys:
         old_key_1: new_key_1
         old_key_2: new_key_2
@@ -432,9 +435,9 @@ To rename specific resources during the bulk move, add override entries:
   source_layer: "<layer A path>"
   destination_layer: "<layer B path>"
   all_resources: true
-  resources:
-    - address: "<resource to rename>"
-      destination_address: "<new address>"
+  overrides:
+    - from: "<resource to rename>"
+      to: "<new address>"
 ```
 
 ### "Move all instances of a for_each resource"
@@ -446,7 +449,7 @@ Without a `keys` map, all instances are moved with the same keys:
   source_layer: "<source>"
   destination_layer: "<destination>"
   resources:
-    - address: "<resource_type>.<name>"
+    - from: "<resource_type>.<name>"
 ```
 
 ### "Split resource by key prefix" / "Route different for_each keys to different layers"
@@ -459,14 +462,14 @@ operations:
     source_layer: "<source layer>"
     destination_layer: "<layer A>"
     resources:
-      - address: "<resource>.all"
+      - from: "<resource>.all"
         keys:
           "<prefix_a>_*": '{{ .Key | trimPrefix "<prefix_a>_" }}'
   - type: move
     source_layer: "<source layer>"
     destination_layer: "<layer B>"
     resources:
-      - address: "<resource>.all"
+      - from: "<resource>.all"
         keys:
           "<prefix_b>_*": '{{ .Key | trimPrefix "<prefix_b>_" }}'
 ```
@@ -495,7 +498,7 @@ operations:
     source_layer: "<source layer>"
     destination_layer: "<destination layer>"
     resources:
-      - address: "<resource address>"
+      - from: "<resource address>"
 ```
 
 ### "Run in CI where backends aren't initialized" / "Auto-init layers"
@@ -526,15 +529,15 @@ When generating YAML, ensure:
 2. `operations` list is non-empty
 3. Every operation has a `type` field
 4. `move` requires `source_layer`, `destination_layer`, and either non-empty `resources` list or `all_resources: true`
-5. Each resource requires `address` (except when using `all_resources` without overrides)
+5. Each resource requires `from` (except when using `all_resources` without overrides)
 5a. `all_resources` is only valid on `move` operations; cannot be combined with `address_prefix`
-5b. When `all_resources: true`, override entries require `destination_address` or `import_id` (or both), cannot use `keys`, and cannot use module addresses
-5c. `omit` is only valid with `all_resources: true`; each entry requires `address`; omit addresses cannot overlap with `resources` override addresses
+5b. When `all_resources: true`, `overrides` entries require `to` or `import_id` (or both), cannot use `keys`, and cannot use module addresses
+5c. `omit` is only valid with `all_resources: true`; each entry requires `address`; omit addresses cannot overlap with `overrides` addresses
 6. `keys` map entries: `*` only at the end of a pattern (e.g., `"prefix_*"`)
 7. `rename` requires `layer` and non-empty `renames` list; each entry requires `from` and `to`
-8. `remove` requires `layer` and non-empty `addresses` list
-9. `import` requires `layer` and non-empty `imports` list; each entry requires `address` and `import_id`
-10. Template expressions (`{{ }}`) are only valid in `keys` map values and `import_id` fields
+8. `remove` requires `layer` and non-empty `entries` list; each entry requires `address`
+9. `import` requires `layer` and non-empty `imports` list; each entry requires `address` and `id`
+10. Template expressions (`{{ }}`) are only valid in `keys` map values, `import_id` fields (move), and `id` fields (import)
 11. Layer paths are relative to where `tfmigrate generate` is run
 12. When `keys` is present, all state keys must be covered (completeness check)
 13. A key matching multiple operations is an overlap error

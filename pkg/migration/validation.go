@@ -125,7 +125,7 @@ func validateMove(index int, op *Operation) []ValidationError {
 				Message:        "address_prefix cannot be used with all_resources",
 			})
 		}
-		for i, res := range op.Resources {
+		for i, res := range op.Overrides {
 			errs = append(errs, validateAllResourcesOverride(index, i, &res)...)
 		}
 		// Validate omit entries
@@ -141,13 +141,13 @@ func validateMove(index int, op *Operation) []ValidationError {
 			}
 			omitAddresses[entry.Address] = true
 		}
-		// Check for overlap between omit and resources overrides
-		for i, res := range op.Resources {
-			if omitAddresses[res.Address] {
+		// Check for overlap between omit and overrides
+		for i, res := range op.Overrides {
+			if omitAddresses[res.From] {
 				errs = append(errs, ValidationError{
 					OperationIndex: index,
-					Field:          fmt.Sprintf("resources[%d].address", i),
-					Message:        fmt.Sprintf("address %q appears in both resources and omit", res.Address),
+					Field:          fmt.Sprintf("overrides[%d].from", i),
+					Message:        fmt.Sprintf("address %q appears in both overrides and omit", res.From),
 				})
 			}
 		}
@@ -167,6 +167,14 @@ func validateMove(index int, op *Operation) []ValidationError {
 		})
 	}
 
+	if len(op.Overrides) > 0 && !op.AllResources {
+		errs = append(errs, ValidationError{
+			OperationIndex: index,
+			Field:          "overrides",
+			Message:        "overrides is only valid when all_resources is true",
+		})
+	}
+
 	for i, res := range op.Resources {
 		errs = append(errs, validateResourceMove(index, i, &res)...)
 	}
@@ -179,16 +187,16 @@ func validateResourceMove(opIndex, resIndex int, res *ResourceMove) []Validation
 	var errs []ValidationError
 	fieldPrefix := fmt.Sprintf("resources[%d]", resIndex)
 
-	if res.Address == "" {
+	if res.From == "" {
 		errs = append(errs, ValidationError{
 			OperationIndex: opIndex,
-			Field:          fieldPrefix + ".address",
-			Message:        "resource address is required",
+			Field:          fieldPrefix + ".from",
+			Message:        "resource 'from' address is required",
 		})
 	}
 
 	// Validate module-level move constraints
-	if res.Address != "" && IsModuleAddress(res.Address) {
+	if res.From != "" && IsModuleAddress(res.From) {
 		if len(res.Keys) > 0 {
 			errs = append(errs, ValidationError{
 				OperationIndex: opIndex,
@@ -203,11 +211,11 @@ func validateResourceMove(opIndex, resIndex int, res *ResourceMove) []Validation
 				Message:        "import_id is not supported for module-level moves (auto-resolved from state)",
 			})
 		}
-		if res.DestinationAddress != "" && !IsModuleAddress(res.DestinationAddress) {
+		if res.To != "" && !IsModuleAddress(res.To) {
 			errs = append(errs, ValidationError{
 				OperationIndex: opIndex,
-				Field:          fieldPrefix + ".destination_address",
-				Message:        "destination_address for a module move must also be a module address",
+				Field:          fieldPrefix + ".to",
+				Message:        "'to' for a module move must also be a module address",
 			})
 		}
 	}
@@ -233,31 +241,31 @@ func validateResourceMove(opIndex, resIndex int, res *ResourceMove) []Validation
 }
 
 // validateAllResourcesOverride checks a ResourceMove entry used as an override
-// alongside all_resources: true. Overrides can specify a destination_address
-// to rename a resource during a bulk move and/or an import_id to override
-// automatic import ID resolution for specific resources.
+// alongside all_resources: true. Overrides can specify a 'to' address to rename
+// a resource during a bulk move and/or an import_id to override automatic import
+// ID resolution for specific resources.
 func validateAllResourcesOverride(opIndex, resIndex int, res *ResourceMove) []ValidationError {
 	var errs []ValidationError
-	fieldPrefix := fmt.Sprintf("resources[%d]", resIndex)
+	fieldPrefix := fmt.Sprintf("overrides[%d]", resIndex)
 
 	if len(res.Keys) > 0 {
 		errs = append(errs, ValidationError{
 			OperationIndex: opIndex,
 			Field:          fieldPrefix + ".keys",
-			Message:        "keys cannot be used with all_resources",
+			Message:        "keys cannot be used with all_resources overrides",
 		})
 	}
-	if res.DestinationAddress == "" && res.ImportID == "" {
+	if res.To == "" && res.ImportID == "" {
 		errs = append(errs, ValidationError{
 			OperationIndex: opIndex,
 			Field:          fieldPrefix,
-			Message:        "override entry requires destination_address or import_id (otherwise the entry has no effect)",
+			Message:        "override entry requires 'to' or 'import_id' (otherwise the entry has no effect)",
 		})
 	}
-	if res.Address != "" && IsModuleAddress(res.Address) {
+	if res.From != "" && IsModuleAddress(res.From) {
 		errs = append(errs, ValidationError{
 			OperationIndex: opIndex,
-			Field:          fieldPrefix + ".address",
+			Field:          fieldPrefix + ".from",
 			Message:        "module addresses cannot be used as overrides with all_resources",
 		})
 	}
@@ -315,12 +323,21 @@ func validateRemove(index int, op *Operation) []ValidationError {
 			Message:        "remove operation requires a layer path",
 		})
 	}
-	if len(op.Addresses) == 0 {
+	if len(op.Entries) == 0 {
 		errs = append(errs, ValidationError{
 			OperationIndex: index,
-			Field:          "addresses",
-			Message:        "remove operation requires at least one address",
+			Field:          "entries",
+			Message:        "remove operation requires at least one entry",
 		})
+	}
+	for i, entry := range op.Entries {
+		if entry.Address == "" {
+			errs = append(errs, ValidationError{
+				OperationIndex: index,
+				Field:          fmt.Sprintf("entries[%d].address", i),
+				Message:        "remove entry requires an address",
+			})
+		}
 	}
 
 	return errs
@@ -353,11 +370,11 @@ func validateImport(index int, op *Operation) []ValidationError {
 				Message:        "import entry requires an address",
 			})
 		}
-		if entry.ImportID == "" {
+		if entry.ID == "" {
 			errs = append(errs, ValidationError{
 				OperationIndex: index,
-				Field:          fieldPrefix + ".import_id",
-				Message:        "import entry requires an import_id",
+				Field:          fieldPrefix + ".id",
+				Message:        "import entry requires an id",
 			})
 		}
 	}

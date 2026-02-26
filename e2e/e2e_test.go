@@ -52,7 +52,7 @@ operations:
     source_layer: "%s"
     destination_layer: "%s"
     resources:
-      - address: "azurerm_virtual_network.main"
+      - from: "azurerm_virtual_network.main"
 `, sharedDir, networkingDir))
 
 	// Add the VNet resource definition to the networking layer
@@ -165,7 +165,7 @@ operations:
     source_layer: "%s"
     destination_layer: "%s"
     resources:
-      - address: "azurerm_network_security_group.nsgs"
+      - from: "azurerm_network_security_group.nsgs"
         keys:
           alpha: app_alpha
           beta: app_beta
@@ -372,8 +372,8 @@ description: "Stop managing importable RG"
 operations:
   - type: remove
     layer: "%s"
-    addresses:
-      - "azurerm_resource_group.importable"
+    entries:
+      - address: "azurerm_resource_group.importable"
 `, sharedDir))
 
 	// Remove the resource definition from shared layer
@@ -444,7 +444,7 @@ operations:
     layer: "%s"
     imports:
       - address: "azurerm_resource_group.importable"
-        import_id: "%s"
+        id: "%s"
 `, sharedDir, importID))
 
 	// Add the resource definition back to shared layer
@@ -532,8 +532,8 @@ condition:
 operations:
   - type: remove
     layer: "%s"
-    addresses:
-      - "azurerm_resource_group.importable"
+    entries:
+      - address: "azurerm_resource_group.importable"
 `, sharedDir, sharedDir))
 
 	// Run the migration engine — should produce no files since condition is not met
@@ -658,7 +658,7 @@ operations:
     source_layer: "%s"
     destination_layer: "%s"
     resources:
-      - address: "azurerm_virtual_network.main"
+      - from: "azurerm_virtual_network.main"
 `, sharedDir, networkingDir))
 
 	// Add VNet resource to networking layer

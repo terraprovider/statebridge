@@ -164,22 +164,22 @@ func (e *Engine) processMove(ctx context.Context, op *migration.Operation, opInd
 	dstLayer := op.DestinationLayer
 
 	if op.AllResources {
-		return e.processMoveAllResources(ctx, srcLayer, dstLayer, op.Resources, op.Omit, op.Description)
+		return e.processMoveAllResources(ctx, srcLayer, dstLayer, op.Overrides, op.Omit, op.Description)
 	}
 
 	var blocks []generator.Block
 
 	for i, res := range op.Resources {
-		srcAddr := migration.FullAddress(op.AddressPrefix, res.Address)
-		dstBaseAddr := res.DestinationAddress
+		srcAddr := migration.FullAddress(op.AddressPrefix, res.From)
+		dstBaseAddr := res.To
 		if dstBaseAddr == "" {
-			dstBaseAddr = res.Address
+			dstBaseAddr = res.From
 		}
 		dstAddr := migration.FullAddress(op.AddressPrefix, dstBaseAddr)
 
 		resBlocks, err := e.processMoveResource(ctx, srcLayer, dstLayer, srcAddr, dstAddr, &res, opIndex, i, tracker, op.Description)
 		if err != nil {
-			return nil, fmt.Errorf("resource %q: %w", res.Address, err)
+			return nil, fmt.Errorf("resource %q: %w", res.From, err)
 		}
 		blocks = append(blocks, resBlocks...)
 	}
@@ -322,8 +322,8 @@ func (e *Engine) processMoveAllResources(
 	}
 	overrideMap := make(map[string]overrideConfig)
 	for _, res := range overrides {
-		overrideMap[res.Address] = overrideConfig{
-			destinationAddress: res.DestinationAddress,
+		overrideMap[res.From] = overrideConfig{
+			destinationAddress: res.To,
 			importID:           res.ImportID,
 		}
 	}
@@ -334,7 +334,7 @@ func (e *Engine) processMoveAllResources(
 	}
 	omitMap := make(map[string]omitConfig)
 	for _, entry := range omitEntries {
-		omitMap[entry.Address] = omitConfig{destroy: entry.Destroy}
+		omitMap[entry.Address] = omitConfig{destroy: entry.DestroyValue()}
 	}
 
 	// Group resources by base address (strip key suffixes)
@@ -610,13 +610,18 @@ func (e *Engine) processRename(op *migration.Operation) ([]generator.Block, erro
 }
 
 // processRemove handles remove operations, generating removed blocks for each
-// address in the operation.
+// entry in the operation.
 func (e *Engine) processRemove(op *migration.Operation) ([]generator.Block, error) {
+	opDestroy := op.DestroyValue()
 	var blocks []generator.Block
-	for _, addr := range op.Addresses {
+	for _, entry := range op.Entries {
+		destroy := opDestroy
+		if entry.Destroy != nil {
+			destroy = *entry.Destroy
+		}
 		blocks = append(blocks, &generator.RemovedBlock{
-			From:        migration.FullAddress(op.AddressPrefix, addr),
-			Destroy:     op.DestroyValue(),
+			From:        migration.FullAddress(op.AddressPrefix, entry.Address),
+			Destroy:     destroy,
 			Layer:       op.Layer,
 			Description: op.Description,
 			Source:      e.currentSourceFile,
@@ -630,10 +635,14 @@ func (e *Engine) processRemove(op *migration.Operation) ([]generator.Block, erro
 func (e *Engine) processImport(op *migration.Operation) ([]generator.Block, error) {
 	var blocks []generator.Block
 	for _, entry := range op.Imports {
+		provider := entry.Provider
+		if provider == "" {
+			provider = op.Provider
+		}
 		blocks = append(blocks, &generator.ImportBlock{
 			To:          migration.FullAddress(op.AddressPrefix, entry.Address),
-			ID:          entry.ImportID,
-			Provider:    entry.Provider,
+			ID:          entry.ID,
+			Provider:    provider,
 			Layer:       op.Layer,
 			Description: op.Description,
 			Source:      e.currentSourceFile,
