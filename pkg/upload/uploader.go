@@ -89,7 +89,7 @@ func (u *AzureBlobUploader) DownloadBlob(ctx context.Context, blobName string) (
 	if err != nil {
 		return nil, fmt.Errorf("downloading blob %q from container %q: %w", blobName, u.containerName, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {

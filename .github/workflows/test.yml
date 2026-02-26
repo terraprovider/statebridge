@@ -6,7 +6,9 @@ on:
 
 permissions:
   contents: read
+  issues: read
   checks: write
+  pull-requests: write
 
 jobs:
   test:
@@ -28,8 +30,9 @@ jobs:
 
       - name: Test Summary
         uses: EnricoMi/publish-unit-test-result-action@c950f6fb443cb5af20a377fd0dfaa78838901040 # v2.23.0
+        if: (!cancelled())
         with:
           files: test-results.xml
-        if: always()
+          check_name: Unit Test Results
 
       - run: go build ./...
