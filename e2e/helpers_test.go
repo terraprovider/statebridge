@@ -248,11 +248,11 @@ func runGenerate(t *testing.T, migrationPaths []string) []string {
 	eng := engine.New(cfg)
 	ctx := context.Background()
 
-	files, err := eng.ProcessFiles(ctx, migrationPaths)
+	result, err := eng.ProcessFiles(ctx, migrationPaths)
 	if err != nil {
 		t.Fatalf("processing migration files: %v", err)
 	}
-	return files
+	return result.OutputFiles
 }
 
 // updateTfFile overwrites a .tf file in the given directory.

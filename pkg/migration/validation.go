@@ -30,6 +30,18 @@ func (e ValidationError) Error() string {
 // It collects all validation errors rather than failing on the first one,
 // enabling users to fix all problems in a single pass.
 func Validate(mf *MigrationFile) []ValidationError {
+	// Check status first — retired files skip all other validation.
+	if mf.Status == StatusRetired {
+		return nil
+	}
+	if mf.Status != StatusActive {
+		return []ValidationError{{
+			OperationIndex: -1,
+			Field:          "status",
+			Message:        fmt.Sprintf("unknown status %q (valid: retired)", mf.Status),
+		}}
+	}
+
 	var errs []ValidationError
 
 	if mf.Description == "" {
@@ -125,7 +137,7 @@ func validateMove(index int, op *Operation) []ValidationError {
 				Message:        "address_prefix cannot be used with all_resources",
 			})
 		}
-		for i, res := range op.Resources {
+		for i, res := range op.Overrides {
 			errs = append(errs, validateAllResourcesOverride(index, i, &res)...)
 		}
 		// Validate omit entries
@@ -141,16 +153,21 @@ func validateMove(index int, op *Operation) []ValidationError {
 			}
 			omitAddresses[entry.Address] = true
 		}
-		// Check for overlap between omit and resources overrides
-		for i, res := range op.Resources {
-			if omitAddresses[res.Address] {
+		// Check for overlap between omit and overrides
+		for i, res := range op.Overrides {
+			if omitAddresses[res.From] {
 				errs = append(errs, ValidationError{
 					OperationIndex: index,
-					Field:          fmt.Sprintf("resources[%d].address", i),
-					Message:        fmt.Sprintf("address %q appears in both resources and omit", res.Address),
+					Field:          fmt.Sprintf("overrides[%d].from", i),
+					Message:        fmt.Sprintf("address %q appears in both overrides and omit", res.From),
 				})
 			}
 		}
+
+		// Check for duplicate 'from' addresses in overrides.
+		errs = append(errs, checkDuplicates(index, "overrides", op.Overrides, func(r ResourceMove) string { return r.From })...)
+		// Check for duplicate addresses in omit.
+		errs = append(errs, checkDuplicates(index, "omit", op.Omit, func(e OmitEntry) string { return e.Address })...)
 	} else if len(op.Resources) == 0 {
 		errs = append(errs, ValidationError{
 			OperationIndex: index,
@@ -167,9 +184,20 @@ func validateMove(index int, op *Operation) []ValidationError {
 		})
 	}
 
+	if len(op.Overrides) > 0 && !op.AllResources {
+		errs = append(errs, ValidationError{
+			OperationIndex: index,
+			Field:          "overrides",
+			Message:        "overrides is only valid when all_resources is true",
+		})
+	}
+
 	for i, res := range op.Resources {
 		errs = append(errs, validateResourceMove(index, i, &res)...)
 	}
+
+	// Check for duplicate 'from' addresses in resources.
+	errs = append(errs, checkDuplicates(index, "resources", op.Resources, func(r ResourceMove) string { return r.From })...)
 
 	return errs
 }
@@ -179,16 +207,16 @@ func validateResourceMove(opIndex, resIndex int, res *ResourceMove) []Validation
 	var errs []ValidationError
 	fieldPrefix := fmt.Sprintf("resources[%d]", resIndex)
 
-	if res.Address == "" {
+	if res.From == "" {
 		errs = append(errs, ValidationError{
 			OperationIndex: opIndex,
-			Field:          fieldPrefix + ".address",
-			Message:        "resource address is required",
+			Field:          fieldPrefix + ".from",
+			Message:        "resource 'from' address is required",
 		})
 	}
 
 	// Validate module-level move constraints
-	if res.Address != "" && IsModuleAddress(res.Address) {
+	if res.From != "" && IsModuleAddress(res.From) {
 		if len(res.Keys) > 0 {
 			errs = append(errs, ValidationError{
 				OperationIndex: opIndex,
@@ -203,11 +231,11 @@ func validateResourceMove(opIndex, resIndex int, res *ResourceMove) []Validation
 				Message:        "import_id is not supported for module-level moves (auto-resolved from state)",
 			})
 		}
-		if res.DestinationAddress != "" && !IsModuleAddress(res.DestinationAddress) {
+		if res.To != "" && !IsModuleAddress(res.To) {
 			errs = append(errs, ValidationError{
 				OperationIndex: opIndex,
-				Field:          fieldPrefix + ".destination_address",
-				Message:        "destination_address for a module move must also be a module address",
+				Field:          fieldPrefix + ".to",
+				Message:        "'to' for a module move must also be a module address",
 			})
 		}
 	}
@@ -233,31 +261,31 @@ func validateResourceMove(opIndex, resIndex int, res *ResourceMove) []Validation
 }
 
 // validateAllResourcesOverride checks a ResourceMove entry used as an override
-// alongside all_resources: true. Overrides can specify a destination_address
-// to rename a resource during a bulk move and/or an import_id to override
-// automatic import ID resolution for specific resources.
+// alongside all_resources: true. Overrides can specify a 'to' address to rename
+// a resource during a bulk move and/or an import_id to override automatic import
+// ID resolution for specific resources.
 func validateAllResourcesOverride(opIndex, resIndex int, res *ResourceMove) []ValidationError {
 	var errs []ValidationError
-	fieldPrefix := fmt.Sprintf("resources[%d]", resIndex)
+	fieldPrefix := fmt.Sprintf("overrides[%d]", resIndex)
 
 	if len(res.Keys) > 0 {
 		errs = append(errs, ValidationError{
 			OperationIndex: opIndex,
 			Field:          fieldPrefix + ".keys",
-			Message:        "keys cannot be used with all_resources",
+			Message:        "keys cannot be used with all_resources overrides",
 		})
 	}
-	if res.DestinationAddress == "" && res.ImportID == "" {
+	if res.To == "" && res.ImportID == "" {
 		errs = append(errs, ValidationError{
 			OperationIndex: opIndex,
 			Field:          fieldPrefix,
-			Message:        "override entry requires destination_address or import_id (otherwise the entry has no effect)",
+			Message:        "override entry requires 'to' or 'import_id' (otherwise the entry has no effect)",
 		})
 	}
-	if res.Address != "" && IsModuleAddress(res.Address) {
+	if res.From != "" && IsModuleAddress(res.From) {
 		errs = append(errs, ValidationError{
 			OperationIndex: opIndex,
-			Field:          fieldPrefix + ".address",
+			Field:          fieldPrefix + ".from",
 			Message:        "module addresses cannot be used as overrides with all_resources",
 		})
 	}
@@ -301,6 +329,9 @@ func validateRename(index int, op *Operation) []ValidationError {
 		}
 	}
 
+	// Check for duplicate 'from' addresses in renames.
+	errs = append(errs, checkDuplicates(index, "renames", op.Renames, func(e RenameEntry) string { return e.From })...)
+
 	return errs
 }
 
@@ -315,13 +346,25 @@ func validateRemove(index int, op *Operation) []ValidationError {
 			Message:        "remove operation requires a layer path",
 		})
 	}
-	if len(op.Addresses) == 0 {
+	if len(op.Entries) == 0 {
 		errs = append(errs, ValidationError{
 			OperationIndex: index,
-			Field:          "addresses",
-			Message:        "remove operation requires at least one address",
+			Field:          "entries",
+			Message:        "remove operation requires at least one entry",
 		})
 	}
+	for i, entry := range op.Entries {
+		if entry.Address == "" {
+			errs = append(errs, ValidationError{
+				OperationIndex: index,
+				Field:          fmt.Sprintf("entries[%d].address", i),
+				Message:        "remove entry requires an address",
+			})
+		}
+	}
+
+	// Check for duplicate addresses in entries.
+	errs = append(errs, checkDuplicates(index, "entries", op.Entries, func(e RemoveEntry) string { return e.Address })...)
 
 	return errs
 }
@@ -353,14 +396,17 @@ func validateImport(index int, op *Operation) []ValidationError {
 				Message:        "import entry requires an address",
 			})
 		}
-		if entry.ImportID == "" {
+		if entry.ID == "" {
 			errs = append(errs, ValidationError{
 				OperationIndex: index,
-				Field:          fieldPrefix + ".import_id",
-				Message:        "import entry requires an import_id",
+				Field:          fieldPrefix + ".id",
+				Message:        "import entry requires an id",
 			})
 		}
 	}
+
+	// Check for duplicate addresses in imports.
+	errs = append(errs, checkDuplicates(index, "imports", op.Imports, func(e ImportEntry) string { return e.Address })...)
 
 	return errs
 }
@@ -375,6 +421,55 @@ func validateCondition(cond *Condition) []ValidationError {
 
 	for i := range cond.ResourcesNotExist {
 		errs = append(errs, validateResourceCheck("condition.resources_not_exist", i, &cond.ResourcesNotExist[i])...)
+	}
+
+	// Check for contradictory conditions: same (layer, address) in both exist and not_exist.
+	existAddrs := make(map[string]bool)
+	for _, rc := range cond.ResourcesExist {
+		for _, addr := range rc.Addresses {
+			existAddrs[rc.Layer+"\x00"+addr] = true
+		}
+	}
+	for _, rc := range cond.ResourcesNotExist {
+		for _, addr := range rc.Addresses {
+			if existAddrs[rc.Layer+"\x00"+addr] {
+				errs = append(errs, ValidationError{
+					OperationIndex: -1,
+					Field:          "condition",
+					Message:        fmt.Sprintf("contradictory condition: %q in layer %q appears in both resources_exist and resources_not_exist", addr, rc.Layer),
+				})
+			}
+		}
+	}
+
+	// Check for contradictory layer conditions: same path in both layer_exists and layer_not_exists.
+	layerExistSet := make(map[string]bool)
+	for i, path := range cond.LayerExists {
+		if path == "" {
+			errs = append(errs, ValidationError{
+				OperationIndex: -1,
+				Field:          fmt.Sprintf("condition.layer_exists[%d]", i),
+				Message:        "layer path must not be empty",
+			})
+		}
+		layerExistSet[path] = true
+	}
+
+	for i, path := range cond.LayerNotExists {
+		if path == "" {
+			errs = append(errs, ValidationError{
+				OperationIndex: -1,
+				Field:          fmt.Sprintf("condition.layer_not_exists[%d]", i),
+				Message:        "layer path must not be empty",
+			})
+		}
+		if layerExistSet[path] {
+			errs = append(errs, ValidationError{
+				OperationIndex: -1,
+				Field:          "condition",
+				Message:        fmt.Sprintf("contradictory condition: layer %q appears in both layer_exists and layer_not_exists", path),
+			})
+		}
 	}
 
 	return errs
@@ -411,5 +506,28 @@ func validateResourceCheck(parentField string, index int, rc *ResourceCheck) []V
 		}
 	}
 
+	return errs
+}
+
+// checkDuplicates detects duplicate keys in a slice of entries, using keyFn to extract
+// the key from each entry. Returns validation errors for any duplicates found.
+func checkDuplicates[T any](opIndex int, fieldName string, entries []T, keyFn func(T) string) []ValidationError {
+	var errs []ValidationError
+	seen := make(map[string]int) // key -> first index
+	for i, entry := range entries {
+		key := keyFn(entry)
+		if key == "" {
+			continue // empty keys are caught by other validation
+		}
+		if firstIdx, ok := seen[key]; ok {
+			errs = append(errs, ValidationError{
+				OperationIndex: opIndex,
+				Field:          fmt.Sprintf("%s[%d]", fieldName, i),
+				Message:        fmt.Sprintf("duplicate address %q (first at %s[%d])", key, fieldName, firstIdx),
+			})
+		} else {
+			seen[key] = i
+		}
+	}
 	return errs
 }

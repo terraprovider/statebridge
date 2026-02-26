@@ -46,6 +46,18 @@ func EvaluateMetadataConditions(
 
 	cond := meta.Conditions
 
+	// Layer existence conditions — cheap checks, no state reading needed.
+	for _, path := range cond.LayerExists {
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			return false, nil
+		}
+	}
+	for _, path := range cond.LayerNotExists {
+		if _, err := os.Stat(path); err == nil {
+			return false, nil
+		}
+	}
+
 	for _, check := range cond.ResourcesExist {
 		if check.Layer != "." {
 			fmt.Fprintf(os.Stderr, "Warning: cross-layer condition (layer=%q) cannot be evaluated, treating as met\n", check.Layer)

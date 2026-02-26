@@ -10,7 +10,9 @@ import (
 	"strings"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
+	tfjson "github.com/hashicorp/terraform-json"
 
+	"github.com/redtenant/tfmigrate/pkg/conditions"
 	"github.com/redtenant/tfmigrate/pkg/generator"
 	"github.com/redtenant/tfmigrate/pkg/state"
 	"github.com/redtenant/tfmigrate/pkg/upload"
@@ -162,63 +164,20 @@ func (d *Downloader) Download(ctx context.Context, targetDir string) ([]string, 
 type stateReaderGetter func() (state.StateReader, error)
 
 // evaluateConditions checks whether a migration's conditions are met.
-// Returns true if the migration should be applied.
+// Delegates to the shared conditions package.
 func (d *Downloader) evaluateConditions(
 	ctx context.Context,
 	meta *generator.MigrationMetadata,
 	getReader stateReaderGetter,
 	targetDir string,
 ) (bool, error) {
-	cond := meta.Conditions
-	if cond == nil {
-		return true, nil
-	}
-
-	for _, check := range cond.ResourcesExist {
-		if check.Layer != "." {
-			fmt.Fprintf(os.Stderr, "Warning: cross-layer condition (layer=%q) cannot be evaluated during download, treating as met\n", check.Layer)
-			continue
-		}
-
+	// Adapt the lazy stateReaderGetter to a conditions.StateReaderFunc.
+	readState := func(ctx context.Context, layerDir string) (*tfjson.State, error) {
 		reader, err := getReader()
 		if err != nil {
-			return false, err
+			return nil, err
 		}
-
-		s, err := reader.ReadState(ctx, targetDir)
-		if err != nil {
-			return false, fmt.Errorf("reading state for %q: %w", targetDir, err)
-		}
-
-		for _, addr := range check.Addresses {
-			if !state.ResourceExists(s, addr) {
-				return false, nil
-			}
-		}
+		return reader.ReadState(ctx, layerDir)
 	}
-
-	for _, check := range cond.ResourcesNotExist {
-		if check.Layer != "." {
-			fmt.Fprintf(os.Stderr, "Warning: cross-layer condition (layer=%q) cannot be evaluated during download, treating as met\n", check.Layer)
-			continue
-		}
-
-		reader, err := getReader()
-		if err != nil {
-			return false, err
-		}
-
-		s, err := reader.ReadState(ctx, targetDir)
-		if err != nil {
-			return false, fmt.Errorf("reading state for %q: %w", targetDir, err)
-		}
-
-		for _, addr := range check.Addresses {
-			if state.ResourceExists(s, addr) {
-				return false, nil
-			}
-		}
-	}
-
-	return true, nil
+	return conditions.EvaluateMetadataConditions(ctx, meta, readState, targetDir)
 }

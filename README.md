@@ -28,7 +28,7 @@ operations:
     source_layer: "./layers/compute"
     destination_layer: "./layers/app"
     resources:
-      - address: "aws_instance.web"
+      - from: "aws_instance.web"
         import_id: "i-0abc123def456"
 ```
 
@@ -91,8 +91,11 @@ tfmigrate generate migrations/001_move.yaml other_migrations/
 | `--upload` | Upload generated files to Azure Blob Storage after generation |
 | `--backend-config` | Backend configuration passed to tofu init, as `key=value` or path to a file (repeatable) |
 | `--force` | Force upload even if existing migrations are still active (overwrite protection bypass; only relevant with `--upload`) |
+| `--strict` | Treat missing layer directories as hard errors instead of auto-skipping |
 
 ### Dry Run
+
+By default, migration files referencing non-existent layer directories (e.g., `source_layer` that was deleted after a migration was applied) are automatically skipped with a message. Use `--strict` to make missing layers a hard error.
 
 Preview what would be generated without writing any files:
 
@@ -170,6 +173,12 @@ Error: refusing to overwrite "migrations/migration.001_move.a1b2c3d4.tf": migrat
 This protects against a common CI failure mode: a pipeline partially applies migrations across layers (e.g., L10 applied, L30 fails, L50 pending), then re-runs `generate --upload` which would otherwise overwrite the still-needed import blocks.
 
 The guard requires the `tofu` binary to read layer state. If `tofu` is not available, the guard is silently disabled and upload proceeds without protection. Use `--force` to explicitly bypass the guard when intentional overwrite is needed.
+
+#### Auto-Pruning Stale Blobs
+
+When using `generate --upload`, migration blobs for retired files (`status: retired`) and files whose source layers no longer exist are automatically pruned from blob storage. This keeps storage clean without manual intervention.
+
+Auto-pruning only applies to layers that active migrations are uploading to. For complete cleanup across all layers, use the `prune` command.
 
 #### Authentication
 
@@ -272,6 +281,27 @@ if [ $? -eq 2 ]; then
 fi
 ```
 
+### `prune`
+
+Removes completed migration blobs from Azure Blob Storage.
+
+```bash
+# Dry run: see what would be pruned
+tfmigrate prune --dry-run ./layers/compute ./layers/networking
+
+# Prune completed migrations (evaluates embedded conditions)
+tfmigrate prune ./layers/compute ./layers/networking
+
+# Force delete all migration blobs
+tfmigrate prune --force ./layers/compute
+```
+
+**Flags:**
+- `--dry-run`: List what would be pruned without deleting
+- `--backend-config`: Backend configuration for tofu init (repeatable)
+- `--tofu-path`: Path to the tofu binary (default: auto-detect)
+- `--force`: Delete all migration blobs without evaluating conditions
+
 ### CI Workflow
 
 The full workflow for applying migrations in CI:
@@ -371,6 +401,8 @@ operations:
     # ... operation-specific fields
 ```
 
+- `status` (optional): `"retired"` to skip the file entirely (no state reads, no processing)
+
 ### Common Fields
 
 All operation types support an optional `address_prefix` field that is prepended (with a dot separator) to all resource addresses in the operation:
@@ -379,7 +411,7 @@ All operation types support an optional `address_prefix` field that is prepended
 - type: move
   address_prefix: "module.identity_governance"
   resources:
-    - address: "azuread_access_package.all"
+    - from: "azuread_access_package.all"
     # Full address: module.identity_governance.azuread_access_package.all
 ```
 
@@ -396,19 +428,19 @@ Moves resources between OpenTofu layers. Generates `removed` blocks in the sourc
   destination_layer: "./layers/app"
   address_prefix: "module.main"              # optional
   resources:
-    - address: "aws_instance.web"
+    - from: "aws_instance.web"
       import_id: "i-0abc123def456"           # optional: auto-resolved from state if omitted
-    - address: "aws_instance.api"
+    - from: "aws_instance.api"
 ```
 
 When `import_id` is omitted, tfmigrate reads the source layer's state and extracts the resource's `id` attribute automatically.
 
-**`destination_address`** — When the destination base address differs from the source:
+**`to`** — When the destination base address differs from the source:
 
 ```yaml
 resources:
-  - address: "module.old.resource.all"
-    destination_address: "module.new.resource.all"
+  - from: "module.old.resource.all"
+    to: "module.new.resource.all"
     keys:
       key1: key1
 ```
@@ -417,12 +449,12 @@ resources:
 
 ```yaml
 resources:
-  - address: "module.foo"
-  - address: "module.foo"
-    destination_address: "module.bar"   # optional: remap module prefix
+  - from: "module.foo"
+  - from: "module.foo"
+    to: "module.bar"   # optional: remap module prefix
 ```
 
-When a module address is specified (e.g., `module.foo`), tfmigrate discovers all managed resources under that module from the source layer's state and generates import + removed blocks for each. The removed blocks are automatically consolidated into a single `removed { from = module.foo }`. Module moves do not support `keys` or `import_id` (import IDs are auto-resolved from state). If `destination_address` is provided, it must also be a module address. This works with `address_prefix` and at any nesting depth (nested sub-modules are included).
+When a module address is specified (e.g., `module.foo`), tfmigrate discovers all managed resources under that module from the source layer's state and generates import + removed blocks for each. The removed blocks are automatically consolidated into a single `removed { from = module.foo }`. Module moves do not support `keys` or `import_id` (import IDs are auto-resolved from state). If `to` is provided, it must also be a module address. This works with `address_prefix` and at any nesting depth (nested sub-modules are included).
 
 **`all_resources`** — Move all managed resources from the source layer to the destination layer:
 
@@ -436,19 +468,19 @@ When a module address is specified (e.g., `module.foo`), tfmigrate discovers all
 
 When `all_resources: true` is set, tfmigrate discovers all managed resources from the source layer's state and generates removed + import blocks for each. Data sources are excluded. Module-level consolidation applies automatically to the removed blocks.
 
-Optional `resources` entries can be specified alongside `all_resources` to override destination addresses for specific resources (e.g., renaming during a bulk move):
+Optional `overrides` entries can be specified alongside `all_resources` to override destination addresses for specific resources (e.g., renaming during a bulk move):
 
 ```yaml
 - type: move
   source_layer: "./layers/old"
   destination_layer: "./layers/new"
   all_resources: true
-  resources:
-    - address: "aws_instance.web"
-      destination_address: "aws_instance.api"   # rename this one
+  overrides:
+    - from: "aws_instance.web"
+      to: "aws_instance.api"   # rename this one
 ```
 
-All other resources keep their addresses unchanged. Override constraints: `destination_address` or `import_id` (or both) is required, `keys` is not allowed, module addresses cannot be used as overrides, and `address_prefix` cannot be combined with `all_resources`.
+All other resources keep their addresses unchanged. Override constraints: `to` or `import_id` (or both) is required, `keys` is not allowed, module addresses cannot be used as overrides, and `address_prefix` cannot be combined with `all_resources`.
 
 Use `import_id` on override entries to provide custom import IDs for resources whose auto-resolved `id` attribute doesn't match the provider's expected import format:
 
@@ -457,8 +489,8 @@ Use `import_id` on override entries to provide custom import IDs for resources w
   source_layer: "./layers/old"
   destination_layer: "./layers/new"
   all_resources: true
-  resources:
-    - address: "azuredevops_serviceendpoint_azurerm.key_vault"
+  overrides:
+    - from: "azuredevops_serviceendpoint_azurerm.key_vault"
       import_id: "{{ .Attributes.project_id }}/{{ .Attributes.id }}"
 ```
 
@@ -502,9 +534,10 @@ Removes resources from state tracking. By default, the underlying infrastructure
   description: "Stop managing deprecated IAM resources"
   layer: "./layers/iam"
   destroy: false                             # default; set to true to also destroy
-  addresses:
-    - "aws_iam_role.deprecated"
-    - "aws_iam_policy.old_policy"
+  entries:
+    - address: "aws_iam_role.deprecated"
+    - address: "aws_iam_policy.old_policy"
+      destroy: true                          # per-entry override
 ```
 
 #### `import` — Import Existing Resources
@@ -515,13 +548,26 @@ Imports existing cloud resources into OpenTofu state. Generates `import` blocks.
 - type: import
   description: "Import existing databases"
   layer: "./layers/database"
+  provider: "aws.useast1"                    # optional: operation-level default
   imports:
     - address: "aws_db_instance.primary"
-      import_id: "my-database-identifier"
-      provider: "aws.useast1"                # optional provider alias
+      id: "my-database-identifier"
     - address: "aws_db_instance.replica"
-      import_id: "my-replica-identifier"
+      id: "my-replica-identifier"
+      provider: "aws.uswest2"               # per-entry override
 ```
+
+### Retiring Migration Files
+
+When a migration has been fully applied and is no longer needed, mark it as retired rather than deleting it:
+
+```yaml
+description: "Moved compute resources (completed 2024-01)"
+status: retired
+operations: []
+```
+
+Retired files are skipped immediately during processing — no validation, no state reads, no condition evaluation. This is the cheapest way to disable old migration files.
 
 ## Keyed Moves
 
@@ -532,7 +578,7 @@ For `for_each` resources, use the `keys` map to specify how individual state key
   source_layer: "./layers/old"
   destination_layer: "./layers/new"
   resources:
-    - address: "azuread_access_package_catalog.all"
+    - from: "azuread_access_package_catalog.all"
       keys:
         mrt_customer: customer_approval                  # exact key rename
         mrt_outbound_provisioning: resource_tenant_access
@@ -564,14 +610,14 @@ operations:
     source_layer: "./layers/shared"
     destination_layer: "./layers/engineering"
     resources:
-      - address: "aws_resource.assignments"
+      - from: "aws_resource.assignments"
         keys:
           "eng_*": '{{ .Key | trimPrefix "eng_" }}'
   - type: move
     source_layer: "./layers/shared"
     destination_layer: "./layers/finance"
     resources:
-      - address: "aws_resource.assignments"
+      - from: "aws_resource.assignments"
         keys:
           "fin_*": '{{ .Key | trimPrefix "fin_" }}'
 ```
@@ -618,7 +664,7 @@ operations:
     source_layer: "./layers/compute"
     destination_layer: "./layers/app"
     resources:
-      - address: "aws_instance.web"
+      - from: "aws_instance.web"
 ```
 
 ### Condition Types
@@ -629,6 +675,20 @@ operations:
 | `resources_not_exist` | NONE of the listed addresses must be found in the layer's state |
 
 All condition checks are ANDed — every check must pass for the migration to proceed.
+
+#### `layer_exists` / `layer_not_exists`
+
+Check directory existence without reading state (much cheaper than `resources_exist`):
+
+```yaml
+condition:
+  layer_exists:
+    - "./layers/source"              # all paths must exist on disk
+  layer_not_exists:
+    - "./layers/deprecated"          # none of the paths may exist
+```
+
+Useful for skipping migrations after a source layer has been intentionally deleted.
 
 ### Address Matching
 
@@ -685,21 +745,21 @@ operations:
     destination_layer: ./blueprints/61-identity-governance
     address_prefix: module.identity_governance
     resources:
-      - address: azuread_access_package_catalog.all
+      - from: azuread_access_package_catalog.all
         keys:
           mrt_customer: customer_approval
           mrt_outbound_provisioning: resource_tenant_access
           mrt_privileged_access: privileged_access
           mrt_vaw: vaw
 
-      - address: azuread_access_package.all
+      - from: azuread_access_package.all
         keys:
           "mrt_customer_*": 'customer_approval_{{ .Key | trimPrefix "mrt_customer_" }}'
           "mrt_privileged_access_*": 'privileged_access_{{ .Key | trimPrefix "mrt_privileged_access_" }}'
           "mrt_outbound_provisioning_*": 'resource_tenant_access_{{ .Key | trimPrefix "mrt_outbound_provisioning_" }}'
           vaw_access: vaw_access
 
-      - address: azuread_access_package_resource_package_association.all
+      - from: azuread_access_package_resource_package_association.all
         keys:
           "mrt_customer_*": 'customer_approval_{{ .Key | trimPrefix "mrt_customer_" | split "_entra_group_" | at 0 }}_AadGroup_{{ .Attributes.catalog_resource_association_id | split "/" | at 1 }}'
           "mrt_privileged_access_*": 'privileged_access_{{ .Key | trimPrefix "mrt_privileged_access_" | split "_entra_group_" | at 0 }}_AadGroup_{{ .Attributes.catalog_resource_association_id | split "/" | at 1 }}'

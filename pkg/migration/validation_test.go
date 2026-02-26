@@ -4,6 +4,10 @@ import (
 	"testing"
 )
 
+func boolPtr(b bool) *bool {
+	return &b
+}
+
 func TestValidate_ValidMoveOperation(t *testing.T) {
 	mf := &MigrationFile{
 		Description: "Valid move",
@@ -13,7 +17,7 @@ func TestValidate_ValidMoveOperation(t *testing.T) {
 				SourceLayer:      "./src",
 				DestinationLayer: "./dst",
 				Resources: []ResourceMove{
-					{Address: "aws_instance.web"},
+					{From: "aws_instance.web"},
 				},
 			},
 		},
@@ -35,7 +39,7 @@ func TestValidate_ValidMoveWithKeys(t *testing.T) {
 				DestinationLayer: "./dst",
 				Resources: []ResourceMove{
 					{
-						Address: "aws_s3_bucket.data",
+						From: "aws_s3_bucket.data",
 						Keys: map[string]string{
 							"exact_key":  "new_key",
 							"prefix_*":   `{{ .Key | trimPrefix "prefix_" }}`,
@@ -63,7 +67,7 @@ func TestValidate_ValidMoveWithAddressPrefix(t *testing.T) {
 				DestinationLayer: "./dst",
 				AddressPrefix:    "module.identity_governance",
 				Resources: []ResourceMove{
-					{Address: "azuread_access_package_catalog.all"},
+					{From: "azuread_access_package_catalog.all"},
 				},
 			},
 		},
@@ -100,9 +104,9 @@ func TestValidate_ValidRemoveOperation(t *testing.T) {
 		Description: "Valid remove",
 		Operations: []Operation{
 			{
-				Type:      OpRemove,
-				Layer:     "./layers/legacy",
-				Addresses: []string{"aws_iam_role.deprecated"},
+				Type:    OpRemove,
+				Layer:   "./layers/legacy",
+				Entries: []RemoveEntry{{Address: "aws_iam_role.deprecated"}},
 			},
 		},
 	}
@@ -121,7 +125,7 @@ func TestValidate_ValidImportOperation(t *testing.T) {
 				Type:  OpImport,
 				Layer: "./layers/db",
 				Imports: []ImportEntry{
-					{Address: "aws_db_instance.primary", ImportID: "my-db-id"},
+					{Address: "aws_db_instance.primary", ID: "my-db-id"},
 				},
 			},
 		},
@@ -137,9 +141,9 @@ func TestValidate_MissingDescription(t *testing.T) {
 	mf := &MigrationFile{
 		Operations: []Operation{
 			{
-				Type:      OpRemove,
-				Layer:     "./l",
-				Addresses: []string{"aws_instance.x"},
+				Type:    OpRemove,
+				Layer:   "./l",
+				Entries: []RemoveEntry{{Address: "aws_instance.x"}},
 			},
 		},
 	}
@@ -198,7 +202,7 @@ func TestValidate_MoveMissingSourceLayer(t *testing.T) {
 				Type:             OpMove,
 				DestinationLayer: "./dst",
 				Resources: []ResourceMove{
-					{Address: "aws_instance.web"},
+					{From: "aws_instance.web"},
 				},
 			},
 		},
@@ -218,7 +222,7 @@ func TestValidate_MoveMissingDestinationLayer(t *testing.T) {
 				Type:        OpMove,
 				SourceLayer: "./src",
 				Resources: []ResourceMove{
-					{Address: "aws_instance.web"},
+					{From: "aws_instance.web"},
 				},
 			},
 		},
@@ -257,14 +261,14 @@ func TestValidate_MoveResourceMissingAddress(t *testing.T) {
 				SourceLayer:      "./src",
 				DestinationLayer: "./dst",
 				Resources: []ResourceMove{
-					{Address: ""},
+					{From: ""},
 				},
 			},
 		},
 	}
 
 	errs := Validate(mf)
-	if !hasError(errs, "resources[0].address") {
+	if !hasError(errs, "resources[0].from") {
 		t.Error("expected validation error for missing resource address")
 	}
 }
@@ -279,7 +283,7 @@ func TestValidate_InvalidKeyPattern_WildcardInMiddle(t *testing.T) {
 				DestinationLayer: "./dst",
 				Resources: []ResourceMove{
 					{
-						Address: "resource.all",
+						From: "resource.all",
 						Keys: map[string]string{
 							"pre*fix": "value",
 						},
@@ -305,7 +309,7 @@ func TestValidate_InvalidKeyPattern_MultipleWildcards(t *testing.T) {
 				DestinationLayer: "./dst",
 				Resources: []ResourceMove{
 					{
-						Address: "resource.all",
+						From: "resource.all",
 						Keys: map[string]string{
 							"*prefix*": "value",
 						},
@@ -371,8 +375,8 @@ func TestValidate_RemoveMissingFields(t *testing.T) {
 	if !hasError(errs, "layer") {
 		t.Error("expected validation error for missing layer")
 	}
-	if !hasError(errs, "addresses") {
-		t.Error("expected validation error for missing addresses")
+	if !hasError(errs, "entries") {
+		t.Error("expected validation error for missing entries")
 	}
 }
 
@@ -400,7 +404,7 @@ func TestValidate_ImportEntryMissingFields(t *testing.T) {
 			{
 				Type:    OpImport,
 				Layer:   "./layers/db",
-				Imports: []ImportEntry{{Address: "", ImportID: ""}},
+				Imports: []ImportEntry{{Address: "", ID: ""}},
 			},
 		},
 	}
@@ -409,8 +413,8 @@ func TestValidate_ImportEntryMissingFields(t *testing.T) {
 	if !hasError(errs, "imports[0].address") {
 		t.Error("expected validation error for missing import address")
 	}
-	if !hasError(errs, "imports[0].import_id") {
-		t.Error("expected validation error for missing import_id")
+	if !hasError(errs, "imports[0].id") {
+		t.Error("expected validation error for missing id")
 	}
 }
 
@@ -469,9 +473,9 @@ func TestValidate_ValidCondition(t *testing.T) {
 		},
 		Operations: []Operation{
 			{
-				Type:      OpRemove,
-				Layer:     "./l",
-				Addresses: []string{"aws_instance.x"},
+				Type:    OpRemove,
+				Layer:   "./l",
+				Entries: []RemoveEntry{{Address: "aws_instance.x"}},
 			},
 		},
 	}
@@ -492,9 +496,9 @@ func TestValidate_ConditionMissingLayer(t *testing.T) {
 		},
 		Operations: []Operation{
 			{
-				Type:      OpRemove,
-				Layer:     "./l",
-				Addresses: []string{"aws_instance.x"},
+				Type:    OpRemove,
+				Layer:   "./l",
+				Entries: []RemoveEntry{{Address: "aws_instance.x"}},
 			},
 		},
 	}
@@ -515,9 +519,9 @@ func TestValidate_ConditionEmptyAddresses(t *testing.T) {
 		},
 		Operations: []Operation{
 			{
-				Type:      OpRemove,
-				Layer:     "./l",
-				Addresses: []string{"aws_instance.x"},
+				Type:    OpRemove,
+				Layer:   "./l",
+				Entries: []RemoveEntry{{Address: "aws_instance.x"}},
 			},
 		},
 	}
@@ -538,9 +542,9 @@ func TestValidate_ConditionEmptyAddressString(t *testing.T) {
 		},
 		Operations: []Operation{
 			{
-				Type:      OpRemove,
-				Layer:     "./l",
-				Addresses: []string{"aws_instance.x"},
+				Type:    OpRemove,
+				Layer:   "./l",
+				Entries: []RemoveEntry{{Address: "aws_instance.x"}},
 			},
 		},
 	}
@@ -557,9 +561,9 @@ func TestValidate_EmptyConditionStruct(t *testing.T) {
 		Condition:   &Condition{},
 		Operations: []Operation{
 			{
-				Type:      OpRemove,
-				Layer:     "./l",
-				Addresses: []string{"aws_instance.x"},
+				Type:    OpRemove,
+				Layer:   "./l",
+				Entries: []RemoveEntry{{Address: "aws_instance.x"}},
 			},
 		},
 	}
@@ -603,7 +607,7 @@ func TestValidate_ModuleMoveValid(t *testing.T) {
 				SourceLayer:      "./src",
 				DestinationLayer: "./dst",
 				Resources: []ResourceMove{
-					{Address: "module.foo"},
+					{From: "module.foo"},
 				},
 			},
 		},
@@ -624,7 +628,7 @@ func TestValidate_ModuleMoveWithDestinationModule(t *testing.T) {
 				SourceLayer:      "./src",
 				DestinationLayer: "./dst",
 				Resources: []ResourceMove{
-					{Address: "module.foo", DestinationAddress: "module.bar"},
+					{From: "module.foo", To: "module.bar"},
 				},
 			},
 		},
@@ -646,8 +650,8 @@ func TestValidate_ModuleMoveWithKeys(t *testing.T) {
 				DestinationLayer: "./dst",
 				Resources: []ResourceMove{
 					{
-						Address: "module.foo",
-						Keys:    map[string]string{"*": "{{ .Key }}"},
+						From: "module.foo",
+						Keys: map[string]string{"*": "{{ .Key }}"},
 					},
 				},
 			},
@@ -670,7 +674,7 @@ func TestValidate_ModuleMoveWithImportID(t *testing.T) {
 				DestinationLayer: "./dst",
 				Resources: []ResourceMove{
 					{
-						Address:  "module.foo",
+						From:     "module.foo",
 						ImportID: "some-id",
 					},
 				},
@@ -694,8 +698,8 @@ func TestValidate_ModuleMoveWithNonModuleDestination(t *testing.T) {
 				DestinationLayer: "./dst",
 				Resources: []ResourceMove{
 					{
-						Address:            "module.foo",
-						DestinationAddress: "aws_instance.web",
+						From: "module.foo",
+						To:   "aws_instance.web",
 					},
 				},
 			},
@@ -703,8 +707,8 @@ func TestValidate_ModuleMoveWithNonModuleDestination(t *testing.T) {
 	}
 
 	errs := Validate(mf)
-	if !hasError(errs, "resources[0].destination_address") {
-		t.Errorf("expected validation error for non-module destination_address, got %v", errs)
+	if !hasError(errs, "resources[0].to") {
+		t.Errorf("expected validation error for non-module destination, got %v", errs)
 	}
 }
 
@@ -736,8 +740,8 @@ func TestValidate_AllResourcesWithValidOverride(t *testing.T) {
 				SourceLayer:      "./src",
 				DestinationLayer: "./dst",
 				AllResources:     true,
-				Resources: []ResourceMove{
-					{Address: "aws_instance.web", DestinationAddress: "aws_instance.api"},
+				Overrides: []ResourceMove{
+					{From: "aws_instance.web", To: "aws_instance.api"},
 				},
 			},
 		},
@@ -778,15 +782,15 @@ func TestValidate_AllResourcesOverrideMissingDestinationAndImportID(t *testing.T
 				SourceLayer:      "./src",
 				DestinationLayer: "./dst",
 				AllResources:     true,
-				Resources: []ResourceMove{
-					{Address: "aws_instance.web"},
+				Overrides: []ResourceMove{
+					{From: "aws_instance.web"},
 				},
 			},
 		},
 	}
 
 	errs := Validate(mf)
-	if !hasError(errs, "resources[0]") {
+	if !hasError(errs, "overrides[0]") {
 		t.Errorf("expected validation error for empty override entry, got %v", errs)
 	}
 }
@@ -800,11 +804,11 @@ func TestValidate_AllResourcesOverrideWithKeys(t *testing.T) {
 				SourceLayer:      "./src",
 				DestinationLayer: "./dst",
 				AllResources:     true,
-				Resources: []ResourceMove{
+				Overrides: []ResourceMove{
 					{
-						Address:            "aws_instance.web",
-						DestinationAddress: "aws_instance.api",
-						Keys:               map[string]string{"*": "{{ .Key }}"},
+						From: "aws_instance.web",
+						To:   "aws_instance.api",
+						Keys: map[string]string{"*": "{{ .Key }}"},
 					},
 				},
 			},
@@ -812,7 +816,7 @@ func TestValidate_AllResourcesOverrideWithKeys(t *testing.T) {
 	}
 
 	errs := Validate(mf)
-	if !hasError(errs, "resources[0].keys") {
+	if !hasError(errs, "overrides[0].keys") {
 		t.Errorf("expected validation error for keys with all_resources, got %v", errs)
 	}
 }
@@ -826,11 +830,11 @@ func TestValidate_AllResourcesOverrideWithImportIDValid(t *testing.T) {
 				SourceLayer:      "./src",
 				DestinationLayer: "./dst",
 				AllResources:     true,
-				Resources: []ResourceMove{
+				Overrides: []ResourceMove{
 					{
-						Address:            "aws_instance.web",
-						DestinationAddress: "aws_instance.api",
-						ImportID:           "some-id",
+						From:     "aws_instance.web",
+						To:       "aws_instance.api",
+						ImportID: "some-id",
 					},
 				},
 			},
@@ -852,9 +856,9 @@ func TestValidate_AllResourcesOverrideWithImportIDOnly(t *testing.T) {
 				SourceLayer:      "./src",
 				DestinationLayer: "./dst",
 				AllResources:     true,
-				Resources: []ResourceMove{
+				Overrides: []ResourceMove{
 					{
-						Address:  "aws_instance.web",
+						From:     "aws_instance.web",
 						ImportID: "{{ .Attributes.project_id }}/{{ .Attributes.id }}",
 					},
 				},
@@ -877,10 +881,10 @@ func TestValidate_AllResourcesOverrideWithModuleAddress(t *testing.T) {
 				SourceLayer:      "./src",
 				DestinationLayer: "./dst",
 				AllResources:     true,
-				Resources: []ResourceMove{
+				Overrides: []ResourceMove{
 					{
-						Address:            "module.foo",
-						DestinationAddress: "module.bar",
+						From: "module.foo",
+						To:   "module.bar",
 					},
 				},
 			},
@@ -888,7 +892,7 @@ func TestValidate_AllResourcesOverrideWithModuleAddress(t *testing.T) {
 	}
 
 	errs := Validate(mf)
-	if !hasError(errs, "resources[0].address") {
+	if !hasError(errs, "overrides[0].from") {
 		t.Errorf("expected validation error for module address with all_resources, got %v", errs)
 	}
 }
@@ -911,6 +915,30 @@ func TestValidate_AllResourcesOnRenameOperation(t *testing.T) {
 	errs := Validate(mf)
 	if !hasError(errs, "all_resources") {
 		t.Errorf("expected validation error for all_resources on rename, got %v", errs)
+	}
+}
+
+func TestValidate_OverridesWithoutAllResources(t *testing.T) {
+	mf := &MigrationFile{
+		Description: "Overrides without all_resources (invalid)",
+		Operations: []Operation{
+			{
+				Type:             OpMove,
+				SourceLayer:      "./src",
+				DestinationLayer: "./dst",
+				Resources: []ResourceMove{
+					{From: "aws_instance.web"},
+				},
+				Overrides: []ResourceMove{
+					{From: "aws_instance.api", To: "aws_instance.backend"},
+				},
+			},
+		},
+	}
+
+	errs := Validate(mf)
+	if !hasError(errs, "overrides") {
+		t.Errorf("expected validation error for overrides without all_resources, got %v", errs)
 	}
 }
 
@@ -944,7 +972,7 @@ func TestValidate_OmitWithoutAllResources(t *testing.T) {
 				Type:             OpMove,
 				SourceLayer:      "./src",
 				DestinationLayer: "./dst",
-				Resources:        []ResourceMove{{Address: "aws_instance.web"}},
+				Resources:        []ResourceMove{{From: "aws_instance.web"}},
 				Omit:             []OmitEntry{{Address: "aws_instance.ephemeral"}},
 			},
 		},
@@ -976,17 +1004,17 @@ func TestValidate_OmitMissingAddress(t *testing.T) {
 	}
 }
 
-func TestValidate_OmitOverlapWithResources(t *testing.T) {
+func TestValidate_OmitOverlapWithOverrides(t *testing.T) {
 	mf := &MigrationFile{
-		Description: "Omit overlapping with resources",
+		Description: "Omit overlapping with overrides",
 		Operations: []Operation{
 			{
 				Type:             OpMove,
 				SourceLayer:      "./src",
 				DestinationLayer: "./dst",
 				AllResources:     true,
-				Resources: []ResourceMove{
-					{Address: "aws_instance.web", DestinationAddress: "aws_instance.api"},
+				Overrides: []ResourceMove{
+					{From: "aws_instance.web", To: "aws_instance.api"},
 				},
 				Omit: []OmitEntry{
 					{Address: "aws_instance.web"},
@@ -996,8 +1024,103 @@ func TestValidate_OmitOverlapWithResources(t *testing.T) {
 	}
 
 	errs := Validate(mf)
-	if !hasError(errs, "resources[0].address") {
+	if !hasError(errs, "overrides[0].from") {
 		t.Errorf("expected validation error for overlapping address, got %v", errs)
+	}
+}
+
+func TestValidate_StatusRetired(t *testing.T) {
+	mf := &MigrationFile{
+		Status: StatusRetired,
+		// No description, no operations — retired skips all validation.
+	}
+
+	errs := Validate(mf)
+	if len(errs) != 0 {
+		t.Errorf("expected no errors for retired status, got %v", errs)
+	}
+}
+
+func TestValidate_UnknownStatus(t *testing.T) {
+	mf := &MigrationFile{
+		Status:      "draft",
+		Description: "Bad status",
+		Operations: []Operation{
+			{
+				Type:    OpRemove,
+				Layer:   "./l",
+				Entries: []RemoveEntry{{Address: "aws_instance.x"}},
+			},
+		},
+	}
+
+	errs := Validate(mf)
+	if !hasError(errs, "status") {
+		t.Errorf("expected validation error for unknown status, got %v", errs)
+	}
+}
+
+func TestValidate_LayerExistsEmpty(t *testing.T) {
+	mf := &MigrationFile{
+		Description: "Layer exists empty path",
+		Condition: &Condition{
+			LayerExists: []string{"./valid/path", ""},
+		},
+		Operations: []Operation{
+			{
+				Type:    OpRemove,
+				Layer:   "./l",
+				Entries: []RemoveEntry{{Address: "aws_instance.x"}},
+			},
+		},
+	}
+
+	errs := Validate(mf)
+	if !hasError(errs, "condition.layer_exists[1]") {
+		t.Errorf("expected validation error for empty layer_exists path, got %v", errs)
+	}
+}
+
+func TestValidate_LayerNotExistsEmpty(t *testing.T) {
+	mf := &MigrationFile{
+		Description: "Layer not exists empty path",
+		Condition: &Condition{
+			LayerNotExists: []string{""},
+		},
+		Operations: []Operation{
+			{
+				Type:    OpRemove,
+				Layer:   "./l",
+				Entries: []RemoveEntry{{Address: "aws_instance.x"}},
+			},
+		},
+	}
+
+	errs := Validate(mf)
+	if !hasError(errs, "condition.layer_not_exists[0]") {
+		t.Errorf("expected validation error for empty layer_not_exists path, got %v", errs)
+	}
+}
+
+func TestValidate_LayerConditionsValid(t *testing.T) {
+	mf := &MigrationFile{
+		Description: "Valid layer conditions",
+		Condition: &Condition{
+			LayerExists:    []string{"./layers/source"},
+			LayerNotExists: []string{"./layers/deprecated"},
+		},
+		Operations: []Operation{
+			{
+				Type:    OpRemove,
+				Layer:   "./l",
+				Entries: []RemoveEntry{{Address: "aws_instance.x"}},
+			},
+		},
+	}
+
+	errs := Validate(mf)
+	if len(errs) != 0 {
+		t.Errorf("expected no errors for valid layer conditions, got %v", errs)
 	}
 }
 
@@ -1011,7 +1134,7 @@ func TestValidate_OmitWithDestroy(t *testing.T) {
 				DestinationLayer: "./dst",
 				AllResources:     true,
 				Omit: []OmitEntry{
-					{Address: "aws_instance.ephemeral", Destroy: true},
+					{Address: "aws_instance.ephemeral", Destroy: boolPtr(true)},
 				},
 			},
 		},

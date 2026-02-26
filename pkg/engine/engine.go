@@ -11,6 +11,29 @@ import (
 	"github.com/redtenant/tfmigrate/pkg/state"
 )
 
+// SkipReason indicates why a migration file was skipped during processing.
+type SkipReason int
+
+const (
+	SkipRetired      SkipReason = iota // status: retired
+	SkipLayerMissing                   // source layer doesn't exist on disk
+	SkipCondition                      // condition check failed
+	SkipError                          // condition eval or processing error
+)
+
+// SkippedFile records a migration file that was skipped and why.
+type SkippedFile struct {
+	FilePath string
+	Stem     string
+	Reason   SkipReason
+}
+
+// ProcessResult contains the output of ProcessFiles.
+type ProcessResult struct {
+	OutputFiles  []string
+	SkippedFiles []SkippedFile
+}
+
 // Config holds the configuration for the Engine.
 type Config struct {
 	// StateReader reads Terraform/OpenTofu state for layers.
@@ -18,6 +41,10 @@ type Config struct {
 
 	// DryRun if true prints output but does not write files.
 	DryRun bool
+
+	// Strict if true causes missing layer directories to be hard errors
+	// instead of auto-skipping the migration file.
+	Strict bool
 }
 
 // Engine orchestrates the full migration pipeline: parse YAML, read state,
@@ -57,13 +84,13 @@ func (e *Engine) Writer() *generator.Writer {
 // because a source resource no longer exists in state), it is skipped with an
 // informational message to stderr. This allows unrelated migration files to
 // still be generated. Parse errors and validation errors remain fatal.
-func (e *Engine) ProcessFiles(ctx context.Context, paths []string) ([]string, error) {
+func (e *Engine) ProcessFiles(ctx context.Context, paths []string) (*ProcessResult, error) {
 	files, err := e.parser.ParseFiles(paths)
 	if err != nil {
 		return nil, fmt.Errorf("parsing migration files: %w", err)
 	}
 
-	var skipped []string
+	var skippedFiles []SkippedFile
 	var allBlocks []generator.Block
 
 	for _, mf := range files {
@@ -75,20 +102,38 @@ func (e *Engine) ProcessFiles(ctx context.Context, paths []string) ([]string, er
 			return nil, fmt.Errorf("validation errors in %q:\n  %s", mf.FilePath, strings.Join(msgs, "\n  "))
 		}
 
+		// F1: Skip retired migration files immediately — no state reads needed.
+		if mf.Status == migration.StatusRetired {
+			fmt.Fprintf(os.Stderr, "Skipping %q: status is retired\n", mf.FilePath)
+			skippedFiles = append(skippedFiles, SkippedFile{mf.FilePath, migration.YamlStem(mf.FilePath), SkipRetired})
+			continue
+		}
+
+		// F2: Auto-skip when referenced layers don't exist on disk.
+		if missing := checkLayerPaths(collectLayerPaths(mf)); missing != "" {
+			if e.config.Strict {
+				return nil, fmt.Errorf("layer %q does not exist (referenced by %q)", missing, mf.FilePath)
+			}
+			fmt.Fprintf(os.Stderr, "Skipping %q: layer %q does not exist\n", mf.FilePath, missing)
+			skippedFiles = append(skippedFiles, SkippedFile{mf.FilePath, migration.YamlStem(mf.FilePath), SkipLayerMissing})
+			continue
+		}
+
 		proceed, err := e.evaluateCondition(ctx, mf)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Skipping %q: %v\n", mf.FilePath, err)
-			skipped = append(skipped, mf.FilePath)
+			skippedFiles = append(skippedFiles, SkippedFile{mf.FilePath, migration.YamlStem(mf.FilePath), SkipError})
 			continue
 		}
 		if !proceed {
+			skippedFiles = append(skippedFiles, SkippedFile{mf.FilePath, migration.YamlStem(mf.FilePath), SkipCondition})
 			continue
 		}
 
 		blocks, err := e.processMigration(ctx, mf)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Skipping %q: %v\n", mf.FilePath, err)
-			skipped = append(skipped, mf.FilePath)
+			skippedFiles = append(skippedFiles, SkippedFile{mf.FilePath, migration.YamlStem(mf.FilePath), SkipError})
 			continue
 		}
 
@@ -100,8 +145,16 @@ func (e *Engine) ProcessFiles(ctx context.Context, paths []string) ([]string, er
 		e.writer.SetFileMetadata(mf.FilePath, buildFileMetadata(mf))
 	}
 
-	if len(skipped) > 0 && len(allBlocks) == 0 {
-		return nil, fmt.Errorf("all migration files were skipped: %s", strings.Join(skipped, ", "))
+	// Only error-skipped files count toward the "all files skipped" check.
+	// Retired and layer-missing files are expected; condition-failed files are waiting.
+	var errorSkipped []string
+	for _, sf := range skippedFiles {
+		if sf.Reason == SkipError {
+			errorSkipped = append(errorSkipped, sf.FilePath)
+		}
+	}
+	if len(errorSkipped) > 0 && len(allBlocks) == 0 {
+		return nil, fmt.Errorf("all migration files were skipped: %s", strings.Join(errorSkipped, ", "))
 	}
 
 	// Consolidate module-level removals: when all managed resources within
@@ -111,7 +164,11 @@ func (e *Engine) ProcessFiles(ctx context.Context, paths []string) ([]string, er
 
 	e.writer.AddBlocks(allBlocks)
 
-	return e.writer.WriteAll()
+	outputFiles, err := e.writer.WriteAll()
+	if err != nil {
+		return nil, err
+	}
+	return &ProcessResult{OutputFiles: outputFiles, SkippedFiles: skippedFiles}, nil
 }
 
 // processMigration processes a single parsed migration file, generating
@@ -164,22 +221,22 @@ func (e *Engine) processMove(ctx context.Context, op *migration.Operation, opInd
 	dstLayer := op.DestinationLayer
 
 	if op.AllResources {
-		return e.processMoveAllResources(ctx, srcLayer, dstLayer, op.Resources, op.Omit, op.Description)
+		return e.processMoveAllResources(ctx, srcLayer, dstLayer, op.Overrides, op.Omit, op.Description)
 	}
 
 	var blocks []generator.Block
 
 	for i, res := range op.Resources {
-		srcAddr := migration.FullAddress(op.AddressPrefix, res.Address)
-		dstBaseAddr := res.DestinationAddress
+		srcAddr := migration.FullAddress(op.AddressPrefix, res.From)
+		dstBaseAddr := res.To
 		if dstBaseAddr == "" {
-			dstBaseAddr = res.Address
+			dstBaseAddr = res.From
 		}
 		dstAddr := migration.FullAddress(op.AddressPrefix, dstBaseAddr)
 
 		resBlocks, err := e.processMoveResource(ctx, srcLayer, dstLayer, srcAddr, dstAddr, &res, opIndex, i, tracker, op.Description)
 		if err != nil {
-			return nil, fmt.Errorf("resource %q: %w", res.Address, err)
+			return nil, fmt.Errorf("resource %q: %w", res.From, err)
 		}
 		blocks = append(blocks, resBlocks...)
 	}
@@ -322,8 +379,8 @@ func (e *Engine) processMoveAllResources(
 	}
 	overrideMap := make(map[string]overrideConfig)
 	for _, res := range overrides {
-		overrideMap[res.Address] = overrideConfig{
-			destinationAddress: res.DestinationAddress,
+		overrideMap[res.From] = overrideConfig{
+			destinationAddress: res.To,
 			importID:           res.ImportID,
 		}
 	}
@@ -334,7 +391,7 @@ func (e *Engine) processMoveAllResources(
 	}
 	omitMap := make(map[string]omitConfig)
 	for _, entry := range omitEntries {
-		omitMap[entry.Address] = omitConfig{destroy: entry.Destroy}
+		omitMap[entry.Address] = omitConfig{destroy: entry.DestroyValue()}
 	}
 
 	// Group resources by base address (strip key suffixes)
@@ -610,13 +667,18 @@ func (e *Engine) processRename(op *migration.Operation) ([]generator.Block, erro
 }
 
 // processRemove handles remove operations, generating removed blocks for each
-// address in the operation.
+// entry in the operation.
 func (e *Engine) processRemove(op *migration.Operation) ([]generator.Block, error) {
+	opDestroy := op.DestroyValue()
 	var blocks []generator.Block
-	for _, addr := range op.Addresses {
+	for _, entry := range op.Entries {
+		destroy := opDestroy
+		if entry.Destroy != nil {
+			destroy = *entry.Destroy
+		}
 		blocks = append(blocks, &generator.RemovedBlock{
-			From:        migration.FullAddress(op.AddressPrefix, addr),
-			Destroy:     op.DestroyValue(),
+			From:        migration.FullAddress(op.AddressPrefix, entry.Address),
+			Destroy:     destroy,
 			Layer:       op.Layer,
 			Description: op.Description,
 			Source:      e.currentSourceFile,
@@ -630,10 +692,14 @@ func (e *Engine) processRemove(op *migration.Operation) ([]generator.Block, erro
 func (e *Engine) processImport(op *migration.Operation) ([]generator.Block, error) {
 	var blocks []generator.Block
 	for _, entry := range op.Imports {
+		provider := entry.Provider
+		if provider == "" {
+			provider = op.Provider
+		}
 		blocks = append(blocks, &generator.ImportBlock{
 			To:          migration.FullAddress(op.AddressPrefix, entry.Address),
-			ID:          entry.ImportID,
-			Provider:    entry.Provider,
+			ID:          entry.ID,
+			Provider:    provider,
 			Layer:       op.Layer,
 			Description: op.Description,
 			Source:      e.currentSourceFile,
@@ -649,6 +715,21 @@ func (e *Engine) processImport(op *migration.Operation) ([]generator.Block, erro
 func (e *Engine) evaluateCondition(ctx context.Context, mf *migration.MigrationFile) (bool, error) {
 	if mf.Condition == nil {
 		return true, nil
+	}
+
+	// F3: Layer existence conditions — cheap checks, no state reading.
+	for _, path := range mf.Condition.LayerExists {
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			fmt.Fprintf(os.Stderr, "Skipping %q: layer %q does not exist (layer_exists condition)\n", mf.FilePath, path)
+			return false, nil
+		}
+	}
+
+	for _, path := range mf.Condition.LayerNotExists {
+		if _, err := os.Stat(path); err == nil {
+			fmt.Fprintf(os.Stderr, "Skipping %q: layer %q exists (layer_not_exists condition)\n", mf.FilePath, path)
+			return false, nil
+		}
 	}
 
 	indexCache := make(map[string]*state.StateIndex)
@@ -733,8 +814,63 @@ func convertCondition(cond *migration.Condition) *generator.MetadataCondition {
 		})
 	}
 
-	if len(mc.ResourcesExist) == 0 && len(mc.ResourcesNotExist) == 0 {
+	if len(cond.LayerExists) > 0 {
+		mc.LayerExists = make([]string, len(cond.LayerExists))
+		copy(mc.LayerExists, cond.LayerExists)
+	}
+
+	if len(cond.LayerNotExists) > 0 {
+		mc.LayerNotExists = make([]string, len(cond.LayerNotExists))
+		copy(mc.LayerNotExists, cond.LayerNotExists)
+	}
+
+	if len(mc.ResourcesExist) == 0 && len(mc.ResourcesNotExist) == 0 && len(mc.LayerExists) == 0 && len(mc.LayerNotExists) == 0 {
 		return nil
 	}
 	return mc
+}
+
+// collectLayerPaths extracts all layer directory paths referenced by a migration
+// file's operations and resource conditions. Excludes destination_layer (may not
+// exist yet) and layer_exists/layer_not_exists paths (explicit conditions).
+func collectLayerPaths(mf *migration.MigrationFile) []string {
+	seen := make(map[string]bool)
+	var paths []string
+	add := func(path string) {
+		if path != "" && !seen[path] {
+			seen[path] = true
+			paths = append(paths, path)
+		}
+	}
+
+	for _, op := range mf.Operations {
+		switch op.Type {
+		case migration.OpMove:
+			add(op.SourceLayer)
+		case migration.OpRename, migration.OpRemove, migration.OpImport:
+			add(op.Layer)
+		}
+	}
+
+	if mf.Condition != nil {
+		for _, check := range mf.Condition.ResourcesExist {
+			add(check.Layer)
+		}
+		for _, check := range mf.Condition.ResourcesNotExist {
+			add(check.Layer)
+		}
+	}
+
+	return paths
+}
+
+// checkLayerPaths checks that all given layer paths exist on disk.
+// Returns the first missing path, or "" if all exist.
+func checkLayerPaths(paths []string) string {
+	for _, path := range paths {
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			return path
+		}
+	}
+	return ""
 }

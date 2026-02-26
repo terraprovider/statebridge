@@ -429,3 +429,79 @@ func TestMergeConditionsBothNil(t *testing.T) {
 		t.Error("nil + nil should return nil")
 	}
 }
+
+func TestRelativizeCondition_LayerConditions(t *testing.T) {
+	cond := &MetadataCondition{
+		LayerExists:    []string{"./layers/source", "./layers/compute"},
+		LayerNotExists: []string{"./layers/deprecated"},
+	}
+
+	// RelativizeCondition should copy LayerExists and LayerNotExists through unchanged
+	result := RelativizeCondition(cond, "./layers/compute")
+
+	if result == nil {
+		t.Fatal("expected non-nil result")
+	}
+
+	// LayerExists should be copied unchanged (not relativized like resource checks)
+	if len(result.LayerExists) != 2 {
+		t.Fatalf("expected 2 layer_exists entries, got %d", len(result.LayerExists))
+	}
+	if result.LayerExists[0] != "./layers/source" {
+		t.Errorf("expected layer_exists[0] %q, got %q", "./layers/source", result.LayerExists[0])
+	}
+	if result.LayerExists[1] != "./layers/compute" {
+		t.Errorf("expected layer_exists[1] %q, got %q", "./layers/compute", result.LayerExists[1])
+	}
+
+	// LayerNotExists should be copied unchanged
+	if len(result.LayerNotExists) != 1 {
+		t.Fatalf("expected 1 layer_not_exists entry, got %d", len(result.LayerNotExists))
+	}
+	if result.LayerNotExists[0] != "./layers/deprecated" {
+		t.Errorf("expected layer_not_exists[0] %q, got %q", "./layers/deprecated", result.LayerNotExists[0])
+	}
+
+	// Verify original was not modified
+	if len(cond.LayerExists) != 2 || cond.LayerExists[0] != "./layers/source" {
+		t.Error("original condition was modified")
+	}
+}
+
+func TestMergeConditions_LayerConditions(t *testing.T) {
+	a := &MetadataCondition{
+		LayerExists:    []string{"./layers/source", "./layers/shared"},
+		LayerNotExists: []string{"./layers/deprecated"},
+	}
+	b := &MetadataCondition{
+		LayerExists:    []string{"./layers/shared", "./layers/compute"},
+		LayerNotExists: []string{"./layers/deprecated", "./layers/old"},
+	}
+
+	result := MergeConditions(a, b)
+	if result == nil {
+		t.Fatal("expected non-nil result")
+	}
+
+	// LayerExists should be deduplicated and sorted: compute, shared, source
+	expectedExists := []string{"./layers/compute", "./layers/shared", "./layers/source"}
+	if len(result.LayerExists) != len(expectedExists) {
+		t.Fatalf("expected %d layer_exists entries, got %d: %v", len(expectedExists), len(result.LayerExists), result.LayerExists)
+	}
+	for i, path := range result.LayerExists {
+		if path != expectedExists[i] {
+			t.Errorf("layer_exists[%d] = %q, want %q", i, path, expectedExists[i])
+		}
+	}
+
+	// LayerNotExists should be deduplicated and sorted: deprecated, old
+	expectedNotExists := []string{"./layers/deprecated", "./layers/old"}
+	if len(result.LayerNotExists) != len(expectedNotExists) {
+		t.Fatalf("expected %d layer_not_exists entries, got %d: %v", len(expectedNotExists), len(result.LayerNotExists), result.LayerNotExists)
+	}
+	for i, path := range result.LayerNotExists {
+		if path != expectedNotExists[i] {
+			t.Errorf("layer_not_exists[%d] = %q, want %q", i, path, expectedNotExists[i])
+		}
+	}
+}

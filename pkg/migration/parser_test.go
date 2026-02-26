@@ -16,7 +16,7 @@ operations:
     source_layer: "./layers/compute"
     destination_layer: "./layers/app"
     resources:
-      - address: "aws_instance.web"
+      - from: "aws_instance.web"
         import_id: "i-0abc123"
 `
 	path := writeTestFile(t, "001_move.yaml", content)
@@ -51,8 +51,8 @@ operations:
 		t.Fatalf("expected 1 resource, got %d", len(op.Resources))
 	}
 	res := op.Resources[0]
-	if res.Address != "aws_instance.web" {
-		t.Errorf("expected address %q, got %q", "aws_instance.web", res.Address)
+	if res.From != "aws_instance.web" {
+		t.Errorf("expected from %q, got %q", "aws_instance.web", res.From)
 	}
 	if res.ImportID != "i-0abc123" {
 		t.Errorf("expected import_id %q, got %q", "i-0abc123", res.ImportID)
@@ -67,7 +67,7 @@ operations:
     source_layer: "./src"
     destination_layer: "./dst"
     resources:
-      - address: "aws_instance.a"
+      - from: "aws_instance.a"
   - type: rename
     layer: "./layers/net"
     renames:
@@ -76,13 +76,13 @@ operations:
   - type: remove
     layer: "./layers/legacy"
     destroy: false
-    addresses:
-      - "aws_iam_role.deprecated"
+    entries:
+      - address: "aws_iam_role.deprecated"
   - type: import
     layer: "./layers/db"
     imports:
       - address: "aws_db_instance.primary"
-        import_id: "my-db-id"
+        id: "my-db-id"
         provider: "aws.useast1"
 `
 	path := writeTestFile(t, "002_all.yaml", content)
@@ -132,7 +132,7 @@ operations:
     source_layer: "./layers/old"
     destination_layer: "./layers/new"
     resources:
-      - address: "aws_s3_bucket.data"
+      - from: "aws_s3_bucket.data"
         keys:
           exact_key: new_key
           "prefix_*": '{{ .Key | trimPrefix "prefix_" }}'
@@ -150,8 +150,8 @@ operations:
 		t.Fatalf("expected 1 resource, got %d", len(op.Resources))
 	}
 	res := op.Resources[0]
-	if res.Address != "aws_s3_bucket.data" {
-		t.Errorf("expected address %q, got %q", "aws_s3_bucket.data", res.Address)
+	if res.From != "aws_s3_bucket.data" {
+		t.Errorf("expected from %q, got %q", "aws_s3_bucket.data", res.From)
 	}
 	if len(res.Keys) != 2 {
 		t.Fatalf("expected 2 key entries, got %d", len(res.Keys))
@@ -173,7 +173,7 @@ operations:
     destination_layer: "./dst"
     address_prefix: module.identity_governance
     resources:
-      - address: azuread_access_package_catalog.all
+      - from: azuread_access_package_catalog.all
         keys:
           mrt_customer: customer_approval
 `
@@ -192,12 +192,12 @@ operations:
 	if len(op.Resources) != 1 {
 		t.Fatalf("expected 1 resource, got %d", len(op.Resources))
 	}
-	if op.Resources[0].Address != "azuread_access_package_catalog.all" {
-		t.Errorf("expected address %q, got %q", "azuread_access_package_catalog.all", op.Resources[0].Address)
+	if op.Resources[0].From != "azuread_access_package_catalog.all" {
+		t.Errorf("expected from %q, got %q", "azuread_access_package_catalog.all", op.Resources[0].From)
 	}
 }
 
-func TestParseFile_MoveWithDestinationAddress(t *testing.T) {
+func TestParseFile_MoveWithTo(t *testing.T) {
 	content := `
 description: "Move with destination address override"
 operations:
@@ -205,8 +205,8 @@ operations:
     source_layer: "./src"
     destination_layer: "./dst"
     resources:
-      - address: module.old.resource.all
-        destination_address: module.new.resource.all
+      - from: module.old.resource.all
+        to: module.new.resource.all
         keys:
           key1: key1
 `
@@ -219,8 +219,8 @@ operations:
 	}
 
 	res := mf.Operations[0].Resources[0]
-	if res.DestinationAddress != "module.new.resource.all" {
-		t.Errorf("expected destination_address %q, got %q", "module.new.resource.all", res.DestinationAddress)
+	if res.To != "module.new.resource.all" {
+		t.Errorf("expected to %q, got %q", "module.new.resource.all", res.To)
 	}
 }
 
@@ -256,15 +256,15 @@ operations:
 	}
 }
 
-func TestParseFile_MultipleRemoveAddresses(t *testing.T) {
+func TestParseFile_MultipleRemoveEntries(t *testing.T) {
 	content := `
 description: "Multiple removals"
 operations:
   - type: remove
     layer: "./layers/iam"
-    addresses:
-      - aws_iam_role.deprecated
-      - aws_iam_policy.old
+    entries:
+      - address: aws_iam_role.deprecated
+      - address: aws_iam_policy.old
 `
 	path := writeTestFile(t, "007_removes.yaml", content)
 	parser := NewParser()
@@ -275,14 +275,46 @@ operations:
 	}
 
 	op := mf.Operations[0]
-	if len(op.Addresses) != 2 {
-		t.Fatalf("expected 2 addresses, got %d", len(op.Addresses))
+	if len(op.Entries) != 2 {
+		t.Fatalf("expected 2 entries, got %d", len(op.Entries))
 	}
-	if op.Addresses[0] != "aws_iam_role.deprecated" {
-		t.Errorf("address[0]: expected %q, got %q", "aws_iam_role.deprecated", op.Addresses[0])
+	if op.Entries[0].Address != "aws_iam_role.deprecated" {
+		t.Errorf("entries[0]: expected %q, got %q", "aws_iam_role.deprecated", op.Entries[0].Address)
 	}
-	if op.Addresses[1] != "aws_iam_policy.old" {
-		t.Errorf("address[1]: expected %q, got %q", "aws_iam_policy.old", op.Addresses[1])
+	if op.Entries[1].Address != "aws_iam_policy.old" {
+		t.Errorf("entries[1]: expected %q, got %q", "aws_iam_policy.old", op.Entries[1].Address)
+	}
+}
+
+func TestParseFile_RemovePerEntryDestroy(t *testing.T) {
+	content := `
+description: "Remove with per-entry destroy"
+operations:
+  - type: remove
+    layer: "./layers/iam"
+    destroy: false
+    entries:
+      - address: aws_iam_role.keep
+      - address: aws_iam_role.delete
+        destroy: true
+`
+	path := writeTestFile(t, "007b_remove_destroy.yaml", content)
+	parser := NewParser()
+
+	mf, err := parser.ParseFile(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	op := mf.Operations[0]
+	if len(op.Entries) != 2 {
+		t.Fatalf("expected 2 entries, got %d", len(op.Entries))
+	}
+	if op.Entries[0].Destroy != nil {
+		t.Error("entries[0]: expected nil destroy (inherit from op)")
+	}
+	if op.Entries[1].Destroy == nil || *op.Entries[1].Destroy != true {
+		t.Error("entries[1]: expected destroy=true")
 	}
 }
 
@@ -294,9 +326,9 @@ operations:
     layer: "./layers/db"
     imports:
       - address: aws_db_instance.primary
-        import_id: "my-db-id"
+        id: "my-db-id"
       - address: aws_db_instance.replica
-        import_id: "my-replica-id"
+        id: "my-replica-id"
         provider: aws.useast1
 `
 	path := writeTestFile(t, "008_imports.yaml", content)
@@ -314,11 +346,45 @@ operations:
 	if op.Imports[0].Address != "aws_db_instance.primary" {
 		t.Errorf("import[0]: expected address %q, got %q", "aws_db_instance.primary", op.Imports[0].Address)
 	}
-	if op.Imports[0].ImportID != "my-db-id" {
-		t.Errorf("import[0]: expected import_id %q, got %q", "my-db-id", op.Imports[0].ImportID)
+	if op.Imports[0].ID != "my-db-id" {
+		t.Errorf("import[0]: expected id %q, got %q", "my-db-id", op.Imports[0].ID)
 	}
 	if op.Imports[1].Provider != "aws.useast1" {
 		t.Errorf("import[1]: expected provider %q, got %q", "aws.useast1", op.Imports[1].Provider)
+	}
+}
+
+func TestParseFile_ImportWithOpLevelProvider(t *testing.T) {
+	content := `
+description: "Import with operation-level provider"
+operations:
+  - type: import
+    layer: "./layers/db"
+    provider: "aws.useast1"
+    imports:
+      - address: aws_db_instance.primary
+        id: "my-db-id"
+      - address: aws_db_instance.replica
+        id: "my-replica-id"
+        provider: "aws.uswest2"
+`
+	path := writeTestFile(t, "008b_provider.yaml", content)
+	parser := NewParser()
+
+	mf, err := parser.ParseFile(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	op := mf.Operations[0]
+	if op.Provider != "aws.useast1" {
+		t.Errorf("expected op-level provider %q, got %q", "aws.useast1", op.Provider)
+	}
+	if op.Imports[0].Provider != "" {
+		t.Errorf("import[0]: expected no per-entry provider, got %q", op.Imports[0].Provider)
+	}
+	if op.Imports[1].Provider != "aws.uswest2" {
+		t.Errorf("import[1]: expected provider %q, got %q", "aws.uswest2", op.Imports[1].Provider)
 	}
 }
 
@@ -353,24 +419,24 @@ description: "Third"
 operations:
   - type: remove
     layer: "./l"
-    addresses:
-      - "aws_instance.c"
+    entries:
+      - address: "aws_instance.c"
 `)
 	writeFile(t, filepath.Join(dir, "001_first.yaml"), `
 description: "First"
 operations:
   - type: remove
     layer: "./l"
-    addresses:
-      - "aws_instance.a"
+    entries:
+      - address: "aws_instance.a"
 `)
 	writeFile(t, filepath.Join(dir, "002_second.yaml"), `
 description: "Second"
 operations:
   - type: remove
     layer: "./l"
-    addresses:
-      - "aws_instance.b"
+    entries:
+      - address: "aws_instance.b"
 `)
 	// Non-YAML file should be ignored
 	writeFile(t, filepath.Join(dir, "readme.txt"), "not a migration")
@@ -418,16 +484,16 @@ description: "Standalone"
 operations:
   - type: remove
     layer: "./l"
-    addresses:
-      - "aws_instance.a"
+    entries:
+      - address: "aws_instance.a"
 `)
 	writeFile(t, filepath.Join(subdir, "001_sub.yaml"), `
 description: "Subdir file"
 operations:
   - type: remove
     layer: "./l"
-    addresses:
-      - "aws_instance.b"
+    entries:
+      - address: "aws_instance.b"
 `)
 
 	parser := NewParser()
@@ -453,8 +519,8 @@ description: "Test"
 operations:
   - type: remove
     layer: "./l"
-    addresses:
-      - "aws_instance.x"
+    entries:
+      - address: "aws_instance.x"
 `
 	path := writeTestFile(t, "test.yaml", content)
 	parser := NewParser()
@@ -503,7 +569,7 @@ operations:
     source_layer: "./layers/compute"
     destination_layer: "./layers/app"
     resources:
-      - address: "aws_instance.web"
+      - from: "aws_instance.web"
         import_id: "i-0abc123"
 `
 	path := writeTestFile(t, "001_cond.yaml", content)
@@ -552,8 +618,8 @@ description: "No condition"
 operations:
   - type: remove
     layer: "./l"
-    addresses:
-      - "aws_instance.x"
+    entries:
+      - address: "aws_instance.x"
 `
 	path := writeTestFile(t, "002_nocond.yaml", content)
 	parser := NewParser()
@@ -581,6 +647,68 @@ func TestFullAddress(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("FullAddress(%q, %q) = %q, want %q", tt.prefix, tt.addr, got, tt.want)
 		}
+	}
+}
+
+func TestParseFile_WithStatusRetired(t *testing.T) {
+	content := `
+description: "Old migration"
+status: retired
+operations:
+  - type: remove
+    layer: "./l"
+    entries:
+      - address: "aws_instance.x"
+`
+	path := writeTestFile(t, "010_retired.yaml", content)
+	parser := NewParser()
+
+	mf, err := parser.ParseFile(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if mf.Status != "retired" {
+		t.Errorf("expected status %q, got %q", "retired", mf.Status)
+	}
+}
+
+func TestParseFile_WithLayerConditions(t *testing.T) {
+	content := `
+description: "Move with layer conditions"
+condition:
+  layer_exists:
+    - "./layers/source"
+  layer_not_exists:
+    - "./layers/deprecated"
+operations:
+  - type: remove
+    layer: "./l"
+    entries:
+      - address: "aws_instance.x"
+`
+	path := writeTestFile(t, "011_layer_cond.yaml", content)
+	parser := NewParser()
+
+	mf, err := parser.ParseFile(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if mf.Condition == nil {
+		t.Fatal("expected condition to be parsed")
+	}
+	if len(mf.Condition.LayerExists) != 1 {
+		t.Fatalf("expected 1 layer_exists entry, got %d", len(mf.Condition.LayerExists))
+	}
+	if mf.Condition.LayerExists[0] != "./layers/source" {
+		t.Errorf("expected layer_exists[0] %q, got %q", "./layers/source", mf.Condition.LayerExists[0])
+	}
+	if len(mf.Condition.LayerNotExists) != 1 {
+		t.Fatalf("expected 1 layer_not_exists entry, got %d", len(mf.Condition.LayerNotExists))
+	}
+	if mf.Condition.LayerNotExists[0] != "./layers/deprecated" {
+		t.Errorf("expected layer_not_exists[0] %q, got %q", "./layers/deprecated", mf.Condition.LayerNotExists[0])
 	}
 }
 
