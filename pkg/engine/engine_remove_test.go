@@ -1,9 +1,6 @@
 package engine
 
 import (
-	"context"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -11,139 +8,84 @@ import (
 )
 
 func TestEngine_ProcessFiles_Remove(t *testing.T) {
-	dir := t.TempDir()
-	layerDir := filepath.Join(dir, "layers", "legacy")
-	if err := os.MkdirAll(layerDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-
-	migrationContent := `
+	tests := []struct {
+		name              string
+		yaml              string
+		removedBlockCount int
+		destroyTrueCount  int
+		destroyFalseCount int
+	}{
+		{
+			name: "single remove",
+			yaml: `
 description: "Remove deprecated resource"
 operations:
   - type: remove
-    layer: "` + layerDir + `"
+    layer: "LAYER"
     entries:
       - address: "aws_iam_role.deprecated"
-`
-	migrationFile := filepath.Join(dir, "001_remove.yaml")
-	if err := os.WriteFile(migrationFile, []byte(migrationContent), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	engine := New(Config{StateReader: testutil.NewMockStateReader(nil)})
-
-	result, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	content, err := os.ReadFile(result.OutputFiles[0])
-	if err != nil {
-		t.Fatalf("reading output: %v", err)
-	}
-	if !strings.Contains(string(content), "removed {") {
-		t.Error("expected removed block")
-	}
-	if !strings.Contains(string(content), "destroy = false") {
-		t.Error("expected destroy = false")
-	}
-}
-
-
-func TestEngine_ProcessFiles_MultipleRemoveAddresses(t *testing.T) {
-	dir := t.TempDir()
-	layerDir := filepath.Join(dir, "layers", "iam")
-	if err := os.MkdirAll(layerDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-
-	migrationContent := `
+`,
+			removedBlockCount: 1,
+			destroyTrueCount:  0,
+			destroyFalseCount: 1,
+		},
+		{
+			name: "multiple addresses",
+			yaml: `
 description: "Multiple removals"
 operations:
   - type: remove
-    layer: "` + layerDir + `"
+    layer: "LAYER"
     entries:
       - address: "aws_iam_role.deprecated"
       - address: "aws_iam_policy.old"
-`
-	migrationFile := filepath.Join(dir, "001_multi_removes.yaml")
-	if err := os.WriteFile(migrationFile, []byte(migrationContent), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	engine := New(Config{StateReader: testutil.NewMockStateReader(nil)})
-
-	result, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	content, err := os.ReadFile(result.OutputFiles[0])
-	if err != nil {
-		t.Fatalf("reading output: %v", err)
-	}
-	if strings.Count(string(content), "removed {") != 2 {
-		t.Errorf("expected 2 removed blocks, got:\n%s", content)
-	}
-}
-
-
-func TestEngine_ProcessFiles_RemoveDestroyOverrides(t *testing.T) {
-	// Test operation-level destroy=true with entry-level override to false.
-	dir := t.TempDir()
-	layerDir := filepath.Join(dir, "layers", "cleanup")
-	if err := os.MkdirAll(layerDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-
-	migrationContent := `
+`,
+			removedBlockCount: 2,
+			destroyTrueCount:  0,
+			destroyFalseCount: 2,
+		},
+		{
+			name: "destroy overrides",
+			yaml: `
 description: "Remove with destroy overrides"
 operations:
   - type: remove
-    layer: "` + layerDir + `"
+    layer: "LAYER"
     destroy: true
     entries:
       - address: "aws_iam_role.deprecated"
       - address: "aws_iam_policy.keep_infra"
         destroy: false
       - address: "aws_iam_policy.also_destroy"
-`
-	migrationFile := filepath.Join(dir, "001_remove_destroy.yaml")
-	if err := os.WriteFile(migrationFile, []byte(migrationContent), 0o644); err != nil {
-		t.Fatal(err)
+`,
+			removedBlockCount: 3,
+			destroyTrueCount:  2,
+			destroyFalseCount: 1,
+		},
 	}
 
-	engine := New(Config{StateReader: testutil.NewMockStateReader(nil)})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, layers := testutil.SetupLayers(t, "layer")
+			layerDir := layers["layer"]
 
-	result, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+			yaml := strings.ReplaceAll(tt.yaml, "LAYER", layerDir)
+			dir := t.TempDir()
+			migrationFile := testutil.WriteMigration(t, dir, "001_remove.yaml", yaml)
 
-	if len(result.OutputFiles) != 1 {
-		t.Fatalf("expected 1 output file, got %d", len(result.OutputFiles))
-	}
+			cfg := Config{StateReader: testutil.NewMockStateReader(nil)}
+			result := runEngine(t, cfg, []string{migrationFile})
 
-	content, err := os.ReadFile(result.OutputFiles[0])
-	if err != nil {
-		t.Fatalf("reading output: %v", err)
-	}
-	s := string(content)
+			testutil.RequireOutputCount(t, result.OutputFiles, 1)
+			content := testutil.ReadFirstOutput(t, result.OutputFiles)
 
-	// Should have 3 removed blocks
-	if strings.Count(s, "removed {") != 3 {
-		t.Errorf("expected 3 removed blocks, got:\n%s", s)
-	}
-
-	// aws_iam_role.deprecated → destroy = true (from operation level)
-	// aws_iam_policy.keep_infra → destroy = false (entry-level override)
-	// aws_iam_policy.also_destroy → destroy = true (from operation level)
-	if strings.Count(s, "destroy = true") != 2 {
-		t.Errorf("expected 2 'destroy = true' blocks, got:\n%s", s)
-	}
-	if strings.Count(s, "destroy = false") != 1 {
-		t.Errorf("expected 1 'destroy = false' block, got:\n%s", s)
+			testutil.AssertBlockCount(t, content, "removed {", tt.removedBlockCount)
+			if tt.destroyTrueCount > 0 {
+				testutil.AssertBlockCount(t, content, "destroy = true", tt.destroyTrueCount)
+			}
+			if tt.destroyFalseCount > 0 {
+				testutil.AssertBlockCount(t, content, "destroy = false", tt.destroyFalseCount)
+			}
+		})
 	}
 }
-
-

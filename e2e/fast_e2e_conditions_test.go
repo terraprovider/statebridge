@@ -12,41 +12,20 @@ import (
 )
 
 func TestE2EFast_ConditionSkip(t *testing.T) {
-  t.Parallel()
-  rootDir, _, vars := setupFastProject(t)
+	t.Parallel()
+	rootDir, _, vars := setupFastProject(t)
 
-  sharedDir := filepath.Join(rootDir, "layers", "shared")
+	sharedDir := filepath.Join(rootDir, "layers", "shared")
 
-  updateTfFile(t, sharedDir, "main.tf", `
-terraform {
-  required_providers {
-    random = {
-      source = "hashicorp/random"
-    }
-  }
-}
+	updateTfFile(t, sharedDir, "main.tf", randomProviderHCL+randomIDResource("conditioned"))
+	tofuInit(t, sharedDir)
+	tofuApply(t, sharedDir, vars)
+	t.Cleanup(func() { tofuDestroy(t, sharedDir, vars) })
 
-provider "random" {}
+	assertResourceInState(t, sharedDir, "random_id.conditioned")
 
-resource "random_id" "conditioned" {
-  byte_length = 4
-  keepers = {
-    prefix = var.prefix
-    name   = "conditioned"
-  }
-}
-`)
-
-  tofuInit(t, sharedDir)
-  tofuApply(t, sharedDir, vars)
-  t.Cleanup(func() {
-    tofuDestroy(t, sharedDir, vars)
-  })
-
-  assertResourceInState(t, sharedDir, "random_id.conditioned")
-
-  // Migration with unmet condition (resource that doesn't exist)
-  migDir := writeMigration(t, rootDir, "001_skip.yaml", fmt.Sprintf(`
+	// Migration with unmet condition (resource that doesn't exist)
+	migDir := writeMigration(t, rootDir, "001_skip.yaml", fmt.Sprintf(`
 description: "Should be skipped — unmet condition"
 condition:
   resources_exist:
@@ -60,21 +39,21 @@ operations:
       - address: "random_id.conditioned"
 `, sharedDir, sharedDir))
 
-  result := runGenerateResult(t, []string{migDir})
-  if len(result.OutputFiles) != 0 {
-    t.Errorf("expected no generated files (condition not met), got %d: %v", len(result.OutputFiles), result.OutputFiles)
-  }
-  if len(result.SkippedFiles) == 0 {
-    t.Fatal("expected skipped files recorded, got none")
-  }
-  if result.SkippedFiles[0].Reason != engine.SkipCondition {
-    t.Errorf("expected skip reason %d, got %d", engine.SkipCondition, result.SkippedFiles[0].Reason)
-  }
+	result := runGenerateResult(t, []string{migDir})
+	if len(result.OutputFiles) != 0 {
+		t.Errorf("expected no generated files (condition not met), got %d: %v", len(result.OutputFiles), result.OutputFiles)
+	}
+	if len(result.SkippedFiles) == 0 {
+		t.Fatal("expected skipped files recorded, got none")
+	}
+	if result.SkippedFiles[0].Reason != engine.SkipCondition {
+		t.Errorf("expected skip reason %d, got %d", engine.SkipCondition, result.SkippedFiles[0].Reason)
+	}
 
-  assertResourceInState(t, sharedDir, "random_id.conditioned")
+	assertResourceInState(t, sharedDir, "random_id.conditioned")
 
-  // Migration with met condition
-  writeMigration(t, rootDir, "002_proceed.yaml", fmt.Sprintf(`
+	// Migration with met condition
+	writeMigration(t, rootDir, "002_proceed.yaml", fmt.Sprintf(`
 description: "Should proceed — condition is met"
 condition:
   resources_exist:
@@ -89,17 +68,7 @@ operations:
         to: "random_id.processed"
 `, sharedDir, sharedDir))
 
-  updateTfFile(t, sharedDir, "main.tf", `
-terraform {
-  required_providers {
-    random = {
-      source = "hashicorp/random"
-    }
-  }
-}
-
-provider "random" {}
-
+	updateTfFile(t, sharedDir, "main.tf", randomProviderHCL+`
 resource "random_id" "processed" {
   byte_length = 4
   keepers = {
@@ -109,59 +78,36 @@ resource "random_id" "processed" {
 }
 `)
 
-  cleanupMigrationFiles(t, sharedDir)
+	cleanupMigrationFiles(t, sharedDir)
 
-  result = runGenerateResult(t, []string{migDir})
-  if len(result.OutputFiles) == 0 {
-    t.Fatal("expected generated migration files for met condition, got none")
-  }
+	result = runGenerateResult(t, []string{migDir})
+	if len(result.OutputFiles) == 0 {
+		t.Fatal("expected generated migration files for met condition, got none")
+	}
 
-  tofuApply(t, sharedDir, vars)
+	tofuApply(t, sharedDir, vars)
 
-  assertResourceInState(t, sharedDir, "random_id.processed")
-  assertResourceNotInState(t, sharedDir, "random_id.conditioned")
+	assertResourceInState(t, sharedDir, "random_id.processed")
+	assertResourceNotInState(t, sharedDir, "random_id.conditioned")
 
-  cleanupMigrationFiles(t, sharedDir)
-  assertCleanPlan(t, sharedDir, vars)
+	cleanupAndAssertClean(t, vars, sharedDir)
 }
 
 // TestE2EFast_ConditionLayerExists tests layer_exists and layer_not_exists conditions.
-
 func TestE2EFast_ConditionLayerExists(t *testing.T) {
-  t.Parallel()
-  rootDir, _, vars := setupFastProject(t)
+	t.Parallel()
+	rootDir, _, vars := setupFastProject(t)
 
-  sharedDir := filepath.Join(rootDir, "layers", "shared")
-  nonexistentDir := filepath.Join(rootDir, "layers", "deleted")
+	sharedDir := filepath.Join(rootDir, "layers", "shared")
+	nonexistentDir := filepath.Join(rootDir, "layers", "deleted")
 
-  updateTfFile(t, sharedDir, "main.tf", `
-terraform {
-  required_providers {
-    random = {
-      source = "hashicorp/random"
-    }
-  }
-}
+	updateTfFile(t, sharedDir, "main.tf", randomProviderHCL+randomIDResource("layer_check"))
+	tofuInit(t, sharedDir)
+	tofuApply(t, sharedDir, vars)
+	t.Cleanup(func() { tofuDestroy(t, sharedDir, vars) })
 
-provider "random" {}
-
-resource "random_id" "layer_check" {
-  byte_length = 4
-  keepers = {
-    prefix = var.prefix
-    name   = "layer_check"
-  }
-}
-`)
-
-  tofuInit(t, sharedDir)
-  tofuApply(t, sharedDir, vars)
-  t.Cleanup(func() {
-    tofuDestroy(t, sharedDir, vars)
-  })
-
-  // Should skip: requires a non-existent layer to exist
-  migDir := writeMigration(t, rootDir, "001_layer_missing.yaml", fmt.Sprintf(`
+	// Should skip: requires a non-existent layer to exist
+	migDir := writeMigration(t, rootDir, "001_layer_missing.yaml", fmt.Sprintf(`
 description: "Should skip — referencing non-existent layer"
 condition:
   layer_exists:
@@ -173,16 +119,16 @@ operations:
       - address: "random_id.layer_check"
 `, nonexistentDir, sharedDir))
 
-  result := runGenerateResult(t, []string{migDir})
-  if len(result.OutputFiles) != 0 {
-    t.Errorf("expected no output (layer_exists not met), got %d files", len(result.OutputFiles))
-  }
+	result := runGenerateResult(t, []string{migDir})
+	if len(result.OutputFiles) != 0 {
+		t.Errorf("expected no output (layer_exists not met), got %d files", len(result.OutputFiles))
+	}
 
-  assertResourceInState(t, sharedDir, "random_id.layer_check")
+	assertResourceInState(t, sharedDir, "random_id.layer_check")
 
-  // Should proceed: requires existing layer to exist
-  os.RemoveAll(filepath.Join(rootDir, "migrations"))
-  migDir = writeMigration(t, rootDir, "002_layer_present.yaml", fmt.Sprintf(`
+	// Should proceed: requires existing layer to exist
+	os.RemoveAll(filepath.Join(rootDir, "migrations"))
+	migDir = writeMigration(t, rootDir, "002_layer_present.yaml", fmt.Sprintf(`
 description: "Should skip if deleted layer exists"
 condition:
   layer_not_exists:
@@ -199,17 +145,7 @@ operations:
         to: "random_id.layer_ok"
 `, nonexistentDir, sharedDir, sharedDir))
 
-  updateTfFile(t, sharedDir, "main.tf", `
-terraform {
-  required_providers {
-    random = {
-      source = "hashicorp/random"
-    }
-  }
-}
-
-provider "random" {}
-
+	updateTfFile(t, sharedDir, "main.tf", randomProviderHCL+`
 resource "random_id" "layer_ok" {
   byte_length = 4
   keepers = {
@@ -219,54 +155,31 @@ resource "random_id" "layer_ok" {
 }
 `)
 
-  result = runGenerateResult(t, []string{migDir})
-  if len(result.OutputFiles) == 0 {
-    t.Fatal("expected generated files (layer_not_exists met), got none")
-  }
+	result = runGenerateResult(t, []string{migDir})
+	if len(result.OutputFiles) == 0 {
+		t.Fatal("expected generated files (layer_not_exists met), got none")
+	}
 
-  tofuApply(t, sharedDir, vars)
+	tofuApply(t, sharedDir, vars)
 
-  assertResourceInState(t, sharedDir, "random_id.layer_ok")
+	assertResourceInState(t, sharedDir, "random_id.layer_ok")
 
-  cleanupMigrationFiles(t, sharedDir)
-  assertCleanPlan(t, sharedDir, vars)
+	cleanupAndAssertClean(t, vars, sharedDir)
 }
 
 // TestE2EFast_RetiredStatus tests that migrations with status: retired are skipped entirely.
-
 func TestE2EFast_RetiredStatus(t *testing.T) {
-  t.Parallel()
-  rootDir, _, vars := setupFastProject(t)
+	t.Parallel()
+	rootDir, _, vars := setupFastProject(t)
 
-  sharedDir := filepath.Join(rootDir, "layers", "shared")
+	sharedDir := filepath.Join(rootDir, "layers", "shared")
 
-  updateTfFile(t, sharedDir, "main.tf", `
-terraform {
-  required_providers {
-    random = {
-      source = "hashicorp/random"
-    }
-  }
-}
+	updateTfFile(t, sharedDir, "main.tf", randomProviderHCL+randomIDResource("keep"))
+	tofuInit(t, sharedDir)
+	tofuApply(t, sharedDir, vars)
+	t.Cleanup(func() { tofuDestroy(t, sharedDir, vars) })
 
-provider "random" {}
-
-resource "random_id" "keep" {
-  byte_length = 4
-  keepers = {
-    prefix = var.prefix
-    name   = "keep"
-  }
-}
-`)
-
-  tofuInit(t, sharedDir)
-  tofuApply(t, sharedDir, vars)
-  t.Cleanup(func() {
-    tofuDestroy(t, sharedDir, vars)
-  })
-
-  migDir := writeMigration(t, rootDir, "001_retired.yaml", fmt.Sprintf(`
+	migDir := writeMigration(t, rootDir, "001_retired.yaml", fmt.Sprintf(`
 description: "This migration is retired and should be skipped"
 status: retired
 operations:
@@ -276,64 +189,41 @@ operations:
       - address: "random_id.keep"
 `, sharedDir))
 
-  result := runGenerateResult(t, []string{migDir})
-  if len(result.OutputFiles) != 0 {
-    t.Errorf("expected no output for retired migration, got %d files", len(result.OutputFiles))
-  }
-  if len(result.SkippedFiles) == 0 {
-    t.Fatal("expected skipped file recorded for retired migration")
-  }
-  if result.SkippedFiles[0].Reason != engine.SkipRetired {
-    t.Errorf("expected skip reason %d, got %d", engine.SkipRetired, result.SkippedFiles[0].Reason)
-  }
+	result := runGenerateResult(t, []string{migDir})
+	if len(result.OutputFiles) != 0 {
+		t.Errorf("expected no output for retired migration, got %d files", len(result.OutputFiles))
+	}
+	if len(result.SkippedFiles) == 0 {
+		t.Fatal("expected skipped file recorded for retired migration")
+	}
+	if result.SkippedFiles[0].Reason != engine.SkipRetired {
+		t.Errorf("expected skip reason %d, got %d", engine.SkipRetired, result.SkippedFiles[0].Reason)
+	}
 
-  // Resource should still be in state (migration was not processed)
-  assertResourceInState(t, sharedDir, "random_id.keep")
-  assertCleanPlan(t, sharedDir, vars)
+	// Resource should still be in state (migration was not processed)
+	assertResourceInState(t, sharedDir, "random_id.keep")
+	assertCleanPlan(t, sharedDir, vars)
 }
 
 // TestE2EFast_Idempotency tests that re-running the same migration after it was applied
-// is handled gracefully. Auto-inferred conditions make downloads idempotent, but at
-// generate time the engine detects the source resource is gone and skips the file.
-// This test also verifies the recommended pattern: using explicit conditions in the YAML
-// to make generate idempotent without errors.
-
+// is handled gracefully via explicit conditions.
 func TestE2EFast_Idempotency(t *testing.T) {
-  t.Parallel()
-  rootDir, _, vars := setupFastProject(t)
+	t.Parallel()
+	rootDir, _, vars := setupFastProject(t)
 
-  sharedDir := filepath.Join(rootDir, "layers", "shared")
-  appDir := filepath.Join(rootDir, "layers", "app")
+	sharedDir := filepath.Join(rootDir, "layers", "shared")
+	appDir := filepath.Join(rootDir, "layers", "app")
 
-  updateTfFile(t, sharedDir, "main.tf", `
-terraform {
-  required_providers {
-    random = {
-      source = "hashicorp/random"
-    }
-  }
-}
+	updateTfFile(t, sharedDir, "main.tf", randomProviderHCL+randomIDResource("idempotent"))
+	tofuInit(t, sharedDir)
+	tofuApply(t, sharedDir, vars)
+	t.Cleanup(func() {
+		tofuDestroy(t, appDir, vars)
+		tofuDestroy(t, sharedDir, vars)
+	})
 
-provider "random" {}
-
-resource "random_id" "idempotent" {
-  byte_length = 4
-  keepers = {
-    prefix = var.prefix
-    name   = "idempotent"
-  }
-}
-`)
-
-  tofuInit(t, sharedDir)
-  tofuApply(t, sharedDir, vars)
-  t.Cleanup(func() {
-    tofuDestroy(t, appDir, vars)
-    tofuDestroy(t, sharedDir, vars)
-  })
-
-  // Use explicit conditions so generate is truly idempotent (skips cleanly via SkipCondition).
-  migDir := writeMigration(t, rootDir, "001_idempotent.yaml", fmt.Sprintf(`
+	// Use explicit conditions so generate is truly idempotent (skips cleanly via SkipCondition).
+	migDir := writeMigration(t, rootDir, "001_idempotent.yaml", fmt.Sprintf(`
 description: "Move resource for idempotency test"
 condition:
   resources_exist:
@@ -348,118 +238,59 @@ operations:
       - from: "random_id.idempotent"
 `, sharedDir, sharedDir, appDir))
 
-  updateTfFile(t, appDir, "main.tf", `
-terraform {
-  required_providers {
-    random = {
-      source = "hashicorp/random"
-    }
-  }
-}
+	updateTfFile(t, appDir, "main.tf", randomProviderHCL+randomIDResource("idempotent"))
+	updateTfFile(t, sharedDir, "main.tf", randomProviderHCL)
 
-provider "random" {}
+	// First run: condition met, should generate migration files
+	files := runGenerate(t, []string{migDir})
+	if len(files) == 0 {
+		t.Fatal("expected generated migration files on first run, got none")
+	}
 
-resource "random_id" "idempotent" {
-  byte_length = 4
-  keepers = {
-    prefix = var.prefix
-    name   = "idempotent"
-  }
-}
-`)
+	tofuInit(t, appDir)
+	tofuApply(t, appDir, vars)
+	tofuApply(t, sharedDir, vars)
 
-  updateTfFile(t, sharedDir, "main.tf", `
-terraform {
-  required_providers {
-    random = {
-      source = "hashicorp/random"
-    }
-  }
-}
+	assertResourceInState(t, appDir, "random_id.idempotent")
+	assertResourceNotInState(t, sharedDir, "random_id.idempotent")
 
-provider "random" {}
-`)
+	cleanupMigrationFiles(t, sharedDir)
+	cleanupMigrationFiles(t, appDir)
 
-  // First run: condition met, should generate migration files
-  files := runGenerate(t, []string{migDir})
-  if len(files) == 0 {
-    t.Fatal("expected generated migration files on first run, got none")
-  }
+	// Second run: explicit condition detects source resource is gone, skips cleanly
+	result := runGenerateResult(t, []string{migDir})
+	if len(result.OutputFiles) != 0 {
+		t.Errorf("expected no output on idempotent re-run, got %d files: %v", len(result.OutputFiles), result.OutputFiles)
+	}
+	if len(result.SkippedFiles) == 0 {
+		t.Fatal("expected skipped files on idempotent re-run")
+	}
+	if result.SkippedFiles[0].Reason != engine.SkipCondition {
+		t.Errorf("expected skip reason SkipCondition (%d), got %d", engine.SkipCondition, result.SkippedFiles[0].Reason)
+	}
 
-  tofuInit(t, appDir)
-  tofuApply(t, appDir, vars)
-  tofuApply(t, sharedDir, vars)
-
-  assertResourceInState(t, appDir, "random_id.idempotent")
-  assertResourceNotInState(t, sharedDir, "random_id.idempotent")
-
-  cleanupMigrationFiles(t, sharedDir)
-  cleanupMigrationFiles(t, appDir)
-
-  // Second run: explicit condition detects source resource is gone, skips cleanly
-  result := runGenerateResult(t, []string{migDir})
-  if len(result.OutputFiles) != 0 {
-    t.Errorf("expected no output on idempotent re-run, got %d files: %v", len(result.OutputFiles), result.OutputFiles)
-  }
-  // Verify it was skipped due to condition, not an error
-  if len(result.SkippedFiles) == 0 {
-    t.Fatal("expected skipped files on idempotent re-run")
-  }
-  if result.SkippedFiles[0].Reason != engine.SkipCondition {
-    t.Errorf("expected skip reason SkipCondition (%d), got %d", engine.SkipCondition, result.SkippedFiles[0].Reason)
-  }
-
-  // State should remain unchanged
-  assertResourceInState(t, appDir, "random_id.idempotent")
-  assertCleanPlan(t, sharedDir, vars)
-  assertCleanPlan(t, appDir, vars)
+	// State should remain unchanged
+	assertResourceInState(t, appDir, "random_id.idempotent")
+	assertCleanPlan(t, sharedDir, vars)
+	assertCleanPlan(t, appDir, vars)
 }
 
 // TestE2EFast_MultiFileMigration tests processing multiple migration YAML files
 // in a single directory, including proper ordering and independent processing.
-
 func TestE2EFast_MultiFileMigration(t *testing.T) {
-  t.Parallel()
-  rootDir, _, vars := setupFastProject(t)
+	t.Parallel()
+	rootDir, _, vars := setupFastProject(t)
 
-  sharedDir := filepath.Join(rootDir, "layers", "shared")
+	sharedDir := filepath.Join(rootDir, "layers", "shared")
 
-  updateTfFile(t, sharedDir, "main.tf", `
-terraform {
-  required_providers {
-    random = {
-      source = "hashicorp/random"
-    }
-  }
-}
+	updateTfFile(t, sharedDir, "main.tf", randomProviderHCL+
+		randomIDResource("first")+randomIDResource("second"))
+	tofuInit(t, sharedDir)
+	tofuApply(t, sharedDir, vars)
+	t.Cleanup(func() { tofuDestroy(t, sharedDir, vars) })
 
-provider "random" {}
-
-resource "random_id" "first" {
-  byte_length = 4
-  keepers = {
-    prefix = var.prefix
-    name   = "first"
-  }
-}
-
-resource "random_id" "second" {
-  byte_length = 4
-  keepers = {
-    prefix = var.prefix
-    name   = "second"
-  }
-}
-`)
-
-  tofuInit(t, sharedDir)
-  tofuApply(t, sharedDir, vars)
-  t.Cleanup(func() {
-    tofuDestroy(t, sharedDir, vars)
-  })
-
-  // Two independent rename migrations in the same directory
-  migDir := writeMigration(t, rootDir, "001_rename_first.yaml", fmt.Sprintf(`
+	// Two independent rename migrations in the same directory
+	migDir := writeMigration(t, rootDir, "001_rename_first.yaml", fmt.Sprintf(`
 description: "Rename first resource"
 operations:
   - type: rename
@@ -469,7 +300,7 @@ operations:
         to: "random_id.alpha"
 `, sharedDir))
 
-  writeMigration(t, rootDir, "002_rename_second.yaml", fmt.Sprintf(`
+	writeMigration(t, rootDir, "002_rename_second.yaml", fmt.Sprintf(`
 description: "Rename second resource"
 operations:
   - type: rename
@@ -479,17 +310,7 @@ operations:
         to: "random_id.beta"
 `, sharedDir))
 
-  updateTfFile(t, sharedDir, "main.tf", `
-terraform {
-  required_providers {
-    random = {
-      source = "hashicorp/random"
-    }
-  }
-}
-
-provider "random" {}
-
+	updateTfFile(t, sharedDir, "main.tf", randomProviderHCL+`
 resource "random_id" "alpha" {
   byte_length = 4
   keepers = {
@@ -507,21 +328,17 @@ resource "random_id" "beta" {
 }
 `)
 
-  files := runGenerate(t, []string{migDir})
-  if len(files) < 2 {
-    t.Fatalf("expected at least 2 generated migration files, got %d: %v", len(files), files)
-  }
+	files := runGenerate(t, []string{migDir})
+	if len(files) < 2 {
+		t.Fatalf("expected at least 2 generated migration files, got %d: %v", len(files), files)
+	}
 
-  tofuApply(t, sharedDir, vars)
+	tofuApply(t, sharedDir, vars)
 
-  assertResourceInState(t, sharedDir, "random_id.alpha")
-  assertResourceInState(t, sharedDir, "random_id.beta")
-  assertResourceNotInState(t, sharedDir, "random_id.first")
-  assertResourceNotInState(t, sharedDir, "random_id.second")
+	assertResourceInState(t, sharedDir, "random_id.alpha")
+	assertResourceInState(t, sharedDir, "random_id.beta")
+	assertResourceNotInState(t, sharedDir, "random_id.first")
+	assertResourceNotInState(t, sharedDir, "random_id.second")
 
-  cleanupMigrationFiles(t, sharedDir)
-  assertCleanPlan(t, sharedDir, vars)
+	cleanupAndAssertClean(t, vars, sharedDir)
 }
-
-// TestE2EFast_ImportWithTemplateID tests the import operation with a Go template
-// expression for the import ID, simulating composite ID construction from state attributes.

@@ -1,9 +1,6 @@
 package engine
 
 import (
-	"context"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -13,606 +10,288 @@ import (
 )
 
 func TestEngine_ProcessFiles_AllResources(t *testing.T) {
-	// Move all resources from one layer to another.
-	dir := t.TempDir()
-	srcLayer := filepath.Join(dir, "layers", "old")
-	dstLayer := filepath.Join(dir, "layers", "new")
-	if err := os.MkdirAll(srcLayer, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(dstLayer, 0o755); err != nil {
-		t.Fatal(err)
-	}
-
-	migrationContent := `
+	tests := []struct {
+		name            string
+		yaml            string
+		stateResources  []*tfjson.StateResource
+		dstImportCount  int
+		dstContains     []string
+		dstNotContains  []string
+		srcRemovedCount int
+		srcContains     []string
+	}{
+		{
+			name: "basic all resources",
+			yaml: `
 description: "Move all resources"
 operations:
   - type: move
-    source_layer: "` + srcLayer + `"
-    destination_layer: "` + dstLayer + `"
+    source_layer: "SRC"
+    destination_layer: "DST"
     all_resources: true
-`
-	migrationFile := filepath.Join(dir, "001_all.yaml")
-	if err := os.WriteFile(migrationFile, []byte(migrationContent), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	mock := testutil.NewMockStateReader(map[string]*tfjson.State{
-		srcLayer: testutil.BuildState(
-			testutil.NewResource("aws_instance.web", "aws_instance", "web", nil,
-				map[string]interface{}{"id": "i-123"}),
-			testutil.NewResource("aws_s3_bucket.data", "aws_s3_bucket", "data", nil,
-				map[string]interface{}{"id": "bucket-123"}),
-			testutil.NewResource("module.foo.aws_instance.api", "aws_instance", "api", nil,
-				map[string]interface{}{"id": "i-456"}),
-		),
-	})
-
-	engine := New(Config{StateReader: mock})
-
-	result, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if len(result.OutputFiles) != 2 {
-		t.Fatalf("expected 2 files (source + destination), got %d: %v", len(result.OutputFiles), result.OutputFiles)
-	}
-
-	dstContent := readLayerFile(t, result.OutputFiles, dstLayer)
-	if strings.Count(dstContent, "import {") != 3 {
-		t.Errorf("expected 3 import blocks, got:\n%s", dstContent)
-	}
-	if !strings.Contains(dstContent, "aws_instance.web") {
-		t.Error("expected aws_instance.web import")
-	}
-	if !strings.Contains(dstContent, "aws_s3_bucket.data") {
-		t.Error("expected aws_s3_bucket.data import")
-	}
-	if !strings.Contains(dstContent, "module.foo.aws_instance.api") {
-		t.Error("expected module.foo.aws_instance.api import")
-	}
-}
-
-
-func TestEngine_ProcessFiles_AllResourcesWithOverride(t *testing.T) {
-	// Move all resources, but rename one.
-	dir := t.TempDir()
-	srcLayer := filepath.Join(dir, "layers", "old")
-	dstLayer := filepath.Join(dir, "layers", "new")
-	if err := os.MkdirAll(srcLayer, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(dstLayer, 0o755); err != nil {
-		t.Fatal(err)
-	}
-
-	migrationContent := `
+`,
+			stateResources: []*tfjson.StateResource{
+				testutil.NewResource("aws_instance.web", "aws_instance", "web", nil,
+					map[string]interface{}{"id": "i-123"}),
+				testutil.NewResource("aws_s3_bucket.data", "aws_s3_bucket", "data", nil,
+					map[string]interface{}{"id": "bucket-123"}),
+				testutil.NewResource("module.foo.aws_instance.api", "aws_instance", "api", nil,
+					map[string]interface{}{"id": "i-456"}),
+			},
+			dstImportCount: 3,
+			dstContains:    []string{"aws_instance.web", "aws_s3_bucket.data", "module.foo.aws_instance.api"},
+		},
+		{
+			name: "with override rename",
+			yaml: `
 description: "Move all, rename one"
 operations:
   - type: move
-    source_layer: "` + srcLayer + `"
-    destination_layer: "` + dstLayer + `"
+    source_layer: "SRC"
+    destination_layer: "DST"
     all_resources: true
     overrides:
       - from: "aws_instance.web"
         to: "aws_instance.api"
-`
-	migrationFile := filepath.Join(dir, "001_rename.yaml")
-	if err := os.WriteFile(migrationFile, []byte(migrationContent), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	mock := testutil.NewMockStateReader(map[string]*tfjson.State{
-		srcLayer: testutil.BuildState(
-			testutil.NewResource("aws_instance.web", "aws_instance", "web", nil,
-				map[string]interface{}{"id": "i-123"}),
-			testutil.NewResource("aws_s3_bucket.data", "aws_s3_bucket", "data", nil,
-				map[string]interface{}{"id": "bucket-123"}),
-		),
-	})
-
-	engine := New(Config{StateReader: mock})
-
-	result, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	dstContent := readLayerFile(t, result.OutputFiles, dstLayer)
-	// aws_instance.web should be renamed to aws_instance.api
-	if !strings.Contains(dstContent, "aws_instance.api") {
-		t.Errorf("expected aws_instance.api (renamed), got:\n%s", dstContent)
-	}
-	// aws_s3_bucket.data should keep its name
-	if !strings.Contains(dstContent, "aws_s3_bucket.data") {
-		t.Error("expected aws_s3_bucket.data to keep its address")
-	}
-	// aws_instance.web should NOT appear in destination (was renamed)
-	if strings.Contains(dstContent, "aws_instance.web") {
-		t.Error("aws_instance.web should have been renamed to aws_instance.api")
-	}
-}
-
-
-func TestEngine_ProcessFiles_AllResourcesWithForEach(t *testing.T) {
-	// Move all resources including for_each instances.
-	dir := t.TempDir()
-	srcLayer := filepath.Join(dir, "layers", "old")
-	dstLayer := filepath.Join(dir, "layers", "new")
-	if err := os.MkdirAll(srcLayer, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(dstLayer, 0o755); err != nil {
-		t.Fatal(err)
-	}
-
-	migrationContent := `
+`,
+			stateResources: []*tfjson.StateResource{
+				testutil.NewResource("aws_instance.web", "aws_instance", "web", nil,
+					map[string]interface{}{"id": "i-123"}),
+				testutil.NewResource("aws_s3_bucket.data", "aws_s3_bucket", "data", nil,
+					map[string]interface{}{"id": "bucket-123"}),
+			},
+			dstContains:    []string{"aws_instance.api", "aws_s3_bucket.data"},
+			dstNotContains: []string{"aws_instance.web"},
+		},
+		{
+			name: "with for_each",
+			yaml: `
 description: "Move all with for_each"
 operations:
   - type: move
-    source_layer: "` + srcLayer + `"
-    destination_layer: "` + dstLayer + `"
+    source_layer: "SRC"
+    destination_layer: "DST"
     all_resources: true
-`
-	migrationFile := filepath.Join(dir, "001_foreach.yaml")
-	if err := os.WriteFile(migrationFile, []byte(migrationContent), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	mock := testutil.NewMockStateReader(map[string]*tfjson.State{
-		srcLayer: testutil.BuildState(
-			testutil.NewResource(`aws_s3_bucket.data["key-a"]`, "aws_s3_bucket", "data", "key-a",
-				map[string]interface{}{"id": "bucket-a"}),
-			testutil.NewResource(`aws_s3_bucket.data["key-b"]`, "aws_s3_bucket", "data", "key-b",
-				map[string]interface{}{"id": "bucket-b"}),
-		),
-	})
-
-	engine := New(Config{StateReader: mock})
-
-	result, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	dstContent := readLayerFile(t, result.OutputFiles, dstLayer)
-	if strings.Count(dstContent, "import {") != 2 {
-		t.Errorf("expected 2 import blocks for for_each instances, got:\n%s", dstContent)
-	}
-	if !strings.Contains(dstContent, `aws_s3_bucket.data["key-a"]`) {
-		t.Error("expected key-a import")
-	}
-	if !strings.Contains(dstContent, `aws_s3_bucket.data["key-b"]`) {
-		t.Error("expected key-b import")
-	}
-
-	srcContent := readLayerFile(t, result.OutputFiles, srcLayer)
-	if strings.Count(srcContent, "removed {") != 1 {
-		t.Errorf("expected 1 removed block (base address), got:\n%s", srcContent)
-	}
-}
-
-
-func TestEngine_ProcessFiles_AllResourcesModuleConsolidation(t *testing.T) {
-	// All resources include a full module → consolidation should kick in.
-	dir := t.TempDir()
-	srcLayer := filepath.Join(dir, "layers", "old")
-	dstLayer := filepath.Join(dir, "layers", "new")
-	if err := os.MkdirAll(srcLayer, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(dstLayer, 0o755); err != nil {
-		t.Fatal(err)
-	}
-
-	migrationContent := `
+`,
+			stateResources: []*tfjson.StateResource{
+				testutil.NewResource(`aws_s3_bucket.data["key-a"]`, "aws_s3_bucket", "data", "key-a",
+					map[string]interface{}{"id": "bucket-a"}),
+				testutil.NewResource(`aws_s3_bucket.data["key-b"]`, "aws_s3_bucket", "data", "key-b",
+					map[string]interface{}{"id": "bucket-b"}),
+			},
+			dstImportCount:  2,
+			dstContains:     []string{`aws_s3_bucket.data["key-a"]`, `aws_s3_bucket.data["key-b"]`},
+			srcRemovedCount: 1,
+		},
+		{
+			name: "module consolidation",
+			yaml: `
 description: "All resources with module consolidation"
 operations:
   - type: move
-    source_layer: "` + srcLayer + `"
-    destination_layer: "` + dstLayer + `"
+    source_layer: "SRC"
+    destination_layer: "DST"
     all_resources: true
-`
-	migrationFile := filepath.Join(dir, "001_consolidate.yaml")
-	if err := os.WriteFile(migrationFile, []byte(migrationContent), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	mock := testutil.NewMockStateReader(map[string]*tfjson.State{
-		srcLayer: testutil.BuildState(
-			testutil.NewResource("aws_instance.standalone", "aws_instance", "standalone", nil,
-				map[string]interface{}{"id": "i-000"}),
-			testutil.NewResource("module.foo.aws_instance.web", "aws_instance", "web", nil,
-				map[string]interface{}{"id": "i-123"}),
-			testutil.NewResource("module.foo.aws_s3_bucket.data", "aws_s3_bucket", "data", nil,
-				map[string]interface{}{"id": "bucket-123"}),
-		),
-	})
-
-	engine := New(Config{StateReader: mock})
-
-	result, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	srcContent := readLayerFile(t, result.OutputFiles, srcLayer)
-	// Should have 2 removed blocks: aws_instance.standalone (root) + module.foo (consolidated)
-	if strings.Count(srcContent, "removed {") != 2 {
-		t.Errorf("expected 2 removed blocks (root + consolidated module), got:\n%s", srcContent)
-	}
-	if !strings.Contains(srcContent, "aws_instance.standalone") {
-		t.Error("expected root resource removed block")
-	}
-	if !strings.Contains(srcContent, "module.foo") {
-		t.Error("expected module.foo consolidated removed block")
-	}
-}
-
-
-func TestEngine_ProcessFiles_AllResourcesEmptyState(t *testing.T) {
-	// No resources in state → error.
-	dir := t.TempDir()
-	srcLayer := filepath.Join(dir, "layers", "old")
-	dstLayer := filepath.Join(dir, "layers", "new")
-	if err := os.MkdirAll(srcLayer, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(dstLayer, 0o755); err != nil {
-		t.Fatal(err)
-	}
-
-	migrationContent := `
-description: "Move empty layer"
-operations:
-  - type: move
-    source_layer: "` + srcLayer + `"
-    destination_layer: "` + dstLayer + `"
-    all_resources: true
-`
-	migrationFile := filepath.Join(dir, "001_empty.yaml")
-	if err := os.WriteFile(migrationFile, []byte(migrationContent), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	mock := testutil.NewMockStateReader(map[string]*tfjson.State{
-		srcLayer: testutil.BuildState(), // empty
-	})
-
-	engine := New(Config{StateReader: mock})
-
-	_, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
-	if err == nil {
-		t.Fatal("expected error for empty state")
-	}
-	if !strings.Contains(err.Error(), "skipped") {
-		t.Errorf("expected error mentioning skipped, got: %v", err)
-	}
-}
-
-
-func TestEngine_ProcessFiles_AllResourcesWithOmit(t *testing.T) {
-	// Move 3 resources, omit 1 → destination gets 2 imports, source gets 3 removed blocks.
-	dir := t.TempDir()
-	srcLayer := filepath.Join(dir, "layers", "old")
-	dstLayer := filepath.Join(dir, "layers", "new")
-	if err := os.MkdirAll(srcLayer, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(dstLayer, 0o755); err != nil {
-		t.Fatal(err)
-	}
-
-	migrationContent := `
+`,
+			stateResources: []*tfjson.StateResource{
+				testutil.NewResource("aws_instance.standalone", "aws_instance", "standalone", nil,
+					map[string]interface{}{"id": "i-000"}),
+				testutil.NewResource("module.foo.aws_instance.web", "aws_instance", "web", nil,
+					map[string]interface{}{"id": "i-123"}),
+				testutil.NewResource("module.foo.aws_s3_bucket.data", "aws_s3_bucket", "data", nil,
+					map[string]interface{}{"id": "bucket-123"}),
+			},
+			srcRemovedCount: 2,
+			srcContains:     []string{"aws_instance.standalone", "module.foo"},
+		},
+		{
+			name: "with omit",
+			yaml: `
 description: "Move all, omit one"
 operations:
   - type: move
-    source_layer: "` + srcLayer + `"
-    destination_layer: "` + dstLayer + `"
+    source_layer: "SRC"
+    destination_layer: "DST"
     all_resources: true
     omit:
       - address: "aws_instance.ephemeral"
-`
-	migrationFile := filepath.Join(dir, "001_omit.yaml")
-	if err := os.WriteFile(migrationFile, []byte(migrationContent), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	mock := testutil.NewMockStateReader(map[string]*tfjson.State{
-		srcLayer: testutil.BuildState(
-			testutil.NewResource("aws_instance.web", "aws_instance", "web", nil,
-				map[string]interface{}{"id": "i-123"}),
-			testutil.NewResource("aws_s3_bucket.data", "aws_s3_bucket", "data", nil,
-				map[string]interface{}{"id": "bucket-123"}),
-			testutil.NewResource("aws_instance.ephemeral", "aws_instance", "ephemeral", nil,
-				map[string]interface{}{"id": "i-eph"}),
-		),
-	})
-
-	engine := New(Config{StateReader: mock})
-
-	result, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if len(result.OutputFiles) != 2 {
-		t.Fatalf("expected 2 files (source + destination), got %d: %v", len(result.OutputFiles), result.OutputFiles)
-	}
-
-	dstContent := readLayerFile(t, result.OutputFiles, dstLayer)
-	// Destination should have 2 import blocks (web + data), NOT ephemeral.
-	if strings.Count(dstContent, "import {") != 2 {
-		t.Errorf("expected 2 import blocks in destination, got:\n%s", dstContent)
-	}
-	if !strings.Contains(dstContent, "aws_instance.web") {
-		t.Error("expected aws_instance.web import")
-	}
-	if !strings.Contains(dstContent, "aws_s3_bucket.data") {
-		t.Error("expected aws_s3_bucket.data import")
-	}
-	if strings.Contains(dstContent, "aws_instance.ephemeral") {
-		t.Error("aws_instance.ephemeral should be omitted from destination imports")
-	}
-
-	srcContent := readLayerFile(t, result.OutputFiles, srcLayer)
-	// Source should have 3 removed blocks (web, data, ephemeral).
-	if strings.Count(srcContent, "removed {") != 3 {
-		t.Errorf("expected 3 removed blocks in source, got:\n%s", srcContent)
-	}
-	if !strings.Contains(srcContent, "aws_instance.ephemeral") {
-		t.Error("expected aws_instance.ephemeral in source removed blocks")
-	}
-}
-
-
-func TestEngine_ProcessFiles_AllResourcesWithOmitDestroy(t *testing.T) {
-	// Omit with destroy=true → verify removed block contains "destroy = true".
-	dir := t.TempDir()
-	srcLayer := filepath.Join(dir, "layers", "old")
-	dstLayer := filepath.Join(dir, "layers", "new")
-	if err := os.MkdirAll(srcLayer, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(dstLayer, 0o755); err != nil {
-		t.Fatal(err)
-	}
-
-	migrationContent := `
+`,
+			stateResources: []*tfjson.StateResource{
+				testutil.NewResource("aws_instance.web", "aws_instance", "web", nil,
+					map[string]interface{}{"id": "i-123"}),
+				testutil.NewResource("aws_s3_bucket.data", "aws_s3_bucket", "data", nil,
+					map[string]interface{}{"id": "bucket-123"}),
+				testutil.NewResource("aws_instance.ephemeral", "aws_instance", "ephemeral", nil,
+					map[string]interface{}{"id": "i-eph"}),
+			},
+			dstImportCount:  2,
+			dstContains:     []string{"aws_instance.web", "aws_s3_bucket.data"},
+			dstNotContains:  []string{"aws_instance.ephemeral"},
+			srcRemovedCount: 3,
+			srcContains:     []string{"aws_instance.ephemeral"},
+		},
+		{
+			name: "omit with destroy",
+			yaml: `
 description: "Move all, omit with destroy"
 operations:
   - type: move
-    source_layer: "` + srcLayer + `"
-    destination_layer: "` + dstLayer + `"
+    source_layer: "SRC"
+    destination_layer: "DST"
     all_resources: true
     omit:
       - address: "aws_instance.ephemeral"
         destroy: true
-`
-	migrationFile := filepath.Join(dir, "001_omit_destroy.yaml")
-	if err := os.WriteFile(migrationFile, []byte(migrationContent), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	mock := testutil.NewMockStateReader(map[string]*tfjson.State{
-		srcLayer: testutil.BuildState(
-			testutil.NewResource("aws_instance.web", "aws_instance", "web", nil,
-				map[string]interface{}{"id": "i-123"}),
-			testutil.NewResource("aws_instance.ephemeral", "aws_instance", "ephemeral", nil,
-				map[string]interface{}{"id": "i-eph"}),
-		),
-	})
-
-	engine := New(Config{StateReader: mock})
-
-	result, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	srcContent := readLayerFile(t, result.OutputFiles, srcLayer)
-	// Should have removed block for ephemeral with destroy = true
-	if !strings.Contains(srcContent, "destroy = true") {
-		t.Errorf("expected 'destroy = true' for omitted resource, got:\n%s", srcContent)
-	}
-
-	dstContent := readLayerFile(t, result.OutputFiles, dstLayer)
-	// Only aws_instance.web should have an import block
-	if strings.Count(dstContent, "import {") != 1 {
-		t.Errorf("expected 1 import block, got:\n%s", dstContent)
-	}
-	if strings.Contains(dstContent, "aws_instance.ephemeral") {
-		t.Error("aws_instance.ephemeral should not have an import block")
-	}
-}
-
-
-func TestEngine_ProcessFiles_AllResourcesWithOmitAndOverride(t *testing.T) {
-	// Omit one resource, rename another, move the rest normally.
-	dir := t.TempDir()
-	srcLayer := filepath.Join(dir, "layers", "old")
-	dstLayer := filepath.Join(dir, "layers", "new")
-	if err := os.MkdirAll(srcLayer, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(dstLayer, 0o755); err != nil {
-		t.Fatal(err)
-	}
-
-	migrationContent := `
+`,
+			stateResources: []*tfjson.StateResource{
+				testutil.NewResource("aws_instance.web", "aws_instance", "web", nil,
+					map[string]interface{}{"id": "i-123"}),
+				testutil.NewResource("aws_instance.ephemeral", "aws_instance", "ephemeral", nil,
+					map[string]interface{}{"id": "i-eph"}),
+			},
+			dstImportCount: 1,
+			dstNotContains: []string{"aws_instance.ephemeral"},
+			srcContains:    []string{"destroy = true"},
+		},
+		{
+			name: "omit and override",
+			yaml: `
 description: "Move all, omit one, rename one"
 operations:
   - type: move
-    source_layer: "` + srcLayer + `"
-    destination_layer: "` + dstLayer + `"
+    source_layer: "SRC"
+    destination_layer: "DST"
     all_resources: true
     overrides:
       - from: "aws_instance.web"
         to: "aws_instance.api"
     omit:
       - address: "aws_instance.ephemeral"
-`
-	migrationFile := filepath.Join(dir, "001_omit_override.yaml")
-	if err := os.WriteFile(migrationFile, []byte(migrationContent), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	mock := testutil.NewMockStateReader(map[string]*tfjson.State{
-		srcLayer: testutil.BuildState(
-			testutil.NewResource("aws_instance.web", "aws_instance", "web", nil,
-				map[string]interface{}{"id": "i-123"}),
-			testutil.NewResource("aws_s3_bucket.data", "aws_s3_bucket", "data", nil,
-				map[string]interface{}{"id": "bucket-123"}),
-			testutil.NewResource("aws_instance.ephemeral", "aws_instance", "ephemeral", nil,
-				map[string]interface{}{"id": "i-eph"}),
-		),
-	})
-
-	engine := New(Config{StateReader: mock})
-
-	result, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	dstContent := readLayerFile(t, result.OutputFiles, dstLayer)
-	// aws_instance.web → aws_instance.api (renamed), aws_s3_bucket.data (unchanged)
-	if strings.Count(dstContent, "import {") != 2 {
-		t.Errorf("expected 2 import blocks, got:\n%s", dstContent)
-	}
-	if !strings.Contains(dstContent, "aws_instance.api") {
-		t.Error("expected aws_instance.api (renamed from web)")
-	}
-	if strings.Contains(dstContent, "aws_instance.web") {
-		t.Error("aws_instance.web should have been renamed to aws_instance.api")
-	}
-	if !strings.Contains(dstContent, "aws_s3_bucket.data") {
-		t.Error("expected aws_s3_bucket.data import")
-	}
-	if strings.Contains(dstContent, "aws_instance.ephemeral") {
-		t.Error("aws_instance.ephemeral should be omitted from imports")
-	}
-}
-
-
-func TestEngine_ProcessFiles_AllResourcesWithImportIDOverride(t *testing.T) {
-	// Move all resources, but override import_id for one resource.
-	dir := t.TempDir()
-	srcLayer := filepath.Join(dir, "layers", "old")
-	dstLayer := filepath.Join(dir, "layers", "new")
-	if err := os.MkdirAll(srcLayer, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(dstLayer, 0o755); err != nil {
-		t.Fatal(err)
-	}
-
-	migrationContent := `
+`,
+			stateResources: []*tfjson.StateResource{
+				testutil.NewResource("aws_instance.web", "aws_instance", "web", nil,
+					map[string]interface{}{"id": "i-123"}),
+				testutil.NewResource("aws_s3_bucket.data", "aws_s3_bucket", "data", nil,
+					map[string]interface{}{"id": "bucket-123"}),
+				testutil.NewResource("aws_instance.ephemeral", "aws_instance", "ephemeral", nil,
+					map[string]interface{}{"id": "i-eph"}),
+			},
+			dstImportCount: 2,
+			dstContains:    []string{"aws_instance.api", "aws_s3_bucket.data"},
+			dstNotContains: []string{"aws_instance.web", "aws_instance.ephemeral"},
+		},
+		{
+			name: "import ID override",
+			yaml: `
 description: "Move all, override import_id for one"
 operations:
   - type: move
-    source_layer: "` + srcLayer + `"
-    destination_layer: "` + dstLayer + `"
+    source_layer: "SRC"
+    destination_layer: "DST"
     all_resources: true
     overrides:
       - from: "azuredevops_serviceendpoint_azurerm.key_vault"
         import_id: "{{ .Attributes.project_id }}/{{ .Attributes.id }}"
-`
-	migrationFile := filepath.Join(dir, "001_import_override.yaml")
-	if err := os.WriteFile(migrationFile, []byte(migrationContent), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	mock := testutil.NewMockStateReader(map[string]*tfjson.State{
-		srcLayer: testutil.BuildState(
-			testutil.NewResource("aws_instance.web", "aws_instance", "web", nil,
-				map[string]interface{}{"id": "i-web123"}),
-			testutil.NewResource("azuredevops_serviceendpoint_azurerm.key_vault", "azuredevops_serviceendpoint_azurerm", "key_vault", nil,
-				map[string]interface{}{"id": "endpoint-id", "project_id": "proj-123"}),
-		),
-	})
-
-	engine := New(Config{StateReader: mock})
-
-	result, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	dstContent := readLayerFile(t, result.OutputFiles, dstLayer)
-	// Both resources should have import blocks
-	if strings.Count(dstContent, "import {") != 2 {
-		t.Errorf("expected 2 import blocks, got:\n%s", dstContent)
-	}
-	// key_vault should use the composite import ID from the template
-	if !strings.Contains(dstContent, `id = "proj-123/endpoint-id"`) {
-		t.Errorf("expected composite import ID 'proj-123/endpoint-id', got:\n%s", dstContent)
-	}
-	// web should use the auto-resolved import ID
-	if !strings.Contains(dstContent, `id = "i-web123"`) {
-		t.Errorf("expected auto-resolved import ID 'i-web123', got:\n%s", dstContent)
-	}
-}
-
-
-func TestEngine_ProcessFiles_AllResourcesWithImportIDAndDestinationOverride(t *testing.T) {
-	// Move all resources, override both destination_address and import_id for one.
-	dir := t.TempDir()
-	srcLayer := filepath.Join(dir, "layers", "old")
-	dstLayer := filepath.Join(dir, "layers", "new")
-	if err := os.MkdirAll(srcLayer, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(dstLayer, 0o755); err != nil {
-		t.Fatal(err)
-	}
-
-	migrationContent := `
+`,
+			stateResources: []*tfjson.StateResource{
+				testutil.NewResource("aws_instance.web", "aws_instance", "web", nil,
+					map[string]interface{}{"id": "i-web123"}),
+				testutil.NewResource("azuredevops_serviceendpoint_azurerm.key_vault", "azuredevops_serviceendpoint_azurerm", "key_vault", nil,
+					map[string]interface{}{"id": "endpoint-id", "project_id": "proj-123"}),
+			},
+			dstImportCount: 2,
+			dstContains:    []string{`id = "proj-123/endpoint-id"`, `id = "i-web123"`},
+		},
+		{
+			name: "import ID and destination override",
+			yaml: `
 description: "Move all, rename and override import_id"
 operations:
   - type: move
-    source_layer: "` + srcLayer + `"
-    destination_layer: "` + dstLayer + `"
+    source_layer: "SRC"
+    destination_layer: "DST"
     all_resources: true
     overrides:
       - from: "azuredevops_serviceendpoint_azurerm.key_vault"
         to: "azuredevops_serviceendpoint_azurerm.kv"
         import_id: "{{ .Attributes.project_id }}/{{ .Attributes.id }}"
-`
-	migrationFile := filepath.Join(dir, "001_rename_import.yaml")
-	if err := os.WriteFile(migrationFile, []byte(migrationContent), 0o644); err != nil {
-		t.Fatal(err)
+`,
+			stateResources: []*tfjson.StateResource{
+				testutil.NewResource("aws_instance.web", "aws_instance", "web", nil,
+					map[string]interface{}{"id": "i-web123"}),
+				testutil.NewResource("azuredevops_serviceendpoint_azurerm.key_vault", "azuredevops_serviceendpoint_azurerm", "key_vault", nil,
+					map[string]interface{}{"id": "endpoint-id", "project_id": "proj-123"}),
+			},
+			dstContains:    []string{"azuredevops_serviceendpoint_azurerm.kv", `id = "proj-123/endpoint-id"`},
+			dstNotContains: []string{"azuredevops_serviceendpoint_azurerm.key_vault"},
+		},
 	}
 
-	mock := testutil.NewMockStateReader(map[string]*tfjson.State{
-		srcLayer: testutil.BuildState(
-			testutil.NewResource("aws_instance.web", "aws_instance", "web", nil,
-				map[string]interface{}{"id": "i-web123"}),
-			testutil.NewResource("azuredevops_serviceendpoint_azurerm.key_vault", "azuredevops_serviceendpoint_azurerm", "key_vault", nil,
-				map[string]interface{}{"id": "endpoint-id", "project_id": "proj-123"}),
-		),
-	})
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			dir, layers := testutil.SetupLayers(t, "old", "new")
+			srcLayer := layers["old"]
+			dstLayer := layers["new"]
 
-	engine := New(Config{StateReader: mock})
+			yaml := strings.ReplaceAll(tc.yaml, "SRC", srcLayer)
+			yaml = strings.ReplaceAll(yaml, "DST", dstLayer)
+			migrationFile := testutil.WriteMigration(t, dir, "001.yaml", yaml)
 
-	result, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+			mock := testutil.NewMockStateReader(map[string]*tfjson.State{
+				srcLayer: testutil.BuildState(tc.stateResources...),
+			})
 
-	dstContent := readLayerFile(t, result.OutputFiles, dstLayer)
-	// key_vault should be renamed to kv and use composite import ID
-	if !strings.Contains(dstContent, "azuredevops_serviceendpoint_azurerm.kv") {
-		t.Errorf("expected renamed address 'azuredevops_serviceendpoint_azurerm.kv', got:\n%s", dstContent)
-	}
-	if !strings.Contains(dstContent, `id = "proj-123/endpoint-id"`) {
-		t.Errorf("expected composite import ID, got:\n%s", dstContent)
-	}
-	// Original key_vault address should NOT appear in destination
-	if strings.Contains(dstContent, "azuredevops_serviceendpoint_azurerm.key_vault") {
-		t.Error("key_vault should have been renamed to kv in destination")
+			result := runEngine(t, Config{StateReader: mock}, []string{migrationFile})
+			testutil.RequireOutputCount(t, result.OutputFiles, 2)
+
+			if tc.dstImportCount > 0 || len(tc.dstContains) > 0 || len(tc.dstNotContains) > 0 {
+				dstContent := testutil.ReadLayerFile(t, result.OutputFiles, dstLayer)
+				if tc.dstImportCount > 0 {
+					testutil.AssertBlockCount(t, dstContent, "import {", tc.dstImportCount)
+				}
+				for _, s := range tc.dstContains {
+					testutil.AssertContains(t, dstContent, s)
+				}
+				for _, s := range tc.dstNotContains {
+					testutil.AssertNotContains(t, dstContent, s)
+				}
+			}
+
+			if tc.srcRemovedCount > 0 || len(tc.srcContains) > 0 {
+				srcContent := testutil.ReadLayerFile(t, result.OutputFiles, srcLayer)
+				if tc.srcRemovedCount > 0 {
+					testutil.AssertBlockCount(t, srcContent, "removed {", tc.srcRemovedCount)
+				}
+				for _, s := range tc.srcContains {
+					testutil.AssertContains(t, srcContent, s)
+				}
+			}
+		})
 	}
 }
 
+func TestEngine_ProcessFiles_AllResourcesEmptyState(t *testing.T) {
+	dir, layers := testutil.SetupLayers(t, "old", "new")
+	srcLayer := layers["old"]
+	dstLayer := layers["new"]
 
+	yaml := strings.ReplaceAll(`
+description: "Move empty layer"
+operations:
+  - type: move
+    source_layer: "SRC"
+    destination_layer: "DST"
+    all_resources: true
+`, "SRC", srcLayer)
+	yaml = strings.ReplaceAll(yaml, "DST", dstLayer)
+	migrationFile := testutil.WriteMigration(t, dir, "001.yaml", yaml)
+
+	mock := testutil.NewMockStateReader(map[string]*tfjson.State{
+		srcLayer: testutil.BuildState(),
+	})
+
+	err := runEngineExpectError(t, Config{StateReader: mock}, []string{migrationFile})
+	if !strings.Contains(err.Error(), "skipped") {
+		t.Errorf("expected error mentioning skipped, got: %v", err)
+	}
+}

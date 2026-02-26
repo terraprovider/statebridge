@@ -1,9 +1,6 @@
 package engine
 
 import (
-	"context"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -11,63 +8,35 @@ import (
 )
 
 func TestEngine_ProcessFiles_Import(t *testing.T) {
-	dir := t.TempDir()
-	layerDir := filepath.Join(dir, "layers", "db")
-	if err := os.MkdirAll(layerDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-
-	migrationContent := `
+	tests := []struct {
+		name             string
+		yaml             string
+		importBlockCount int
+		expectedContains []string
+		minCounts        map[string]int // substring → minimum occurrence count
+	}{
+		{
+			name: "basic import with provider",
+			yaml: `
 description: "Import RDS instance"
 operations:
   - type: import
-    layer: "` + layerDir + `"
+    layer: "LAYER"
     imports:
       - address: "aws_db_instance.primary"
         id: "my-database"
         provider: "aws.useast1"
-`
-	migrationFile := filepath.Join(dir, "001_import.yaml")
-	if err := os.WriteFile(migrationFile, []byte(migrationContent), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	engine := New(Config{StateReader: testutil.NewMockStateReader(nil)})
-
-	result, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	content, err := os.ReadFile(result.OutputFiles[0])
-	if err != nil {
-		t.Fatalf("reading output: %v", err)
-	}
-	if !strings.Contains(string(content), "import {") {
-		t.Error("expected import block")
-	}
-	if !strings.Contains(string(content), `"my-database"`) {
-		t.Error("expected import ID")
-	}
-	if !strings.Contains(string(content), "provider = aws.useast1") {
-		t.Error("expected provider")
-	}
-}
-
-
-func TestEngine_ProcessFiles_ImportOperationLevelProvider(t *testing.T) {
-	// Test that operation-level provider is used as default, and entry-level provider overrides it.
-	dir := t.TempDir()
-	layerDir := filepath.Join(dir, "layers", "db")
-	if err := os.MkdirAll(layerDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-
-	migrationContent := `
+`,
+			importBlockCount: 1,
+			expectedContains: []string{"import {", `"my-database"`, "provider = aws.useast1"},
+		},
+		{
+			name: "operation-level provider with entry override",
+			yaml: `
 description: "Import with operation-level and entry-level provider"
 operations:
   - type: import
-    layer: "` + layerDir + `"
+    layer: "LAYER"
     provider: "aws.useast1"
     imports:
       - address: "aws_db_instance.primary"
@@ -77,49 +46,37 @@ operations:
         provider: "aws.uswest2"
       - address: "aws_db_instance.analytics"
         id: "db-analytics-id"
-`
-	migrationFile := filepath.Join(dir, "001_import_provider.yaml")
-	if err := os.WriteFile(migrationFile, []byte(migrationContent), 0o644); err != nil {
-		t.Fatal(err)
+`,
+			importBlockCount: 3,
+			expectedContains: []string{"aws_db_instance.primary", "provider = aws.uswest2"},
+			minCounts:        map[string]int{"provider = aws.useast1": 2},
+		},
 	}
 
-	engine := New(Config{StateReader: testutil.NewMockStateReader(nil)})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, layers := testutil.SetupLayers(t, "db")
+			layerDir := layers["db"]
 
-	result, err := engine.ProcessFiles(context.Background(), []string{migrationFile})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+			yaml := strings.ReplaceAll(tt.yaml, "LAYER", layerDir)
+			dir := t.TempDir()
+			migrationFile := testutil.WriteMigration(t, dir, "001_import.yaml", yaml)
 
-	if len(result.OutputFiles) != 1 {
-		t.Fatalf("expected 1 output file, got %d", len(result.OutputFiles))
-	}
+			cfg := Config{StateReader: testutil.NewMockStateReader(nil)}
+			result := runEngine(t, cfg, []string{migrationFile})
 
-	content, err := os.ReadFile(result.OutputFiles[0])
-	if err != nil {
-		t.Fatalf("reading output: %v", err)
-	}
-	s := string(content)
+			testutil.RequireOutputCount(t, result.OutputFiles, 1)
+			content := testutil.ReadFirstOutput(t, result.OutputFiles)
 
-	// Count import blocks
-	if strings.Count(s, "import {") != 3 {
-		t.Errorf("expected 3 import blocks, got:\n%s", s)
-	}
-
-	// primary: should use operation-level provider aws.useast1
-	if !strings.Contains(s, "aws_db_instance.primary") {
-		t.Error("expected aws_db_instance.primary")
-	}
-
-	// replica: should use entry-level override aws.uswest2
-	if !strings.Contains(s, "provider = aws.uswest2") {
-		t.Error("expected provider = aws.uswest2 (entry-level override)")
-	}
-
-	// analytics: should use operation-level provider aws.useast1
-	// Both primary and analytics use aws.useast1, so it should appear at least twice
-	if strings.Count(s, "provider = aws.useast1") < 2 {
-		t.Errorf("expected at least 2 occurrences of 'provider = aws.useast1', got:\n%s", s)
+			testutil.AssertBlockCount(t, content, "import {", tt.importBlockCount)
+			for _, s := range tt.expectedContains {
+				testutil.AssertContains(t, content, s)
+			}
+			for substr, minCount := range tt.minCounts {
+				if strings.Count(content, substr) < minCount {
+					t.Errorf("expected at least %d occurrences of %q, got:\n%s", minCount, substr, content)
+				}
+			}
+		})
 	}
 }
-
-

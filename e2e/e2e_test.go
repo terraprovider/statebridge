@@ -173,11 +173,7 @@ resource "azurerm_resource_group" "test" {
 `)
 
 	// Run the migration engine
-	files := runGenerate(t, []string{migDir})
-	if len(files) == 0 {
-		t.Fatal("expected generated migration files, got none")
-	}
-	t.Logf("Generated %d migration file(s): %v", len(files), files)
+	requireGenerate(t, migDir)
 
 	// Initialize and apply networking layer (import the VNet)
 	tofuInit(t, networkingDir)
@@ -191,10 +187,7 @@ resource "azurerm_resource_group" "test" {
 	assertResourceNotInState(t, sharedDir, "azurerm_virtual_network.main")
 
 	// Verify clean plans in both layers
-	cleanupMigrationFiles(t, sharedDir)
-	cleanupMigrationFiles(t, networkingDir)
-	assertCleanPlan(t, sharedDir, vars)
-	assertCleanPlan(t, networkingDir, vars)
+	cleanupAndAssertClean(t, vars, sharedDir, networkingDir)
 }
 
 // TestE2E_KeyedMove tests moving for_each resources (NSGs) from
@@ -309,11 +302,7 @@ resource "azurerm_resource_group" "test" {
 `)
 
 	// Run the migration engine
-	files := runGenerate(t, []string{migDir})
-	if len(files) == 0 {
-		t.Fatal("expected generated migration files, got none")
-	}
-	t.Logf("Generated %d migration file(s): %v", len(files), files)
+	requireGenerate(t, migDir)
 
 	// Initialize and apply app layer (import NSGs with new keys)
 	tofuInit(t, appDir)
@@ -328,10 +317,7 @@ resource "azurerm_resource_group" "test" {
 	}
 
 	// Verify clean plans
-	cleanupMigrationFiles(t, sharedDir)
-	cleanupMigrationFiles(t, appDir)
-	assertCleanPlan(t, sharedDir, vars)
-	assertCleanPlan(t, appDir, vars)
+	cleanupAndAssertClean(t, vars, sharedDir, appDir)
 }
 
 // TestE2E_ModuleMove tests moving a module between layers.
@@ -361,7 +347,7 @@ resource "azurerm_resource_group" "test" {
 }
 
 module "mod_nsg" {
-  source              = "../modules/nsg"
+  source              = "../../modules/nsg"
   prefix              = var.prefix
   suffix              = "module"
   location            = var.location
@@ -406,7 +392,7 @@ provider "azurerm" {
 }
 
 module "mod_nsg" {
-  source              = "../modules/nsg"
+  source              = "../../modules/nsg"
   prefix              = var.prefix
   suffix              = "module"
   location            = var.location
@@ -435,10 +421,7 @@ resource "azurerm_resource_group" "test" {
 `)
 
 	// Run the migration engine
-	files := runGenerate(t, []string{migDir})
-	if len(files) == 0 {
-		t.Fatal("expected generated migration files, got none")
-	}
+	files := requireGenerate(t, migDir)
 	var sharedMigration string
 	for _, file := range files {
 		if filepath.Dir(file) == sharedDir {
@@ -463,10 +446,7 @@ resource "azurerm_resource_group" "test" {
 	assertResourceNotInState(t, sharedDir, "module.mod_nsg.azurerm_network_security_group.nsg")
 
 	// Verify clean plans
-	cleanupMigrationFiles(t, sharedDir)
-	cleanupMigrationFiles(t, appDir)
-	assertCleanPlan(t, sharedDir, vars)
-	assertCleanPlan(t, appDir, vars)
+	cleanupAndAssertClean(t, vars, sharedDir, appDir)
 }
 
 // TestE2E_AllResourcesMoveWithOverridesOmit tests a bulk move with overrides and omit entries.
@@ -578,10 +558,7 @@ provider "azurerm" {
 `)
 
 	// Run the migration engine
-	files := runGenerate(t, []string{migDir})
-	if len(files) == 0 {
-		t.Fatal("expected generated migration files, got none")
-	}
+	requireGenerate(t, migDir)
 
 	// Initialize and apply app layer (import resources)
 	tofuInit(t, appDir)
@@ -597,10 +574,7 @@ provider "azurerm" {
 	assertResourceNotInState(t, sharedDir, "azurerm_network_security_group.bulk")
 
 	// Verify clean plans
-	cleanupMigrationFiles(t, sharedDir)
-	cleanupMigrationFiles(t, appDir)
-	assertCleanPlan(t, sharedDir, vars)
-	assertCleanPlan(t, appDir, vars)
+	cleanupAndAssertClean(t, vars, sharedDir, appDir)
 }
 
 // TestE2E_KeyPatternMove tests key pattern mapping with prefix and catch-all rules.
@@ -708,10 +682,7 @@ resource "azurerm_resource_group" "test" {
 `)
 
 	// Run the migration engine
-	files := runGenerate(t, []string{migDir})
-	if len(files) == 0 {
-		t.Fatal("expected generated migration files, got none")
-	}
+	requireGenerate(t, migDir)
 
 	// Initialize and apply app layer (import NSGs with new keys)
 	tofuInit(t, appDir)
@@ -726,10 +697,7 @@ resource "azurerm_resource_group" "test" {
 	}
 
 	// Verify clean plans
-	cleanupMigrationFiles(t, sharedDir)
-	cleanupMigrationFiles(t, appDir)
-	assertCleanPlan(t, sharedDir, vars)
-	assertCleanPlan(t, appDir, vars)
+	cleanupAndAssertClean(t, vars, sharedDir, appDir)
 }
 
 // TestE2E_RenameResource tests renaming a resource within a single layer.
@@ -786,11 +754,7 @@ resource "azurerm_resource_group" "secondary" {
 `)
 
 	// Run the migration engine
-	files := runGenerate(t, []string{migDir})
-	if len(files) == 0 {
-		t.Fatal("expected generated migration files, got none")
-	}
-	t.Logf("Generated %d migration file(s): %v", len(files), files)
+	requireGenerate(t, migDir)
 
 	// Apply the rename
 	tofuApply(t, sharedDir, vars)
@@ -800,8 +764,7 @@ resource "azurerm_resource_group" "secondary" {
 	assertResourceInState(t, sharedDir, "azurerm_resource_group.secondary")
 
 	// Verify clean plan
-	cleanupMigrationFiles(t, sharedDir)
-	assertCleanPlan(t, sharedDir, vars)
+	cleanupAndAssertClean(t, vars, sharedDir)
 }
 
 // TestE2E_RemoveAndImport tests removing a resource from state (keeping the
@@ -881,11 +844,7 @@ resource "azurerm_resource_group" "test" {
 `)
 
 	// Run the migration engine for remove
-	files := runGenerate(t, []string{migDir})
-	if len(files) == 0 {
-		t.Fatal("expected generated migration files for remove, got none")
-	}
-	t.Logf("Remove phase: generated %d migration file(s)", len(files))
+	requireGenerate(t, migDir)
 
 	// Apply the removal
 	tofuApply(t, sharedDir, vars)
@@ -894,8 +853,7 @@ resource "azurerm_resource_group" "test" {
 	assertResourceNotInState(t, sharedDir, "azurerm_resource_group.importable")
 
 	// Verify clean plan (resource removed from both config and state)
-	cleanupMigrationFiles(t, sharedDir)
-	assertCleanPlan(t, sharedDir, vars)
+	cleanupAndAssertClean(t, vars, sharedDir)
 
 	// --- Phase 2: Import ---
 
@@ -942,11 +900,7 @@ resource "azurerm_resource_group" "importable" {
 `)
 
 	// Run the migration engine for import
-	files = runGenerate(t, []string{migDir})
-	if len(files) == 0 {
-		t.Fatal("expected generated migration files for import, got none")
-	}
-	t.Logf("Import phase: generated %d migration file(s)", len(files))
+	requireGenerate(t, migDir)
 
 	// Apply the import
 	tofuApply(t, sharedDir, vars)
@@ -955,8 +909,7 @@ resource "azurerm_resource_group" "importable" {
 	assertResourceInState(t, sharedDir, "azurerm_resource_group.importable")
 
 	// Verify clean plan
-	cleanupMigrationFiles(t, sharedDir)
-	assertCleanPlan(t, sharedDir, vars)
+	cleanupAndAssertClean(t, vars, sharedDir)
 }
 
 // TestE2E_ConditionSkip tests that the condition system correctly skips
@@ -1057,8 +1010,7 @@ resource "azurerm_resource_group" "secondary" {
 	assertResourceNotInState(t, sharedDir, "azurerm_resource_group.importable")
 
 	// Verify clean plan
-	cleanupMigrationFiles(t, sharedDir)
-	assertCleanPlan(t, sharedDir, vars)
+	cleanupAndAssertClean(t, vars, sharedDir)
 }
 
 // TestE2E_UploadDownload tests the full upload/download pipeline: generate
@@ -1169,11 +1121,7 @@ resource "azurerm_resource_group" "test" {
 `)
 
 	// Generate migration files (writes to disk in both layers)
-	files := runGenerate(t, []string{migDir})
-	if len(files) == 0 {
-		t.Fatal("expected generated migration files, got none")
-	}
-	t.Logf("Generated %d migration file(s): %v", len(files), files)
+	requireGenerate(t, migDir)
 
 	// Initialize networking layer (needed for state reads during download condition evaluation)
 	tofuInit(t, networkingDir)
@@ -1227,10 +1175,7 @@ resource "azurerm_resource_group" "test" {
 	assertResourceNotInState(t, sharedDir, "azurerm_virtual_network.main")
 
 	// Verify clean plans in both layers
-	cleanupMigrationFiles(t, sharedDir)
-	cleanupMigrationFiles(t, networkingDir)
-	assertCleanPlan(t, sharedDir, vars)
-	assertCleanPlan(t, networkingDir, vars)
+	cleanupAndAssertClean(t, vars, sharedDir, networkingDir)
 }
 
 // TestE2E_UploadGuard tests the upload guard that prevents overwriting active migrations.

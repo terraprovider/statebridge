@@ -1,33 +1,43 @@
 package engine
 
 import (
-"os"
-"path/filepath"
-"strings"
-"testing"
+	"context"
+	"testing"
+
+	"github.com/redtenant/tfmigrate/internal/testutil"
 )
 
-// findLayerFile returns the first output file path whose directory matches the
-// given layer. Returns empty string if not found.
+// findLayerFile delegates to testutil.FindLayerFile.
 func findLayerFile(files []string, layer string) string {
-	for _, f := range files {
-		if strings.HasPrefix(f, layer+string(filepath.Separator)) || strings.HasPrefix(f, layer+"/") {
-			return f
-		}
-	}
-	return ""
+	return testutil.FindLayerFile(files, layer)
 }
 
-// readLayerFile reads the content of the output file in the given layer.
+// readLayerFile delegates to testutil.ReadLayerFile.
 func readLayerFile(t *testing.T, files []string, layer string) string {
 	t.Helper()
-	f := findLayerFile(files, layer)
-	if f == "" {
-		t.Fatalf("no output file found for layer %q in %v", layer, files)
-	}
-	content, err := os.ReadFile(f)
+	return testutil.ReadLayerFile(t, files, layer)
+}
+
+// runEngine creates an Engine with the given config, processes the migration
+// files, and returns the result. Fatals on error.
+func runEngine(t *testing.T, cfg Config, migrationFiles []string) *ProcessResult {
+	t.Helper()
+	eng := New(cfg)
+	result, err := eng.ProcessFiles(context.Background(), migrationFiles)
 	if err != nil {
-		t.Fatalf("reading output file %q: %v", f, err)
+		t.Fatalf("unexpected error: %v", err)
 	}
-	return string(content)
+	return result
+}
+
+// runEngineExpectError creates an Engine with the given config, processes
+// the migration files, and returns the error. Fatals if no error occurs.
+func runEngineExpectError(t *testing.T, cfg Config, migrationFiles []string) error {
+	t.Helper()
+	eng := New(cfg)
+	_, err := eng.ProcessFiles(context.Background(), migrationFiles)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	return err
 }
