@@ -17,6 +17,7 @@ on:
 permissions:
   id-token: write
   contents: read
+  checks: write
 
 env:
   ARM_USE_OIDC: "true"
@@ -38,6 +39,9 @@ jobs:
 
       - uses: opentofu/setup-opentofu@9d84900f3238fab8cd84ce47d658d25dd008be2f # v1.0.8
 
+      - name: Install gotestsum
+        run: go install gotest.tools/gotestsum@latest
+
       - name: Run e2e tests
         env:
           ARM_CLIENT_ID: ${{ vars.ARM_CLIENT_ID }}
@@ -45,4 +49,10 @@ jobs:
           ARM_SUBSCRIPTION_ID: ${{ vars.ARM_SUBSCRIPTION_ID }}
           E2E_STORAGE_ACCOUNT_NAME: ${{ vars.E2E_STORAGE_ACCOUNT_NAME }}
         run: |
-          go test -tags=e2e -v -timeout=60m -count=1 ./e2e/...
+          gotestsum --junitfile test-results.xml --format standard-verbose -- -tags=e2e -timeout=60m -count=1 ./e2e/...
+
+      - name: Test Summary
+        uses: EnricoMi/publish-unit-test-result-action@c950f6fb443cb5af20a377fd0dfaa78838901040 # v2.23.0
+        with:
+          files: test-results.xml
+        if: always()
