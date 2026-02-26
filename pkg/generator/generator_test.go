@@ -436,3 +436,99 @@ func TestYamlStem(t *testing.T) {
 		}
 	}
 }
+
+func TestWriter_HasBlocks_Empty(t *testing.T) {
+	w := NewWriter()
+	if w.HasBlocks() {
+		t.Error("expected HasBlocks() to return false for empty writer")
+	}
+}
+
+func TestWriter_HasBlocks_AfterAdd(t *testing.T) {
+	w := NewWriter()
+	w.AddBlock(&ImportBlock{To: "aws_instance.web", ID: "i-123", Layer: "./app", Source: "001.yaml"})
+	if !w.HasBlocks() {
+		t.Error("expected HasBlocks() to return true after adding a block")
+	}
+}
+
+func TestWriter_AddBlocks(t *testing.T) {
+	w := NewWriter()
+	blocks := []Block{
+		&ImportBlock{To: "aws_instance.web", ID: "i-123", Layer: "./app", Source: "001.yaml"},
+		&ImportBlock{To: "aws_instance.api", ID: "i-456", Layer: "./app", Source: "001.yaml"},
+		&RemovedBlock{From: "aws_instance.web", Destroy: false, Layer: "./compute", Source: "001.yaml"},
+	}
+	w.AddBlocks(blocks)
+
+	if !w.HasBlocks() {
+		t.Error("expected HasBlocks() to return true after AddBlocks")
+	}
+
+	rendered := w.RenderAll()
+	if len(rendered) != 2 {
+		t.Errorf("expected 2 output files (2 layers), got %d", len(rendered))
+	}
+}
+
+func TestWriter_AddBlocks_Empty(t *testing.T) {
+	w := NewWriter()
+	w.AddBlocks(nil)
+	if w.HasBlocks() {
+		t.Error("expected HasBlocks() to return false after adding nil blocks")
+	}
+
+	w.AddBlocks([]Block{})
+	if w.HasBlocks() {
+		t.Error("expected HasBlocks() to return false after adding empty blocks")
+	}
+}
+
+func TestWriter_SetFileMetadata(t *testing.T) {
+	w := NewWriter()
+
+	meta := &MigrationMetadata{
+		Conditions: &MetadataCondition{
+			ResourcesExist: []MetadataResourceCheck{
+				{Layer: ".", Addresses: []string{"aws_instance.web"}},
+			},
+		},
+	}
+	w.SetFileMetadata("001.yaml", meta)
+
+	// Add a block from the same source file to verify metadata is used
+	w.AddBlock(&ImportBlock{
+		To:     "aws_instance.web",
+		ID:     "i-123",
+		Layer:  t.TempDir(),
+		Source: "001.yaml",
+	})
+
+	rendered := w.RenderAll()
+	for _, content := range rendered {
+		if !strings.Contains(content, "tfmigrate:metadata:begin") {
+			t.Error("expected metadata comment in rendered output")
+		}
+		if !strings.Contains(content, "resources_exist") {
+			t.Error("expected resources_exist condition in metadata")
+		}
+	}
+}
+
+func TestWriter_SetFileMetadata_NilIgnored(t *testing.T) {
+	w := NewWriter()
+	w.SetFileMetadata("001.yaml", nil)
+
+	// Should not panic or store anything
+	w.AddBlock(&ImportBlock{
+		To:     "aws_instance.web",
+		ID:     "i-123",
+		Layer:  t.TempDir(),
+		Source: "001.yaml",
+	})
+
+	rendered := w.RenderAll()
+	if len(rendered) != 1 {
+		t.Fatalf("expected 1 output file, got %d", len(rendered))
+	}
+}

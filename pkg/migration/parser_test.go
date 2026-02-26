@@ -712,6 +712,72 @@ operations:
 	}
 }
 
+func TestRemoveEntry_DestroyValue_DefaultFalse(t *testing.T) {
+	e := RemoveEntry{Address: "aws_instance.web"}
+	if e.DestroyValue() != false {
+		t.Error("expected default destroy value to be false for RemoveEntry")
+	}
+}
+
+func TestRemoveEntry_DestroyValue_ExplicitTrue(t *testing.T) {
+	v := true
+	e := RemoveEntry{Address: "aws_instance.web", Destroy: &v}
+	if e.DestroyValue() != true {
+		t.Error("expected destroy value to be true for RemoveEntry")
+	}
+}
+
+func TestRemoveEntry_DestroyValue_ExplicitFalse(t *testing.T) {
+	v := false
+	e := RemoveEntry{Address: "aws_instance.web", Destroy: &v}
+	if e.DestroyValue() != false {
+		t.Error("expected destroy value to be false for RemoveEntry")
+	}
+}
+
+func TestOmitEntry_DestroyValue_DefaultFalse(t *testing.T) {
+	e := OmitEntry{Address: "aws_instance.web"}
+	if e.DestroyValue() != false {
+		t.Error("expected default destroy value to be false for OmitEntry")
+	}
+}
+
+func TestOmitEntry_DestroyValue_ExplicitTrue(t *testing.T) {
+	v := true
+	e := OmitEntry{Address: "aws_instance.web", Destroy: &v}
+	if e.DestroyValue() != true {
+		t.Error("expected destroy value to be true for OmitEntry")
+	}
+}
+
+func TestOmitEntry_DestroyValue_ExplicitFalse(t *testing.T) {
+	v := false
+	e := OmitEntry{Address: "aws_instance.web", Destroy: &v}
+	if e.DestroyValue() != false {
+		t.Error("expected destroy value to be false for OmitEntry")
+	}
+}
+
+func TestYamlStem(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"migrations/001_move.yaml", "001_move"},
+		{"migrations/002_rename.yml", "002_rename"},
+		{"001_move.yaml", "001_move"},
+		{"/absolute/path/to/003_import.yaml", "003_import"},
+		{"file_without_extension", "file_without_extension"},
+		{"nested/deep/path/migration.yaml", "migration"},
+	}
+	for _, tc := range tests {
+		got := YamlStem(tc.input)
+		if got != tc.want {
+			t.Errorf("YamlStem(%q) = %q, want %q", tc.input, got, tc.want)
+		}
+	}
+}
+
 // writeTestFile creates a temporary YAML file and returns its path.
 func writeTestFile(t *testing.T, name, content string) string {
 	t.Helper()
