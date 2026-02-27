@@ -16,23 +16,10 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
+      - uses: ./.github/actions/setup-go-test
         with:
-          go-version-file: go.mod
-
-      - name: Install gotestsum
-        run: go install gotest.tools/gotestsum@latest
+          check-name: Unit Test Results
 
       - run: go vet ./...
-
-      - name: Run tests
-        run: gotestsum --junitfile test-results.xml --format pkgname -- ./...
-
-      - name: Test Summary
-        uses: EnricoMi/publish-unit-test-result-action@c950f6fb443cb5af20a377fd0dfaa78838901040 # v2.23.0
-        if: (!cancelled())
-        with:
-          files: test-results.xml
-          check_name: Unit Test Results
 
       - run: go build ./...

@@ -23,6 +23,10 @@ permissions:
 
 env:
   ARM_USE_OIDC: "true"
+  ARM_CLIENT_ID: ${{ vars.ARM_CLIENT_ID }}
+  ARM_TENANT_ID: ${{ vars.ARM_TENANT_ID }}
+  ARM_SUBSCRIPTION_ID: ${{ vars.ARM_SUBSCRIPTION_ID }}
+  E2E_STORAGE_ACCOUNT_NAME: ${{ vars.E2E_STORAGE_ACCOUNT_NAME }}
   E2E_LOCATION: ${{ github.event.inputs.location || 'westeurope' }}
 
 jobs:
@@ -34,27 +38,9 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
+      - uses: ./.github/actions/setup-go-test
         with:
-          go-version-file: go.mod
-
-      - uses: opentofu/setup-opentofu@9d84900f3238fab8cd84ce47d658d25dd008be2f # v1.0.8
-
-      - name: Install gotestsum
-        run: go install gotest.tools/gotestsum@latest
-
-      - name: Run e2e tests
-        env:
-          ARM_CLIENT_ID: ${{ vars.ARM_CLIENT_ID }}
-          ARM_TENANT_ID: ${{ vars.ARM_TENANT_ID }}
-          ARM_SUBSCRIPTION_ID: ${{ vars.ARM_SUBSCRIPTION_ID }}
-          E2E_STORAGE_ACCOUNT_NAME: ${{ vars.E2E_STORAGE_ACCOUNT_NAME }}
-        run: |
-          gotestsum --junitfile test-results.xml --format standard-verbose -- -tags=e2e -timeout=60m -count=1 ./e2e/...
-
-      - name: Test Summary
-        uses: EnricoMi/publish-unit-test-result-action@c950f6fb443cb5af20a377fd0dfaa78838901040 # v2.23.0
-        if: (!cancelled())
-        with:
-          files: test-results.xml
-          check_name: E2E Test Results
+          setup-tofu: "true"
+          test-args: -tags=e2e -timeout=60m -count=1 ./e2e/...
+          gotestsum-format: standard-verbose
+          check-name: E2E Test Results

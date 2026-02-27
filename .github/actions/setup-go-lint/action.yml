@@ -1,0 +1,21 @@
+name: Setup Go and Lint
+description: Checkout, setup Go, and run golangci-lint
+
+inputs:
+  go-version-file:
+    description: Path to go.mod for version detection
+    default: go.mod
+  golangci-lint-version:
+    description: golangci-lint version
+    default: latest
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
+      with:
+        go-version-file: ${{ inputs.go-version-file }}
+
+    - uses: golangci/golangci-lint-action@4afd733a84b1f43292c63897423277bb7f4313a9 # v6.5.0
+      with:
+        version: ${{ inputs.golangci-lint-version }}
