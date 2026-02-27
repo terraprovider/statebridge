@@ -236,7 +236,7 @@ func renderBlocks(blocks []Block, meta *MigrationMetadata) string {
 	for _, b := range blocks {
 		sb.WriteString("\n")
 		if comment := b.Comment(); comment != "" {
-			sb.WriteString(fmt.Sprintf("# %s\n", comment))
+			fmt.Fprintf(&sb, "# %s\n", comment)
 		}
 		sb.WriteString(b.Render())
 		sb.WriteString("\n")

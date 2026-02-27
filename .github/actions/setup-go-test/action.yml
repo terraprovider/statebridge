@@ -1,0 +1,44 @@
+name: Setup Go and Run Tests
+description: Checkout, setup Go, install gotestsum, run tests, and publish results
+
+inputs:
+  go-version-file:
+    description: Path to go.mod for version detection
+    default: go.mod
+  test-args:
+    description: Arguments passed to `go test` via gotestsum (after --)
+    default: ./...
+  gotestsum-format:
+    description: gotestsum output format (pkgname, standard-verbose, dots, etc.)
+    default: pkgname
+  check-name:
+    description: Unique name for the test result check run
+    required: true
+  setup-tofu:
+    description: Whether to install OpenTofu
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
+      with:
+        go-version-file: ${{ inputs.go-version-file }}
+
+    - uses: opentofu/setup-opentofu@9d84900f3238fab8cd84ce47d658d25dd008be2f # v1.0.8
+      if: inputs.setup-tofu == 'true'
+
+    - name: Install gotestsum
+      shell: bash
+      run: go install gotest.tools/gotestsum@latest
+
+    - name: Run tests
+      shell: bash
+      run: gotestsum --junitfile test-results.xml --format ${{ inputs.gotestsum-format }} -- ${{ inputs.test-args }}
+
+    - name: Test Summary
+      uses: EnricoMi/publish-unit-test-result-action@c950f6fb443cb5af20a377fd0dfaa78838901040 # v2.23.0
+      if: (!cancelled())
+      with:
+        files: test-results.xml
+        check_name: ${{ inputs.check-name }}

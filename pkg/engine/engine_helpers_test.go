@@ -7,11 +7,6 @@ import (
 	"github.com/redtenant/tfmigrate/internal/testutil"
 )
 
-// findLayerFile delegates to testutil.FindLayerFile.
-func findLayerFile(files []string, layer string) string {
-	return testutil.FindLayerFile(files, layer)
-}
-
 // readLayerFile delegates to testutil.ReadLayerFile.
 func readLayerFile(t *testing.T, files []string, layer string) string {
 	t.Helper()
