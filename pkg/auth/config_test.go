@@ -317,18 +317,48 @@ func TestParseEnv_OidcFallbackEnvVars(t *testing.T) {
 }
 
 func TestParseEnv_AdoPipelineServiceConnection(t *testing.T) {
-	t.Setenv("ARM_CLIENT_ID", "client")
-	t.Setenv("ARM_TENANT_ID", "tenant")
-	t.Setenv("SYSTEM_SERVICECONNECTIONID", "ado-conn-id")
-
-	cfg, err := NewCredentialConfiguration(
-		WithDefaultEnvironmentVariables(),
-	)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	testCases := []struct {
+		name   string
+		key    string
+		value  string
+		wantID string
+	}{
+		{
+			name:   "ARM_ADO_PIPELINE_SERVICE_CONNECTION_ID",
+			key:    "ARM_ADO_PIPELINE_SERVICE_CONNECTION_ID",
+			value:  "ado-conn-id",
+			wantID: "ado-conn-id",
+		},
+		{
+			name:   "ARM_OIDC_AZURE_SERVICE_CONNECTION_ID",
+			key:    "ARM_OIDC_AZURE_SERVICE_CONNECTION_ID",
+			value:  "ado-conn-id",
+			wantID: "ado-conn-id",
+		},
+		{
+			name:   "AZURESUBSCRIPTION_SERVICE_CONNECTION_ID",
+			key:    "AZURESUBSCRIPTION_SERVICE_CONNECTION_ID",
+			value:  "ado-conn-id",
+			wantID: "ado-conn-id",
+		},
 	}
-	if cfg.adoPipelineServiceConnectionID == nil || *cfg.adoPipelineServiceConnectionID != "ado-conn-id" {
-		t.Errorf("adoPipelineServiceConnectionID = %v, want %q", cfg.adoPipelineServiceConnectionID, "ado-conn-id")
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Setenv("ARM_CLIENT_ID", "client")
+			t.Setenv("ARM_TENANT_ID", "tenant")
+			t.Setenv(testCase.key, testCase.value)
+
+			cfg, err := NewCredentialConfiguration(
+				WithDefaultEnvironmentVariables(),
+			)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if cfg.adoPipelineServiceConnectionID == nil || *cfg.adoPipelineServiceConnectionID != testCase.wantID {
+				t.Errorf("adoPipelineServiceConnectionID = %v, want %q", cfg.adoPipelineServiceConnectionID, testCase.wantID)
+			}
+		})
 	}
 }
 
