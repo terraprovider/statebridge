@@ -160,7 +160,7 @@ func (c *CredentialConfiguration) parseEnv(prefixes ...string) error {
 		if v := util.GetMultienv[string]("ARM_OIDC_REQUEST_TOKEN", "ACTIONS_ID_TOKEN_REQUEST_TOKEN", "SYSTEM_OIDCREQUESTTOKEN"); v != nil && *v != "" {
 			c.oidcRequestToken = v
 		}
-		if v := util.GetMultienv[string]("SYSTEM_SERVICECONNECTIONID"); v != nil && *v != "" {
+		if v := util.GetMultienv[string]("ARM_ADO_PIPELINE_SERVICE_CONNECTION_ID", "ARM_OIDC_AZURE_SERVICE_CONNECTION_ID", "AZURESUBSCRIPTION_SERVICE_CONNECTION_ID"); v != nil && *v != "" {
 			c.adoPipelineServiceConnectionID = v
 		}
 	}
