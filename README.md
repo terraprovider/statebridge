@@ -110,6 +110,36 @@ Generates `moved` blocks.
       id: "my-database-identifier"
 ```
 
+### Import from another resource's state (source-based imports)
+
+Derive import IDs from an existing resource's state attributes. Useful when splitting a resource into sub-resources (e.g., splitting `azuread_application` into `azuread_application_registration` + `azuread_api_access`):
+
+```yaml
+- type: import
+  layer: "./layers/identity"
+  imports:
+    - address: "azuread_application_registration.all"
+      id: '{{ .Attributes.id }}'
+      source:
+        layer: "./layers/identity"
+        address: "azuread_application.all"
+```
+
+With attribute expansion — each element of a list attribute produces a separate import block:
+
+```yaml
+- type: import
+  layer: "./layers/identity"
+  imports:
+    - address: "azuread_api_access.all"
+      id: '{{ .Attributes.id }}/apiAccess/{{ .Item.resource_app_id }}'
+      key: '{{ .Key }}_{{ .Item.resource_app_id }}'
+      source:
+        layer: "./layers/identity"
+        address: "azuread_application.all"
+        expand: "required_resource_access"
+```
+
 ### Move an entire module or layer
 
 ```yaml

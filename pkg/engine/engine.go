@@ -9,6 +9,7 @@ import (
 	"github.com/redtenant/tfmigrate/pkg/generator"
 	"github.com/redtenant/tfmigrate/pkg/migration"
 	"github.com/redtenant/tfmigrate/pkg/state"
+	tmpl "github.com/redtenant/tfmigrate/pkg/template"
 )
 
 // SkipReason indicates why a migration file was skipped during processing.
@@ -206,7 +207,7 @@ func (e *Engine) processOperation(ctx context.Context, op *migration.Operation, 
 	case migration.OpRemove:
 		return e.processRemove(op)
 	case migration.OpImport:
-		return e.processImport(op)
+		return e.processImport(ctx, op)
 	default:
 		return nil, fmt.Errorf("unknown operation type %q", op.Type)
 	}
@@ -688,24 +689,169 @@ func (e *Engine) processRemove(op *migration.Operation) ([]generator.Block, erro
 }
 
 // processImport handles import operations, generating import blocks for each
-// import entry in the operation.
-func (e *Engine) processImport(op *migration.Operation) ([]generator.Block, error) {
+// import entry in the operation. Supports optional source-based state lookups
+// with attribute expansion for deriving import IDs from other resources.
+func (e *Engine) processImport(ctx context.Context, op *migration.Operation) ([]generator.Block, error) {
 	var blocks []generator.Block
-	for _, entry := range op.Imports {
+	for i, entry := range op.Imports {
 		provider := entry.Provider
 		if provider == "" {
 			provider = op.Provider
 		}
-		blocks = append(blocks, &generator.ImportBlock{
-			To:          migration.FullAddress(op.AddressPrefix, entry.Address),
-			ID:          entry.ID,
-			Provider:    provider,
-			Layer:       op.Layer,
-			Description: op.Description,
-			Source:      e.currentSourceFile,
-		})
+
+		if entry.Source != nil {
+			sourceBlocks, err := e.processImportFromSource(ctx, op, &entry, i, provider)
+			if err != nil {
+				return nil, err
+			}
+			blocks = append(blocks, sourceBlocks...)
+		} else {
+			blocks = append(blocks, &generator.ImportBlock{
+				To:          migration.FullAddress(op.AddressPrefix, entry.Address),
+				ID:          entry.ID,
+				Provider:    provider,
+				Layer:       op.Layer,
+				Description: op.Description,
+				Source:      e.currentSourceFile,
+			})
+		}
 	}
 	return blocks, nil
+}
+
+// processImportFromSource handles a single import entry that has a Source block.
+// It looks up the source resource(s) in state and generates import blocks by
+// evaluating template expressions against the source resource context.
+// When Source.Expand is set, each list element in the named attribute produces
+// a separate import block with .Item and .ItemIndex available in templates.
+func (e *Engine) processImportFromSource(
+	ctx context.Context,
+	op *migration.Operation,
+	entry *migration.ImportEntry,
+	entryIndex int,
+	provider string,
+) ([]generator.Block, error) {
+	src := entry.Source
+
+	// Look up all for_each instances of the source resource.
+	resources, err := e.resolver.LookupResources(ctx, src.Layer, src.Address)
+	if err != nil {
+		return nil, fmt.Errorf("imports[%d]: looking up source %q in layer %q: %w",
+			entryIndex, src.Address, src.Layer, err)
+	}
+
+	var blocks []generator.Block
+
+	for _, res := range resources {
+		if src.Expand != "" {
+			expandBlocks, err := e.expandImportAttribute(op, entry, res, provider, entryIndex)
+			if err != nil {
+				return nil, err
+			}
+			blocks = append(blocks, expandBlocks...)
+		} else {
+			// No expansion — one import per source instance.
+			block, err := e.buildSourcedImportBlock(op, entry, res, nil, 0, provider)
+			if err != nil {
+				return nil, fmt.Errorf("imports[%d]: source %q key %q: %w",
+					entryIndex, src.Address, res.Key, err)
+			}
+			blocks = append(blocks, block)
+		}
+	}
+
+	return blocks, nil
+}
+
+// expandImportAttribute expands a list attribute from a source resource,
+// generating one import block per list element.
+func (e *Engine) expandImportAttribute(
+	op *migration.Operation,
+	entry *migration.ImportEntry,
+	res *state.ResourceInfo,
+	provider string,
+	entryIndex int,
+) ([]generator.Block, error) {
+	src := entry.Source
+
+	if res.Attributes == nil {
+		return nil, fmt.Errorf("imports[%d]: source %q key %q has no attributes",
+			entryIndex, src.Address, res.Key)
+	}
+
+	attrVal, ok := res.Attributes[src.Expand]
+	if !ok {
+		return nil, fmt.Errorf("imports[%d]: source %q key %q has no attribute %q",
+			entryIndex, src.Address, res.Key, src.Expand)
+	}
+
+	list, ok := attrVal.([]interface{})
+	if !ok {
+		return nil, fmt.Errorf("imports[%d]: source %q key %q attribute %q is not a list (got %T)",
+			entryIndex, src.Address, res.Key, src.Expand, attrVal)
+	}
+
+	// Empty list produces zero imports (like for_each over empty set).
+	var blocks []generator.Block
+	for itemIdx, item := range list {
+		block, err := e.buildSourcedImportBlock(op, entry, res, item, itemIdx, provider)
+		if err != nil {
+			return nil, fmt.Errorf("imports[%d]: source %q key %q expand %q item[%d]: %w",
+				entryIndex, src.Address, res.Key, src.Expand, itemIdx, err)
+		}
+		blocks = append(blocks, block)
+	}
+
+	return blocks, nil
+}
+
+// buildSourcedImportBlock creates a single ImportBlock by evaluating template
+// expressions in the entry's ID and Key fields against the source resource context.
+// When item is non-nil, .Item and .ItemIndex are set in the template context.
+func (e *Engine) buildSourcedImportBlock(
+	op *migration.Operation,
+	entry *migration.ImportEntry,
+	res *state.ResourceInfo,
+	item interface{},
+	itemIndex int,
+	provider string,
+) (*generator.ImportBlock, error) {
+	var tmplCtx *tmpl.TemplateContext
+	if item != nil {
+		tmplCtx = buildExpandedTemplateContext(res, item, itemIndex)
+	} else {
+		tmplCtx = buildTemplateContext(res)
+	}
+
+	// Evaluate the import ID template.
+	importID, err := tmpl.Evaluate(entry.ID, tmplCtx)
+	if err != nil {
+		return nil, fmt.Errorf("evaluating id template: %w", err)
+	}
+
+	// Determine the destination address.
+	destAddr := migration.FullAddress(op.AddressPrefix, entry.Address)
+
+	// If the source is a for_each resource or we're expanding, resolve the key.
+	if res.Key != "" || item != nil {
+		keyStr := res.Key // default: use source key
+		if entry.Key != "" {
+			keyStr, err = tmpl.Evaluate(entry.Key, tmplCtx)
+			if err != nil {
+				return nil, fmt.Errorf("evaluating key template: %w", err)
+			}
+		}
+		destAddr = fmt.Sprintf("%s[\"%s\"]", destAddr, keyStr)
+	}
+
+	return &generator.ImportBlock{
+		To:          destAddr,
+		ID:          importID,
+		Provider:    provider,
+		Layer:       op.Layer,
+		Description: op.Description,
+		Source:      e.currentSourceFile,
+	}, nil
 }
 
 // evaluateCondition checks whether a migration file's preconditions are met.
@@ -847,8 +993,16 @@ func collectLayerPaths(mf *migration.MigrationFile) []string {
 		switch op.Type {
 		case migration.OpMove:
 			add(op.SourceLayer)
-		case migration.OpRename, migration.OpRemove, migration.OpImport:
+		case migration.OpRename, migration.OpRemove:
 			add(op.Layer)
+		case migration.OpImport:
+			add(op.Layer)
+			// Source-based imports may reference other layers for state lookups.
+			for _, entry := range op.Imports {
+				if entry.Source != nil {
+					add(entry.Source.Layer)
+				}
+			}
 		}
 	}
 

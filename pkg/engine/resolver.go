@@ -205,6 +205,21 @@ func buildTemplateContext(res *state.ResourceInfo) *tmpl.TemplateContext {
 	}
 }
 
+// buildExpandedTemplateContext creates a TemplateContext from a ResourceInfo
+// with additional Item and ItemIndex fields for attribute expansion.
+func buildExpandedTemplateContext(res *state.ResourceInfo, item interface{}, itemIndex int) *tmpl.TemplateContext {
+	return &tmpl.TemplateContext{
+		Address:    res.Address,
+		Type:       res.Type,
+		Name:       res.Name,
+		Index:      res.Index,
+		Key:        res.Key,
+		Attributes: res.Attributes,
+		Item:       item,
+		ItemIndex:  itemIndex,
+	}
+}
+
 // ExpandedInstance represents a single resource instance produced by expanding
 // a keyed resource against state.
 type ExpandedInstance struct {

@@ -539,3 +539,95 @@ func TestEvaluate_FormatKeyInAddress(t *testing.T) {
 		t.Errorf("expected %q, got %q", expected, result)
 	}
 }
+
+// --- Item/ItemIndex expansion tests ---
+
+func TestEvaluate_ItemFieldAccess(t *testing.T) {
+	ctx := &TemplateContext{
+		Key: "myapp",
+		Attributes: map[string]interface{}{
+			"id": "app-123",
+		},
+		Item: map[string]interface{}{
+			"resource_app_id":  "00000003-0000-0000-c000-000000000000",
+			"resource_access":  []interface{}{"Scope.Read", "Scope.Write"},
+		},
+		ItemIndex: 0,
+	}
+
+	result, err := Evaluate(`{{ .Item.resource_app_id }}`, ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result != "00000003-0000-0000-c000-000000000000" {
+		t.Errorf("expected graph API app ID, got %q", result)
+	}
+}
+
+func TestEvaluate_ItemIndexAccess(t *testing.T) {
+	ctx := &TemplateContext{
+		Key:       "myapp",
+		Item:      map[string]interface{}{"id": "abc"},
+		ItemIndex: 2,
+	}
+
+	result, err := Evaluate(`{{ .Key }}_item{{ .ItemIndex }}`, ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result != "myapp_item2" {
+		t.Errorf("expected %q, got %q", "myapp_item2", result)
+	}
+}
+
+func TestEvaluate_ItemCombinedWithAttributes(t *testing.T) {
+	ctx := &TemplateContext{
+		Attributes: map[string]interface{}{
+			"id": "app-456",
+		},
+		Item: map[string]interface{}{
+			"resource_app_id": "graph-api-id",
+		},
+		ItemIndex: 1,
+	}
+
+	result, err := Evaluate(`{{ .Attributes.id }}/apiAccess/{{ .Item.resource_app_id }}`, ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	expected := "app-456/apiAccess/graph-api-id"
+	if result != expected {
+		t.Errorf("expected %q, got %q", expected, result)
+	}
+}
+
+func TestEvaluate_ItemNilDoesNotBreak(t *testing.T) {
+	// When Item is nil (no expansion), templates that don't reference .Item still work.
+	ctx := &TemplateContext{
+		Key: "mykey",
+	}
+
+	result, err := Evaluate(`{{ .Key }}`, ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result != "mykey" {
+		t.Errorf("expected %q, got %q", "mykey", result)
+	}
+}
+
+func TestEvaluate_ItemZeroIndexDefault(t *testing.T) {
+	// When ItemIndex is not set (0), it's still accessible.
+	ctx := &TemplateContext{
+		Item:      map[string]interface{}{"name": "test"},
+		ItemIndex: 0,
+	}
+
+	result, err := Evaluate(`{{ .ItemIndex }}`, ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result != "0" {
+		t.Errorf("expected %q, got %q", "0", result)
+	}
+}

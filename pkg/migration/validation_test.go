@@ -1145,3 +1145,196 @@ func TestValidate_OmitWithDestroy(t *testing.T) {
 		t.Errorf("expected no errors, got %v", errs)
 	}
 }
+
+// --- Import Source validation tests ---
+
+func TestValidate_ValidImportWithSource(t *testing.T) {
+	mf := &MigrationFile{
+		Description: "Valid import with source",
+		Operations: []Operation{
+			{
+				Type:  OpImport,
+				Layer: "./layers/app",
+				Imports: []ImportEntry{
+					{
+						Address: "azuread_api_access.all",
+						ID:      `{{ .Attributes.id }}`,
+						Source: &ImportSource{
+							Layer:   "./layers/app",
+							Address: "azuread_application.all",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	errs := Validate(mf)
+	if len(errs) != 0 {
+		t.Errorf("expected no errors, got %v", errs)
+	}
+}
+
+func TestValidate_ValidImportWithSourceAndExpand(t *testing.T) {
+	mf := &MigrationFile{
+		Description: "Valid import with source and expand",
+		Operations: []Operation{
+			{
+				Type:  OpImport,
+				Layer: "./layers/app",
+				Imports: []ImportEntry{
+					{
+						Address: "azuread_api_access.all",
+						ID:      `{{ .Attributes.id }}/apiAccess/{{ .Item.resource_app_id }}`,
+						Key:     `{{ .Key }}_{{ .Item.resource_app_id }}`,
+						Source: &ImportSource{
+							Layer:   "./layers/app",
+							Address: "azuread_application.all",
+							Expand:  "required_resource_access",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	errs := Validate(mf)
+	if len(errs) != 0 {
+		t.Errorf("expected no errors, got %v", errs)
+	}
+}
+
+func TestValidate_ImportSourceMissingLayer(t *testing.T) {
+	mf := &MigrationFile{
+		Description: "Import source missing layer",
+		Operations: []Operation{
+			{
+				Type:  OpImport,
+				Layer: "./layers/app",
+				Imports: []ImportEntry{
+					{
+						Address: "azuread_api_access.all",
+						ID:      `{{ .Attributes.id }}`,
+						Source: &ImportSource{
+							Address: "azuread_application.all",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	errs := Validate(mf)
+	if !hasError(errs, "imports[0].source.layer") {
+		t.Error("expected validation error for missing source layer")
+	}
+}
+
+func TestValidate_ImportSourceMissingAddress(t *testing.T) {
+	mf := &MigrationFile{
+		Description: "Import source missing address",
+		Operations: []Operation{
+			{
+				Type:  OpImport,
+				Layer: "./layers/app",
+				Imports: []ImportEntry{
+					{
+						Address: "azuread_api_access.all",
+						ID:      `{{ .Attributes.id }}`,
+						Source: &ImportSource{
+							Layer: "./layers/app",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	errs := Validate(mf)
+	if !hasError(errs, "imports[0].source.address") {
+		t.Error("expected validation error for missing source address")
+	}
+}
+
+func TestValidate_ImportExpandWithoutKey(t *testing.T) {
+	mf := &MigrationFile{
+		Description: "Import expand without key",
+		Operations: []Operation{
+			{
+				Type:  OpImport,
+				Layer: "./layers/app",
+				Imports: []ImportEntry{
+					{
+						Address: "azuread_api_access.all",
+						ID:      `{{ .Attributes.id }}`,
+						Source: &ImportSource{
+							Layer:   "./layers/app",
+							Address: "azuread_application.all",
+							Expand:  "required_resource_access",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	errs := Validate(mf)
+	if !hasError(errs, "imports[0].key") {
+		t.Error("expected validation error for missing key when expand is set")
+	}
+}
+
+func TestValidate_ImportKeyWithoutSource(t *testing.T) {
+	mf := &MigrationFile{
+		Description: "Import key without source",
+		Operations: []Operation{
+			{
+				Type:  OpImport,
+				Layer: "./layers/app",
+				Imports: []ImportEntry{
+					{
+						Address: "azuread_api_access.all",
+						ID:      "some-id",
+						Key:     `{{ .Key }}`,
+					},
+				},
+			},
+		},
+	}
+
+	errs := Validate(mf)
+	if !hasError(errs, "imports[0].key") {
+		t.Error("expected validation error for key without source")
+	}
+}
+
+func TestValidate_ImportMixedStaticAndSource(t *testing.T) {
+	mf := &MigrationFile{
+		Description: "Mixed static and source imports",
+		Operations: []Operation{
+			{
+				Type:  OpImport,
+				Layer: "./layers/app",
+				Imports: []ImportEntry{
+					{
+						Address: "aws_instance.web",
+						ID:      "i-12345",
+					},
+					{
+						Address: "azuread_api_access.all",
+						ID:      `{{ .Attributes.id }}`,
+						Source: &ImportSource{
+							Layer:   "./layers/app",
+							Address: "azuread_application.all",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	errs := Validate(mf)
+	if len(errs) != 0 {
+		t.Errorf("expected no errors for mixed imports, got %v", errs)
+	}
+}
