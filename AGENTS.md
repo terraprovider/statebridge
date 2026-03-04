@@ -112,7 +112,7 @@ Moves resources between two layers. Generates `removed` in source + `import` in 
 
 Required fields: `source_layer`, `destination_layer`, and either `resources` (non-empty list) or `all_resources: true`
 Each resource requires: `from`
-Optional fields: `description`, `address_prefix`, `all_resources`, per-resource `to`, `keys`, `import_id`
+Optional fields: `description`, `address_prefix`, `all_resources`, per-resource `to`, `keys`, `import_id`, `merge_duplicates`
 
 **Simple move (single or non-for_each resource):**
 
@@ -159,6 +159,26 @@ Match priority: exact > longest prefix > catch-all.
 **Without `keys` map:**
 - Single resource: generates one `removed` + one `import`
 - For_each resource: expands all instances with same keys
+
+**`merge_duplicates`** — Deduplicate when multiple source resources produce the same destination address:
+
+```yaml
+resources:
+  - from: "azurerm_role_management_policy.permanent_active"
+    to: "azurerm_role_management_policy.all"
+    merge_duplicates: true
+    keys:
+      key_a: shared_key
+      key_b: unique_active
+  - from: "azurerm_role_management_policy.permanent_eligible"
+    to: "azurerm_role_management_policy.all"
+    merge_duplicates: true
+    keys:
+      key_x: shared_key
+      key_y: unique_eligible
+```
+
+When `merge_duplicates: true`, the first import block for a destination address wins and subsequent duplicates with matching import IDs are silently skipped. If import IDs differ, an error is raised. Only valid when `keys` is present. Not valid on module moves or `all_resources` overrides. Both resources involved in the collision must have this flag set.
 
 **`to`** — Override when the destination base address differs from source:
 
@@ -514,6 +534,31 @@ Use a keyed move with exact key mappings:
         old_key_2: new_key_2
 ```
 
+### "Merge multiple source resources into one destination" / "Deduplicate import blocks"
+
+When two source resources produce the same destination address via keyed moves, use `merge_duplicates: true`:
+
+```yaml
+- type: move
+  source_layer: "<source>"
+  destination_layer: "<destination>"
+  resources:
+    - from: "<resource_type>.<name_a>"
+      to: "<resource_type>.<unified_name>"
+      merge_duplicates: true
+      keys:
+        <key_a>: <shared_dest_key>
+        <key_b>: <unique_key_b>
+    - from: "<resource_type>.<name_b>"
+      to: "<resource_type>.<unified_name>"
+      merge_duplicates: true
+      keys:
+        <key_x>: <shared_dest_key>
+        <key_y>: <unique_key_y>
+```
+
+Both resources must have the flag set. The shared destination key's import block is generated only once (first wins). Import IDs must match for the shared key — if they differ, the tool raises an error.
+
 ### "Move all resources from layer A to layer B" / "Move entire layer"
 
 ```yaml
@@ -679,6 +724,7 @@ When generating YAML, ensure:
 17. `status` is optional; if present, must be `"retired"` (unknown values are errors). Retired files skip all validation.
 18. `condition.layer_exists` and `condition.layer_not_exists` entries must be non-empty strings
 19. Non-strict mode (default): migration files referencing non-existent operational layers (`source_layer`, `layer`) are auto-skipped. Strict mode (`--strict`) makes these hard errors.
+20. `merge_duplicates` is optional on resource move entries; only valid when `keys` is present. Not valid on module moves or `all_resources` overrides. Both resources involved in a destination collision must have `merge_duplicates: true`.
 
 ## File Naming Convention
 

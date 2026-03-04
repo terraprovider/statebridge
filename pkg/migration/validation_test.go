@@ -1338,3 +1338,103 @@ func TestValidate_ImportMixedStaticAndSource(t *testing.T) {
 		t.Errorf("expected no errors for mixed imports, got %v", errs)
 	}
 }
+
+func TestValidate_MergeDuplicatesValid(t *testing.T) {
+	mf := &MigrationFile{
+		Description: "Valid merge_duplicates",
+		Operations: []Operation{
+			{
+				Type:             OpMove,
+				SourceLayer:      "./layers/src",
+				DestinationLayer: "./layers/dst",
+				Resources: []ResourceMove{
+					{
+						From:            "aws_resource.policy_active",
+						To:              "aws_resource.policy",
+						MergeDuplicates: true,
+						Keys:            map[string]string{"key_a": "shared"},
+					},
+				},
+			},
+		},
+	}
+
+	errs := Validate(mf)
+	if len(errs) != 0 {
+		t.Errorf("expected no validation errors, got %v", errs)
+	}
+}
+
+func TestValidate_MergeDuplicatesWithoutKeys(t *testing.T) {
+	mf := &MigrationFile{
+		Description: "merge_duplicates without keys",
+		Operations: []Operation{
+			{
+				Type:             OpMove,
+				SourceLayer:      "./layers/src",
+				DestinationLayer: "./layers/dst",
+				Resources: []ResourceMove{
+					{
+						From:            "aws_resource.policy_active",
+						MergeDuplicates: true,
+					},
+				},
+			},
+		},
+	}
+
+	errs := Validate(mf)
+	if !hasError(errs, "resources[0].merge_duplicates") {
+		t.Errorf("expected validation error for merge_duplicates without keys, got %v", errs)
+	}
+}
+
+func TestValidate_MergeDuplicatesOnModuleMove(t *testing.T) {
+	mf := &MigrationFile{
+		Description: "merge_duplicates on module move",
+		Operations: []Operation{
+			{
+				Type:             OpMove,
+				SourceLayer:      "./layers/src",
+				DestinationLayer: "./layers/dst",
+				Resources: []ResourceMove{
+					{
+						From:            "module.foo",
+						MergeDuplicates: true,
+					},
+				},
+			},
+		},
+	}
+
+	errs := Validate(mf)
+	if !hasError(errs, "resources[0].merge_duplicates") {
+		t.Errorf("expected validation error for merge_duplicates on module move, got %v", errs)
+	}
+}
+
+func TestValidate_MergeDuplicatesOnAllResourcesOverride(t *testing.T) {
+	mf := &MigrationFile{
+		Description: "merge_duplicates on all_resources override",
+		Operations: []Operation{
+			{
+				Type:             OpMove,
+				SourceLayer:      "./layers/src",
+				DestinationLayer: "./layers/dst",
+				AllResources:     true,
+				Overrides: []ResourceMove{
+					{
+						From:            "aws_resource.x",
+						To:              "aws_resource.y",
+						MergeDuplicates: true,
+					},
+				},
+			},
+		},
+	}
+
+	errs := Validate(mf)
+	if !hasError(errs, "overrides[0].merge_duplicates") {
+		t.Errorf("expected validation error for merge_duplicates on override, got %v", errs)
+	}
+}

@@ -37,14 +37,28 @@ type wildcardGroup struct {
 //   - Deduplication of removed blocks (only one per source resource)
 //   - Key claim tracking to detect overlapping key patterns
 //   - Completeness verification to ensure all state keys are covered
+//   - Destination-side deduplication when merge_duplicates is enabled
 type wildcardTracker struct {
 	groups map[wildcardSourceKey]*wildcardGroup
+
+	// destinationImports tracks import blocks by (layer, destAddr) to detect
+	// and deduplicate cases where multiple source resources produce the same
+	// destination address.
+	destinationImports map[string]*destinationClaim
+}
+
+// destinationClaim records the first import block claim for a destination address.
+type destinationClaim struct {
+	importID   string
+	sourceAddr string
+	opIndex    int
 }
 
 // newWildcardTracker creates a new tracker for coordinating wildcard moves.
 func newWildcardTracker() *wildcardTracker {
 	return &wildcardTracker{
-		groups: make(map[wildcardSourceKey]*wildcardGroup),
+		groups:             make(map[wildcardSourceKey]*wildcardGroup),
+		destinationImports: make(map[string]*destinationClaim),
 	}
 }
 
@@ -133,4 +147,44 @@ func (t *wildcardTracker) checkCompleteness() error {
 	}
 
 	return nil
+}
+
+// claimDestination attempts to register an import block at the given destination
+// address. When mergeDuplicates is true:
+//   - If no previous claim exists, the import is registered and skip=false.
+//   - If a previous claim exists with the same importID, skip=true (deduplicated).
+//   - If a previous claim exists with a different importID, an error is returned.
+//
+// When mergeDuplicates is false:
+//   - If a previous claim exists, an error is returned (duplicate destination).
+//   - Otherwise, the import is registered and skip=false.
+func (t *wildcardTracker) claimDestination(layer, destAddr, importID string, opIndex int, sourceAddr string, mergeDuplicates bool) (skip bool, err error) {
+	key := layer + "\x00" + destAddr
+	existing, ok := t.destinationImports[key]
+	if !ok {
+		t.destinationImports[key] = &destinationClaim{
+			importID:   importID,
+			sourceAddr: sourceAddr,
+			opIndex:    opIndex,
+		}
+		return false, nil
+	}
+
+	if !mergeDuplicates {
+		return false, fmt.Errorf(
+			"duplicate import for %q in layer %q: first from %q (operation[%d]), again from %q (operation[%d]); set merge_duplicates: true on both resources to deduplicate",
+			destAddr, layer, existing.sourceAddr, existing.opIndex, sourceAddr, opIndex,
+		)
+	}
+
+	// merge_duplicates is true: check import ID consistency
+	if existing.importID != importID {
+		return false, fmt.Errorf(
+			"merge_duplicates conflict for %q in layer %q: import ID %q (from %q, operation[%d]) differs from %q (from %q, operation[%d])",
+			destAddr, layer, existing.importID, existing.sourceAddr, existing.opIndex, importID, sourceAddr, opIndex,
+		)
+	}
+
+	// Same destination, same import ID, merge_duplicates enabled → skip
+	return true, nil
 }

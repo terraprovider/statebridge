@@ -124,3 +124,81 @@ func TestWildcardTracker_SkipsNonPrefixFiltered(t *testing.T) {
 		t.Fatalf("expected no error for non-prefix-filtered source, got: %v", err)
 	}
 }
+
+func TestWildcardTracker_ClaimDestination_FirstClaim(t *testing.T) {
+	tracker := newWildcardTracker()
+
+	skip, err := tracker.claimDestination("./layers/dst", `aws_resource.items["key1"]`, "id-1", 0, "aws_resource.a", false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if skip {
+		t.Error("expected skip=false for first claim")
+	}
+}
+
+func TestWildcardTracker_ClaimDestination_DuplicateWithoutMerge(t *testing.T) {
+	tracker := newWildcardTracker()
+
+	_, _ = tracker.claimDestination("./layers/dst", `aws_resource.items["key1"]`, "id-1", 0, "aws_resource.a", false)
+
+	_, err := tracker.claimDestination("./layers/dst", `aws_resource.items["key1"]`, "id-1", 1, "aws_resource.b", false)
+	if err == nil {
+		t.Fatal("expected error for duplicate without merge_duplicates")
+	}
+	if !strings.Contains(err.Error(), "duplicate import") {
+		t.Errorf("expected error to mention 'duplicate import', got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "merge_duplicates") {
+		t.Errorf("expected error to suggest merge_duplicates, got: %v", err)
+	}
+}
+
+func TestWildcardTracker_ClaimDestination_MergeDuplicatesSameID(t *testing.T) {
+	tracker := newWildcardTracker()
+
+	_, _ = tracker.claimDestination("./layers/dst", `aws_resource.items["key1"]`, "id-1", 0, "aws_resource.a", true)
+
+	skip, err := tracker.claimDestination("./layers/dst", `aws_resource.items["key1"]`, "id-1", 1, "aws_resource.b", true)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !skip {
+		t.Error("expected skip=true when merge_duplicates and same import ID")
+	}
+}
+
+func TestWildcardTracker_ClaimDestination_MergeDuplicatesDifferentID(t *testing.T) {
+	tracker := newWildcardTracker()
+
+	_, _ = tracker.claimDestination("./layers/dst", `aws_resource.items["key1"]`, "id-1", 0, "aws_resource.a", true)
+
+	_, err := tracker.claimDestination("./layers/dst", `aws_resource.items["key1"]`, "id-DIFFERENT", 1, "aws_resource.b", true)
+	if err == nil {
+		t.Fatal("expected error for merge_duplicates with different import IDs")
+	}
+	if !strings.Contains(err.Error(), "merge_duplicates conflict") {
+		t.Errorf("expected error to mention 'merge_duplicates conflict', got: %v", err)
+	}
+}
+
+func TestWildcardTracker_ClaimDestination_DifferentLayers(t *testing.T) {
+	tracker := newWildcardTracker()
+
+	// Same address in different destination layers should not conflict
+	skip1, err := tracker.claimDestination("./layers/dst1", `aws_resource.items["key1"]`, "id-1", 0, "aws_resource.a", false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if skip1 {
+		t.Error("expected skip=false")
+	}
+
+	skip2, err := tracker.claimDestination("./layers/dst2", `aws_resource.items["key1"]`, "id-2", 1, "aws_resource.b", false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if skip2 {
+		t.Error("expected skip=false for different layer")
+	}
+}

@@ -202,6 +202,13 @@ type ResourceMove struct {
 	// Can be a literal string or a Go template expression.
 	// If omitted, auto-resolved from the source state's "id" attribute.
 	ImportID string `yaml:"import_id,omitempty"`
+
+	// MergeDuplicates opts in to destination-side deduplication when multiple
+	// source resources with keyed moves produce the same destination address.
+	// When true, the first import block wins and subsequent duplicates with
+	// matching import IDs are silently skipped. An error is raised if import
+	// IDs differ. Only valid when keys is present.
+	MergeDuplicates bool `yaml:"merge_duplicates,omitempty"`
 }
 
 // RenameEntry describes a single address rename within a layer.
