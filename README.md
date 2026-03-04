@@ -79,7 +79,7 @@ Generates `removed` blocks in the source layer and `import` blocks in the destin
 
 ### Move or rename within the same layer
 
-When `source_layer` and `destination_layer` are the same, generates `moved` blocks instead:
+When `source_layer` and `destination_layer` are the same, generates `moved` blocks by default (set `use_moved_blocks: false` to force `removed` + `import` instead):
 
 ```yaml
 - type: move

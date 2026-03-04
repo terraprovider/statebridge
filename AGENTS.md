@@ -131,11 +131,11 @@ Rules:
 
 ### Operation: `move`
 
-Moves resources between two layers, or renames them within the same layer. When `source_layer` and `destination_layer` differ, generates `removed` in source + `import` in destination. When they are the same (same-layer move), generates `moved` blocks instead.
+Moves resources between two layers, or renames them within the same layer. When `source_layer` and `destination_layer` differ, generates `removed` in source + `import` in destination. When they are the same (same-layer move), generates `moved` blocks by default (controllable via `use_moved_blocks`).
 
 Required fields: `source_layer`, `destination_layer`, and either `resources` (non-empty list) or `all_resources: true`
 Each resource requires: `from`
-Optional fields: `description`, `address_prefix`, `source_prefix`, `destination_prefix`, `all_resources`, per-resource `to`, `keys`, `import_id`, `merge_duplicates`
+Optional fields: `description`, `address_prefix`, `source_prefix`, `destination_prefix`, `all_resources`, `use_moved_blocks`, per-resource `to`, `keys`, `import_id`, `merge_duplicates`, `use_moved_blocks`
 
 **Simple move (single or non-for_each resource):**
 
@@ -264,7 +264,7 @@ Override constraints: `to` or `import_id` (or both) is required, `keys` is not a
 
 Omitted resources get `removed` blocks in the source layer (with `destroy = false` by default) but no `import` blocks in the destination layer. Set `destroy: true` per entry to also destroy the resource. `omit` is only valid with `all_resources: true`, and omit addresses cannot overlap with `overrides` addresses.
 
-**Same-layer moves** — When `source_layer` and `destination_layer` are the same, all move sub-types generate `moved` blocks instead of `removed` + `import`:
+**Same-layer moves** — When `source_layer` and `destination_layer` are the same, all move sub-types generate `moved` blocks by default instead of `removed` + `import`:
 
 ```yaml
 - type: move
@@ -283,6 +283,36 @@ Same-layer behavior:
 - Module-level same-layer moves generate a single `moved` block for the module
 - `all_resources: true` generates a `moved` block per resource instance, skipping identities
 - Keyed moves generate `moved` blocks per matched key
+
+**`use_moved_blocks`** — Override same-layer block generation behavior:
+
+By default (`true`), same-layer moves generate `moved` blocks. Set to `false` to force `removed` + `import` block generation even when source and destination layers are the same. Can be set at operation level or per-resource (per-resource overrides operation-level).
+
+```yaml
+- type: move
+  source_layer: "./layers/app"
+  destination_layer: "./layers/app"
+  use_moved_blocks: false                    # force removed + import for all resources
+  resources:
+    - from: "aws_instance.old"
+      to: "aws_instance.new"
+```
+
+Per-resource override:
+
+```yaml
+- type: move
+  source_layer: "./layers/app"
+  destination_layer: "./layers/app"
+  resources:
+    - from: "aws_instance.old"
+      to: "aws_instance.new"
+      use_moved_blocks: false                # this resource gets removed + import
+    - from: "aws_instance.other"
+      to: "aws_instance.renamed"            # this resource gets moved block (default)
+```
+
+Constraints: `use_moved_blocks` is only valid on `move` operations. `use_moved_blocks: false` is not supported on module-level moves.
 
 ### Operation: `rename`
 
@@ -577,7 +607,7 @@ Use a keyed move with exact key mappings:
         old_key_2: new_key_2
 ```
 
-When source and destination layers are the same, generates `moved` blocks. When different, generates `removed` + `import`.
+When source and destination layers are the same, generates `moved` blocks by default. Set `use_moved_blocks: false` to force `removed` + `import` instead. When different, always generates `removed` + `import`.
 
 ### "Move resources between module paths" / "Change module prefix"
 
@@ -593,11 +623,11 @@ Use `source_prefix` and `destination_prefix` for independent prefix control:
     - from: "<resource address>"
 ```
 
-Works with both cross-layer and same-layer moves. For same-layer moves, generates `moved` blocks.
+Works with both cross-layer and same-layer moves. For same-layer moves, generates `moved` blocks by default (override with `use_moved_blocks: false`).
 
 ### "Rename resources within a layer using move" / "Same-layer move"
 
-When `source_layer` equals `destination_layer`, the move operation generates `moved` blocks:
+When `source_layer` equals `destination_layer`, the move operation generates `moved` blocks by default:
 
 ```yaml
 - type: move
@@ -608,7 +638,17 @@ When `source_layer` equals `destination_layer`, the move operation generates `mo
       to: "<new address>"
 ```
 
-This is equivalent to a `rename` but supports all move features (keyed moves, prefix remapping, module moves, `all_resources`).
+This is equivalent to a `rename` but supports all move features (keyed moves, prefix remapping, module moves, `all_resources`). Set `use_moved_blocks: false` to force `removed` + `import` generation instead:
+
+```yaml
+- type: move
+  source_layer: "<layer path>"
+  destination_layer: "<layer path>"
+  use_moved_blocks: false
+  resources:
+    - from: "<old address>"
+      to: "<new address>"
+```
 
 ### "Merge multiple source resources into one destination" / "Deduplicate import blocks"
 
@@ -804,7 +844,9 @@ When generating YAML, ensure:
 21. `source_prefix` and `destination_prefix` are only valid on `move` operations; `rename`, `remove`, and `import` reject them
 22. `address_prefix` cannot be used together with `source_prefix` or `destination_prefix` on the same operation
 23. `source_prefix` / `destination_prefix` cannot be combined with `all_resources: true`
-24. Same-layer moves (`source_layer == destination_layer`) generate `moved` blocks instead of `removed` + `import`
+24. Same-layer moves (`source_layer == destination_layer`) generate `moved` blocks by default instead of `removed` + `import`
+25. `use_moved_blocks` is optional on `move` operations (both operation-level and per-resource); not valid on `rename`, `remove`, or `import`
+26. `use_moved_blocks: false` is not supported on module-level moves (module addresses like `module.foo`)
 
 ## File Naming Convention
 

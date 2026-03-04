@@ -185,6 +185,13 @@ type Operation struct {
 	// Provider is an optional default provider alias for import operations.
 	// Applied to all import entries that don't specify their own provider.
 	Provider string `yaml:"provider,omitempty"`
+
+	// UseMovedBlocks controls whether same-layer moves generate moved blocks
+	// (true, default) or removed+import blocks (false). When nil, defaults to
+	// true for same-layer moves. Per-resource UseMovedBlocks on ResourceMove
+	// overrides this operation-level setting. Only meaningful for move operations
+	// where source_layer == destination_layer.
+	UseMovedBlocks *bool `yaml:"use_moved_blocks,omitempty"`
 }
 
 // ResourceMove describes a resource to move between layers, optionally with
@@ -223,6 +230,11 @@ type ResourceMove struct {
 	// matching import IDs are silently skipped. An error is raised if import
 	// IDs differ. Only valid when keys is present.
 	MergeDuplicates bool `yaml:"merge_duplicates,omitempty"`
+
+	// UseMovedBlocks overrides the operation-level UseMovedBlocks for this
+	// specific resource. When nil, inherits the operation-level setting.
+	// Only meaningful for same-layer moves.
+	UseMovedBlocks *bool `yaml:"use_moved_blocks,omitempty"`
 }
 
 // RenameEntry describes a single address rename within a layer.
@@ -336,6 +348,16 @@ func FullAddress(prefix, addr string) string {
 		return addr
 	}
 	return prefix + "." + addr
+}
+
+// UseMovedBlocksValue returns the effective value of UseMovedBlocks for this
+// resource, resolving the per-resource → operation-level → default chain.
+// The default is true (same-layer moves generate moved blocks).
+func (r *ResourceMove) UseMovedBlocksValue(opDefault *bool) bool {
+	if r.UseMovedBlocks != nil {
+		return *r.UseMovedBlocks
+	}
+	return boolPtrDefault(opDefault, true)
 }
 
 // EffectiveSourcePrefix returns the prefix to use for source addresses in

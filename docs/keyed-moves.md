@@ -102,12 +102,12 @@ With `merge_duplicates: true`:
 - Not valid on module-level moves
 - Not valid on `all_resources` overrides
 - For cross-layer moves, import IDs must match (error if they differ)
-- For same-layer moves, duplicates targeting the same destination are always compatible (first `moved` block wins)
+- For same-layer moves, duplicates targeting the same destination are always compatible (first `moved` block wins, when `use_moved_blocks: true` which is the default)
 - Scoped to a single migration YAML file (not cross-file)
 
 ## Same-Layer Keyed Moves
 
-When `source_layer` and `destination_layer` are the same, keyed moves generate `moved` blocks instead of `removed` + `import` blocks. This is useful for re-keying `for_each` resources in place:
+When `source_layer` and `destination_layer` are the same, keyed moves generate `moved` blocks by default instead of `removed` + `import` blocks. This is useful for re-keying `for_each` resources in place. Set `use_moved_blocks: false` on the operation or individual resources to force `removed` + `import` instead (see [Same-Layer Moves](migration-format.md#same-layer-moves)).
 
 ```yaml
 - type: move

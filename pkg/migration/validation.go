@@ -85,6 +85,15 @@ func validateOperation(index int, op *Operation) []ValidationError {
 		})
 	}
 
+	// use_moved_blocks is only valid on move operations
+	if op.UseMovedBlocks != nil && op.Type != OpMove {
+		errs = append(errs, ValidationError{
+			OperationIndex: index,
+			Field:          "use_moved_blocks",
+			Message:        "use_moved_blocks is only valid for move operations",
+		})
+	}
+
 	switch op.Type {
 	case OpMove:
 		errs = append(errs, validateMove(index, op)...)
@@ -257,6 +266,13 @@ func validateResourceMove(opIndex, resIndex int, res *ResourceMove) []Validation
 				OperationIndex: opIndex,
 				Field:          fieldPrefix + ".merge_duplicates",
 				Message:        "merge_duplicates is not supported for module-level moves",
+			})
+		}
+		if res.UseMovedBlocks != nil && !*res.UseMovedBlocks {
+			errs = append(errs, ValidationError{
+				OperationIndex: opIndex,
+				Field:          fieldPrefix + ".use_moved_blocks",
+				Message:        "use_moved_blocks: false is not supported for module-level moves",
 			})
 		}
 		if res.To != "" && !IsModuleAddress(res.To) {

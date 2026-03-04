@@ -224,7 +224,10 @@ func (e *Engine) processMove(ctx context.Context, op *migration.Operation, opInd
 	sameLayer := srcLayer == dstLayer
 
 	if op.AllResources {
-		return e.processMoveAllResources(ctx, srcLayer, dstLayer, sameLayer, op.Overrides, op.Omit, op.Description)
+		// For all_resources, use operation-level UseMovedBlocks (no per-resource override)
+		useMovedBlocks := boolPtrDefault(op.UseMovedBlocks, true)
+		effectiveSameLayer := sameLayer && useMovedBlocks
+		return e.processMoveAllResources(ctx, srcLayer, dstLayer, effectiveSameLayer, op.Overrides, op.Omit, op.Description)
 	}
 
 	srcPrefix := op.EffectiveSourcePrefix()
@@ -240,7 +243,11 @@ func (e *Engine) processMove(ctx context.Context, op *migration.Operation, opInd
 		}
 		dstAddr := migration.FullAddress(dstPrefix, dstBaseAddr)
 
-		resBlocks, err := e.processMoveResource(ctx, srcLayer, dstLayer, sameLayer, srcAddr, dstAddr, &res, opIndex, i, tracker, op.Description)
+		// Resolve per-resource use_moved_blocks (resource → operation → default true)
+		useMovedBlocks := res.UseMovedBlocksValue(op.UseMovedBlocks)
+		effectiveSameLayer := sameLayer && useMovedBlocks
+
+		resBlocks, err := e.processMoveResource(ctx, srcLayer, dstLayer, effectiveSameLayer, srcAddr, dstAddr, &res, opIndex, i, tracker, op.Description)
 		if err != nil {
 			return nil, fmt.Errorf("resource %q: %w", res.From, err)
 		}
@@ -1161,4 +1168,12 @@ func checkLayerPaths(paths []string) string {
 		}
 	}
 	return ""
+}
+
+// boolPtrDefault returns the value of a *bool pointer, or defaultVal if nil.
+func boolPtrDefault(p *bool, defaultVal bool) bool {
+	if p != nil {
+		return *p
+	}
+	return defaultVal
 }

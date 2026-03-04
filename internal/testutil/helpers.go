@@ -93,9 +93,16 @@ func AssertNotContains(t *testing.T, content, substr string) {
 
 // AssertBlockCount checks that the given block type (e.g. "removed {",
 // "import {", "moved {") appears exactly n times in content.
+// It matches at the start of each line (after trimming whitespace) to avoid
+// false positives (e.g. "moved {" matching inside "removed {").
 func AssertBlockCount(t *testing.T, content, blockType string, expected int) {
 	t.Helper()
-	actual := strings.Count(content, blockType)
+	actual := 0
+	for _, line := range strings.Split(content, "\n") {
+		if strings.HasPrefix(strings.TrimLeft(line, " \t"), blockType) {
+			actual++
+		}
+	}
 	if actual != expected {
 		t.Errorf("expected %d %q blocks, got %d in:\n%s", expected, blockType, actual, content)
 	}

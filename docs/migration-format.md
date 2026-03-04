@@ -71,7 +71,7 @@ Move operations additionally support `source_prefix` and `destination_prefix` fo
 
 ### `move` — Resource Move
 
-Moves resources between OpenTofu layers, or renames them within the same layer. When `source_layer` and `destination_layer` differ, generates `removed` blocks in the source layer and `import` blocks in the destination layer. When they are the same, generates `moved` blocks instead (see [Same-Layer Moves](#same-layer-moves) below).
+Moves resources between OpenTofu layers, or renames them within the same layer. When `source_layer` and `destination_layer` differ, generates `removed` blocks in the source layer and `import` blocks in the destination layer. When they are the same, generates `moved` blocks by default (see [Same-Layer Moves](#same-layer-moves) below).
 
 **Required fields:** `source_layer`, `destination_layer`, and either `resources` (non-empty list) or `all_resources: true`
 
@@ -185,7 +185,7 @@ Omitted resources get `removed` blocks in the source layer (with `destroy = fals
 
 #### Same-Layer Moves
 
-When `source_layer` and `destination_layer` point to the same layer, tfmigrate generates `moved` blocks instead of `removed` + `import` blocks. This is useful when you want to rename resources or change module paths within a single layer using the move operation's features (keyed moves, prefix remapping, etc.).
+When `source_layer` and `destination_layer` point to the same layer, tfmigrate generates `moved` blocks by default instead of `removed` + `import` blocks. This is useful when you want to rename resources or change module paths within a single layer using the move operation's features (keyed moves, prefix remapping, etc.).
 
 **Simple rename via move:**
 
@@ -230,6 +230,36 @@ Generates: `moved { from = aws_instance.old; to = aws_instance.new }`
 - `merge_duplicates` is supported — the first `moved` block for a destination wins, subsequent duplicates are skipped
 - Module-level same-layer moves generate a single `moved` block for the module
 - `all_resources` works with same-layer moves, generating a `moved` block per resource instance
+
+#### `use_moved_blocks` — Override Same-Layer Behavior
+
+By default (`true`), same-layer moves generate `moved` blocks. Set `use_moved_blocks: false` on the operation or individual resources to force `removed` + `import` block generation. Per-resource settings override the operation-level default.
+
+```yaml
+- type: move
+  source_layer: "./layers/app"
+  destination_layer: "./layers/app"
+  use_moved_blocks: false                    # force removed + import for all resources
+  resources:
+    - from: "aws_instance.old"
+      to: "aws_instance.new"
+```
+
+Per-resource override:
+
+```yaml
+- type: move
+  source_layer: "./layers/app"
+  destination_layer: "./layers/app"
+  resources:
+    - from: "aws_instance.old"
+      to: "aws_instance.new"
+      use_moved_blocks: false                # only this resource gets removed + import
+    - from: "aws_instance.other"
+      to: "aws_instance.renamed"            # this resource gets moved block (default)
+```
+
+Constraints: `use_moved_blocks` is only valid on `move` operations. `use_moved_blocks: false` is not supported on module-level moves.
 
 ---
 
@@ -388,4 +418,6 @@ When writing YAML, ensure:
 17. `source_prefix` and `destination_prefix` are only valid on `move` operations; `rename`, `remove`, and `import` reject them
 18. `address_prefix` cannot be used together with `source_prefix` or `destination_prefix` on the same operation
 19. `source_prefix` / `destination_prefix` cannot be combined with `all_resources: true`
-20. Same-layer moves (`source_layer == destination_layer`) generate `moved` blocks; `merge_duplicates` is supported (first `moved` block wins, duplicates are skipped)
+20. Same-layer moves (`source_layer == destination_layer`) generate `moved` blocks by default; `merge_duplicates` is supported (first `moved` block wins, duplicates are skipped)
+21. `use_moved_blocks` is optional on `move` operations (both operation-level and per-resource); not valid on `rename`, `remove`, or `import`
+22. `use_moved_blocks: false` is not supported on module-level moves (module addresses like `module.foo`)

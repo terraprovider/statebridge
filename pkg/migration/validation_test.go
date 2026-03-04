@@ -1613,3 +1613,70 @@ func TestValidate_SourcePrefixOnImportInvalid(t *testing.T) {
 		t.Errorf("expected validation error for source_prefix on import, got %v", errs)
 	}
 }
+
+func TestValidate_UseMovedBlocksOnNonMoveInvalid(t *testing.T) {
+	trueVal := true
+	mf := &MigrationFile{
+		Description: "use_moved_blocks on rename (invalid)",
+		Operations: []Operation{
+			{
+				Type:           OpRename,
+				Layer:          "./layer",
+				UseMovedBlocks: &trueVal,
+				Renames: []RenameEntry{
+					{From: "aws_instance.old", To: "aws_instance.new"},
+				},
+			},
+		},
+	}
+
+	errs := Validate(mf)
+	if !hasError(errs, "use_moved_blocks") {
+		t.Errorf("expected validation error for use_moved_blocks on rename, got %v", errs)
+	}
+}
+
+func TestValidate_UseMovedBlocksFalseOnModuleMoveInvalid(t *testing.T) {
+	falseVal := false
+	mf := &MigrationFile{
+		Description: "use_moved_blocks false on module move (invalid)",
+		Operations: []Operation{
+			{
+				Type:             OpMove,
+				SourceLayer:      "./src",
+				DestinationLayer: "./src",
+				Resources: []ResourceMove{
+					{From: "module.foo", UseMovedBlocks: &falseVal},
+				},
+			},
+		},
+	}
+
+	errs := Validate(mf)
+	if !hasError(errs, "resources[0].use_moved_blocks") {
+		t.Errorf("expected validation error for use_moved_blocks false on module move, got %v", errs)
+	}
+}
+
+func TestValidate_UseMovedBlocksOnMoveValid(t *testing.T) {
+	falseVal := false
+	mf := &MigrationFile{
+		Description: "use_moved_blocks false on move (valid)",
+		Operations: []Operation{
+			{
+				Type:             OpMove,
+				SourceLayer:      "./src",
+				DestinationLayer: "./src",
+				UseMovedBlocks:   &falseVal,
+				Resources: []ResourceMove{
+					{From: "aws_instance.web"},
+				},
+			},
+		},
+	}
+
+	errs := Validate(mf)
+	if len(errs) != 0 {
+		t.Errorf("expected no errors, got %v", errs)
+	}
+}

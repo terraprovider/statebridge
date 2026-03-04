@@ -482,3 +482,163 @@ operations:
 	testutil.AssertContains(t, content, "module.old.aws_instance.web")
 	testutil.AssertContains(t, content, "module.new.aws_instance.web")
 }
+
+func TestEngine_ProcessFiles_SameLayerMove_UseMovedBlocksFalse(t *testing.T) {
+	tests := []struct {
+		name           string
+		yaml           string
+		stateResources []*tfjson.StateResource
+		removedCount   int
+		importCount    int
+		movedCount     int
+		contains       []string
+	}{
+		{
+			name: "operation-level use_moved_blocks false generates removed+import",
+			yaml: `
+description: "Same-layer with use_moved_blocks false"
+operations:
+  - type: move
+    source_layer: "LAYER"
+    destination_layer: "LAYER"
+    use_moved_blocks: false
+    resources:
+      - from: "aws_instance.web"
+        to: "aws_instance.api"
+`,
+			stateResources: []*tfjson.StateResource{
+				testutil.NewResource("aws_instance.web", "aws_instance", "web", nil,
+					map[string]interface{}{"id": "i-0abc123"}),
+			},
+			removedCount: 1,
+			importCount:  1,
+			movedCount:   0,
+			contains:     []string{"aws_instance.web", "aws_instance.api", `"i-0abc123"`},
+		},
+		{
+			name: "per-resource use_moved_blocks false overrides operation default",
+			yaml: `
+description: "Per-resource override"
+operations:
+  - type: move
+    source_layer: "LAYER"
+    destination_layer: "LAYER"
+    resources:
+      - from: "aws_instance.web"
+        to: "aws_instance.api"
+        use_moved_blocks: false
+      - from: "aws_instance.db"
+        to: "aws_instance.database"
+`,
+			stateResources: []*tfjson.StateResource{
+				testutil.NewResource("aws_instance.web", "aws_instance", "web", nil,
+					map[string]interface{}{"id": "i-0abc123"}),
+				testutil.NewResource("aws_instance.db", "aws_instance", "db", nil,
+					map[string]interface{}{"id": "i-0def456"}),
+			},
+			removedCount: 1,
+			importCount:  1,
+			movedCount:   1,
+			contains:     []string{"aws_instance.web", "aws_instance.api", "aws_instance.database"},
+		},
+		{
+			name: "per-resource use_moved_blocks true overrides operation false",
+			yaml: `
+description: "Per-resource true overrides op false"
+operations:
+  - type: move
+    source_layer: "LAYER"
+    destination_layer: "LAYER"
+    use_moved_blocks: false
+    resources:
+      - from: "aws_instance.web"
+        to: "aws_instance.api"
+      - from: "aws_instance.db"
+        to: "aws_instance.database"
+        use_moved_blocks: true
+`,
+			stateResources: []*tfjson.StateResource{
+				testutil.NewResource("aws_instance.web", "aws_instance", "web", nil,
+					map[string]interface{}{"id": "i-0abc123"}),
+				testutil.NewResource("aws_instance.db", "aws_instance", "db", nil,
+					map[string]interface{}{"id": "i-0def456"}),
+			},
+			removedCount: 1,
+			importCount:  1,
+			movedCount:   1,
+			contains:     []string{"aws_instance.web", "aws_instance.api", "aws_instance.database"},
+		},
+		{
+			name: "for_each resource with use_moved_blocks false",
+			yaml: `
+description: "For_each with use_moved_blocks false"
+operations:
+  - type: move
+    source_layer: "LAYER"
+    destination_layer: "LAYER"
+    use_moved_blocks: false
+    resources:
+      - from: "aws_instance.web"
+        to: "aws_instance.api"
+`,
+			stateResources: []*tfjson.StateResource{
+				testutil.NewResource(`aws_instance.web["a"]`, "aws_instance", "web", "a",
+					map[string]interface{}{"id": "i-aaa"}),
+				testutil.NewResource(`aws_instance.web["b"]`, "aws_instance", "web", "b",
+					map[string]interface{}{"id": "i-bbb"}),
+			},
+			removedCount: 1,
+			importCount:  2,
+			movedCount:   0,
+			contains:     []string{`aws_instance.web`, `aws_instance.api["a"]`, `aws_instance.api["b"]`},
+		},
+		{
+			name: "keyed move with use_moved_blocks false",
+			yaml: `
+description: "Keyed move with use_moved_blocks false"
+operations:
+  - type: move
+    source_layer: "LAYER"
+    destination_layer: "LAYER"
+    use_moved_blocks: false
+    resources:
+      - from: "aws_resource.items"
+        keys:
+          old_key: new_key
+`,
+			stateResources: []*tfjson.StateResource{
+				testutil.NewResource(`aws_resource.items["old_key"]`, "aws_resource", "items", "old_key",
+					map[string]interface{}{"id": "id-old"}),
+			},
+			removedCount: 1,
+			importCount:  1,
+			movedCount:   0,
+			contains:     []string{`aws_resource.items`, `aws_resource.items["new_key"]`, `"id-old"`},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, layers := testutil.SetupLayers(t, "layer")
+			layerDir := layers["layer"]
+
+			yaml := strings.ReplaceAll(tt.yaml, "LAYER", layerDir)
+			dir := t.TempDir()
+			migrationFile := testutil.WriteMigration(t, dir, "001_move.yaml", yaml)
+
+			mock := testutil.NewMockStateReader(map[string]*tfjson.State{
+				layerDir: testutil.BuildState(tt.stateResources...),
+			})
+			result := runEngine(t, Config{StateReader: mock}, []string{migrationFile})
+
+			testutil.RequireOutputCount(t, result.OutputFiles, 1)
+			content := readLayerFile(t, result.OutputFiles, layerDir)
+			testutil.AssertBlockCount(t, content, "removed {", tt.removedCount)
+			testutil.AssertBlockCount(t, content, "import {", tt.importCount)
+			testutil.AssertBlockCount(t, content, "moved {", tt.movedCount)
+			for _, s := range tt.contains {
+				testutil.AssertContains(t, content, s)
+			}
+		})
+	}
+}

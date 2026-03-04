@@ -243,7 +243,9 @@ operations:
 	}
 
 	assertFileContains(t, srcFile, "removed {")
-	assertFileContains(t, srcFile, "module.src_mod.random_id.unit")
+	// Module-level consolidation replaces individual resource removed blocks
+	// with a single module-level removed block when all resources are moved.
+	assertFileContains(t, srcFile, "module.src_mod")
 	assertFileContains(t, dstFile, "import {")
 	assertFileContains(t, dstFile, "module.dst_mod.random_id.unit")
 
@@ -294,6 +296,7 @@ operations:
 	updateTfFile(t, sharedDir, "main.tf", randomProviderHCL+
 		moduleBlock("new_mod", "prefix_same")+
 		randomIDResource("anchor"))
+	tofuInit(t, sharedDir) // Re-init to install the new module
 
 	// Generate
 	files := requireGenerate(t, migDir)
