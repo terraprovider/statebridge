@@ -63,6 +63,46 @@ When `keys` is omitted:
 - **Single resource**: one `removed` + one `import` block
 - **For_each resource**: expands all instances with the same keys
 
+## Merging Duplicate Destination Addresses
+
+When multiple source resources with keyed moves produce the same destination address (same `to` resource + same destination key), this normally results in an error because Terraform rejects duplicate `import` blocks.
+
+The `merge_duplicates: true` flag on a resource enables destination-side deduplication:
+
+```yaml
+- type: move
+  source_layer: "./layers/old"
+  destination_layer: "./layers/new"
+  resources:
+    - from: "azurerm_role_management_policy.permanent_active"
+      to: "azurerm_role_management_policy.all"
+      merge_duplicates: true
+      keys:
+        key_a: shared_key
+        key_b: unique_active
+    - from: "azurerm_role_management_policy.permanent_eligible"
+      to: "azurerm_role_management_policy.all"
+      merge_duplicates: true
+      keys:
+        key_x: shared_key
+        key_y: unique_eligible
+```
+
+In this example, both resources map a key to `shared_key` on the same destination resource. Without `merge_duplicates`, this would produce two import blocks for `azurerm_role_management_policy.all["shared_key"]` — a Terraform error.
+
+With `merge_duplicates: true`:
+- The **first** import block for a destination address wins
+- Subsequent duplicates with **matching import IDs** are silently skipped
+- If import IDs **differ**, an error is raised (the merge is ambiguous)
+- Both resources involved in the collision must have `merge_duplicates: true`
+
+### Constraints
+
+- `merge_duplicates` requires `keys` to be present (keyed move only)
+- Not valid on module-level moves
+- Not valid on `all_resources` overrides
+- Scoped to a single migration YAML file (not cross-file)
+
 ## Real-World Example
 
 This example moves 3 resource types between layers with exact key renames, prefix patterns, and `address_prefix`:

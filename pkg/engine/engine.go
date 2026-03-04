@@ -621,6 +621,15 @@ func (e *Engine) processMoveKeyed(
 			return nil, fmt.Errorf("resolving import ID for key %q: %w", r.Key, err)
 		}
 
+		// Check for destination-side duplicates (merge_duplicates support)
+		skip, err := tracker.claimDestination(dstLayer, destFullAddr, importID, opIndex, srcAddr, res.MergeDuplicates)
+		if err != nil {
+			return nil, fmt.Errorf("key %q: %w", r.Key, err)
+		}
+		if skip {
+			continue
+		}
+
 		blocks = append(blocks, &generator.ImportBlock{
 			To:          destFullAddr,
 			ID:          importID,

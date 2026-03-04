@@ -215,6 +215,15 @@ func validateResourceMove(opIndex, resIndex int, res *ResourceMove) []Validation
 		})
 	}
 
+	// merge_duplicates requires keys to be present
+	if res.MergeDuplicates && len(res.Keys) == 0 {
+		errs = append(errs, ValidationError{
+			OperationIndex: opIndex,
+			Field:          fieldPrefix + ".merge_duplicates",
+			Message:        "merge_duplicates is only valid when keys is present",
+		})
+	}
+
 	// Validate module-level move constraints
 	if res.From != "" && IsModuleAddress(res.From) {
 		if len(res.Keys) > 0 {
@@ -229,6 +238,13 @@ func validateResourceMove(opIndex, resIndex int, res *ResourceMove) []Validation
 				OperationIndex: opIndex,
 				Field:          fieldPrefix + ".import_id",
 				Message:        "import_id is not supported for module-level moves (auto-resolved from state)",
+			})
+		}
+		if res.MergeDuplicates {
+			errs = append(errs, ValidationError{
+				OperationIndex: opIndex,
+				Field:          fieldPrefix + ".merge_duplicates",
+				Message:        "merge_duplicates is not supported for module-level moves",
 			})
 		}
 		if res.To != "" && !IsModuleAddress(res.To) {
@@ -273,6 +289,13 @@ func validateAllResourcesOverride(opIndex, resIndex int, res *ResourceMove) []Va
 			OperationIndex: opIndex,
 			Field:          fieldPrefix + ".keys",
 			Message:        "keys cannot be used with all_resources overrides",
+		})
+	}
+	if res.MergeDuplicates {
+		errs = append(errs, ValidationError{
+			OperationIndex: opIndex,
+			Field:          fieldPrefix + ".merge_duplicates",
+			Message:        "merge_duplicates cannot be used with all_resources overrides",
 		})
 	}
 	if res.To == "" && res.ImportID == "" {

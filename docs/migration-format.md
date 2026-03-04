@@ -61,6 +61,7 @@ Moves resources between OpenTofu layers. Generates `removed` blocks in the sourc
   resources:
     - from: "aws_instance.web"
       import_id: "i-0abc123def456"           # optional: auto-resolved from state if omitted
+      merge_duplicates: true                 # optional: deduplicate when multiple sources produce same dest address
     - from: "aws_instance.api"
 ```
 
