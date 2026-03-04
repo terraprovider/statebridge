@@ -403,10 +403,63 @@ func validateImport(index int, op *Operation) []ValidationError {
 				Message:        "import entry requires an id",
 			})
 		}
+
+		// Validate source block if present.
+		if entry.Source != nil {
+			errs = append(errs, validateImportSource(index, fieldPrefix, &entry)...)
+		} else {
+			// Key is only valid when source is set.
+			if entry.Key != "" {
+				errs = append(errs, ValidationError{
+					OperationIndex: index,
+					Field:          fieldPrefix + ".key",
+					Message:        "import entry key is only valid when source is set",
+				})
+			}
+		}
 	}
 
-	// Check for duplicate addresses in imports.
-	errs = append(errs, checkDuplicates(index, "imports", op.Imports, func(e ImportEntry) string { return e.Address })...)
+	// Check for duplicate addresses in imports (only for entries without source;
+	// source-based entries expand dynamically and may share a base address).
+	var staticEntries []ImportEntry
+	for _, entry := range op.Imports {
+		if entry.Source == nil {
+			staticEntries = append(staticEntries, entry)
+		}
+	}
+	errs = append(errs, checkDuplicates(index, "imports", staticEntries, func(e ImportEntry) string { return e.Address })...)
+
+	return errs
+}
+
+// validateImportSource validates the source block and key field of an import entry.
+func validateImportSource(index int, fieldPrefix string, entry *ImportEntry) []ValidationError {
+	var errs []ValidationError
+	src := entry.Source
+
+	if src.Layer == "" {
+		errs = append(errs, ValidationError{
+			OperationIndex: index,
+			Field:          fieldPrefix + ".source.layer",
+			Message:        "import source requires a layer path",
+		})
+	}
+	if src.Address == "" {
+		errs = append(errs, ValidationError{
+			OperationIndex: index,
+			Field:          fieldPrefix + ".source.address",
+			Message:        "import source requires a resource address",
+		})
+	}
+
+	// When expand is set, key is required (must generate unique keys per list element).
+	if src.Expand != "" && entry.Key == "" {
+		errs = append(errs, ValidationError{
+			OperationIndex: index,
+			Field:          fieldPrefix + ".key",
+			Message:        "import entry key is required when source.expand is set",
+		})
+	}
 
 	return errs
 }

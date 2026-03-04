@@ -217,6 +217,66 @@ Imports existing cloud resources into OpenTofu state. Generates `import` blocks.
       provider: "aws.uswest2"               # per-entry override
 ```
 
+#### Source-Based Imports
+
+Each import entry supports an optional `source` block that derives import IDs from another resource's state. When `source` is set, `id` can be a Go template expression evaluated against the source resource's context.
+
+```yaml
+- type: import
+  layer: "./layers/identity"
+  imports:
+    - address: "azuread_application_registration.all"
+      id: '{{ .Attributes.id }}'
+      source:
+        layer: "./layers/identity"
+        address: "azuread_application.all"
+```
+
+**Source fields:**
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `source.layer` | Yes | Layer path containing the source resource |
+| `source.address` | Yes | Base address to look up in state; for for_each resources, all instances are iterated |
+| `source.expand` | No | Attribute name containing a list; each list element produces a separate import |
+
+**Behavior without `expand`:** One import per source instance. An optional `key` template overrides the destination for_each key (defaults to the source key).
+
+**Behavior with `expand`:** `key` is required (must generate unique keys from list elements). Each list element is available as `.Item` in templates, with `.ItemIndex` for zero-based position.
+
+**Key remapping example** — remap for_each keys during source-based import:
+
+```yaml
+- type: import
+  layer: "./layers/app"
+  imports:
+    - address: "random_id.derived"
+      id: '{{ .Attributes.b64_std }}'
+      key: 'app_{{ .Key }}'
+      source:
+        layer: "./layers/shared"
+        address: "random_id.source"
+```
+
+**Attribute expansion example** — split `required_resource_access` into separate resources:
+
+```yaml
+- type: import
+  layer: "blueprints/20-launchpad"
+  imports:
+    - address: "azuread_api_access.all"
+      id: '{{ .Attributes.id }}/apiAccess/{{ .Item.resource_app_id }}'
+      key: '{{ .Key }}_{{ .Item.resource_app_id }}'
+      source:
+        layer: "blueprints/20-launchpad"
+        address: "azuread_application.all"
+        expand: "required_resource_access"
+```
+
+This generates one import block per `required_resource_access` entry per application instance. For an application with key `"myapp"` and two entries, it produces:
+- `import { to = azuread_api_access.all["myapp_graph-api-id"] ... }`
+- `import { to = azuread_api_access.all["myapp_sharepoint-id"] ... }`
+
 ---
 
 ## Retiring Migration Files
@@ -247,6 +307,7 @@ When writing YAML, ensure:
 10. `rename` requires `layer` and non-empty `renames` list; each entry requires `from` and `to`
 11. `remove` requires `layer` and non-empty `entries` list; each entry requires `address`
 12. `import` requires `layer` and non-empty `imports` list; each entry requires `address` and `id`
-13. Template expressions (`{{ }}`) are only valid in `keys` map values, `import_id` fields (move), and `id` fields (import)
-14. Layer paths are relative to where `tfmigrate generate` is run
-15. `status` is optional; if present, must be `"retired"` (unknown values are errors). Retired files skip all validation.
+13. Import entries may have an optional `source` block: requires `source.layer` (non-empty) and `source.address` (non-empty). When `source.expand` is set, `key` is required. `key` without `source` is invalid.
+14. Template expressions (`{{ }}`) are valid in `keys` map values, `import_id` fields (move), and `id`/`key` fields (import — especially with `source`)
+15. Layer paths are relative to where `tfmigrate generate` is run
+16. `status` is optional; if present, must be `"retired"` (unknown values are errors). Retired files skip all validation.

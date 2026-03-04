@@ -216,14 +216,48 @@ type RenameEntry struct {
 // ImportEntry describes a single resource to import into state.
 type ImportEntry struct {
 	// Address is the Terraform resource address to import to.
+	// When Source is set with Expand, address is used as the base address
+	// and for_each keys are appended automatically.
 	Address string `yaml:"address"`
 
 	// ID is the provider-specific identifier for the existing resource.
+	// When Source is set, this can be a Go template expression evaluated
+	// against the source resource's state context (.Address, .Type, .Name,
+	// .Key, .Attributes, .Item, .ItemIndex).
 	ID string `yaml:"id"`
 
 	// Provider is an optional provider alias override.
 	// If empty, uses the operation-level Provider (if set).
 	Provider string `yaml:"provider,omitempty"`
+
+	// Source optionally references a resource in state whose attributes
+	// are used to evaluate template expressions in ID and Key.
+	// When set, enables state-based import ID resolution and for_each expansion.
+	Source *ImportSource `yaml:"source,omitempty"`
+
+	// Key is an optional Go template expression for the destination for_each key.
+	// Only valid when Source is set. When Source.Expand is set, Key is required
+	// and evaluated once per expanded list element. When Source is set without
+	// Expand, Key defaults to the source resource's key if omitted.
+	Key string `yaml:"key,omitempty"`
+}
+
+// ImportSource references a resource in state whose attributes are used
+// to resolve template expressions in an import entry's ID and Key fields.
+type ImportSource struct {
+	// Layer is the filesystem path of the layer containing the source resource.
+	Layer string `yaml:"layer"`
+
+	// Address is the base resource address to look up in state
+	// (e.g., "azuread_application.all"). For for_each resources, all
+	// instances are returned.
+	Address string `yaml:"address"`
+
+	// Expand is an optional attribute name on the source resource that
+	// contains a list. When set, each list element produces a separate
+	// import block, with the element available as .Item in templates
+	// and its 0-based index as .ItemIndex.
+	Expand string `yaml:"expand,omitempty"`
 }
 
 // RemoveEntry describes a single resource to remove from state.

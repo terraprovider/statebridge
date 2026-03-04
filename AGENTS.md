@@ -280,11 +280,54 @@ Optional: `provider` at operation level (default for all entries), per-entry `pr
       provider: "aws.uswest2"                   # per-entry override
 ```
 
+**Source-based imports** — derive import IDs from another resource's state:
+
+Each import entry supports an optional `source` block that enables template-based ID resolution against a source resource in state. When `source` is set, `id` can be a Go template expression evaluated against the source resource's context.
+
+```yaml
+- type: import
+  layer: "./layers/identity"
+  imports:
+    - address: "azuread_application_registration.all"
+      id: '{{ .Attributes.id }}'
+      source:
+        layer: "./layers/identity"
+        address: "azuread_application.all"
+```
+
+Source fields:
+- `source.layer` — layer path containing the source resource (required)
+- `source.address` — base address to look up in state (required); for for_each resources, all instances are iterated
+- `source.expand` — optional attribute name containing a list; each list element produces a separate import, with `.Item` and `.ItemIndex` available in templates
+
+When `source` is set without `expand`: one import per source instance. An optional `key` template overrides the destination for_each key (defaults to the source key).
+
+When `source.expand` is set: `key` is required (must generate unique keys from list elements). Each list element is available as `.Item` in templates.
+
+**Attribute expansion example** — split `required_resource_access` into separate resources:
+
+```yaml
+- type: import
+  layer: "blueprints/20-launchpad"
+  imports:
+    - address: "azuread_api_access.all"
+      id: '{{ .Attributes.id }}/apiAccess/{{ .Item.resource_app_id }}'
+      key: '{{ .Key }}_{{ .Item.resource_app_id }}'
+      source:
+        layer: "blueprints/20-launchpad"
+        address: "azuread_application.all"
+        expand: "required_resource_access"
+```
+
+This generates one `import` block per `required_resource_access` entry per application instance. For an application with key `"myapp"` and two `required_resource_access` entries, it produces:
+- `import { to = azuread_api_access.all["myapp_graph-api-id"] ... }`
+- `import { to = azuread_api_access.all["myapp_sharepoint-id"] ... }`
+
 ---
 
 ## Go Template Reference
 
-Templates can be used in `keys` map values and `import_id` fields. They are evaluated once per matched resource instance.
+Templates can be used in `keys` map values, `import_id` fields, and `id`/`key` fields in source-based imports. They are evaluated once per matched resource instance (or once per expanded list element when `source.expand` is set).
 
 ### Context Variables
 
@@ -296,6 +339,8 @@ Templates can be used in `keys` map values and `import_id` fields. They are eval
 | `.Index` | any | `"key-1"` or `0` | Raw for_each key or count index |
 | `.Key` | string | `"key-1"` | String form of `.Index` |
 | `.Attributes` | map | `{"id": "...", "bucket": "..."}` | All state attributes |
+| `.Item` | any | `{"resource_app_id": "..."}` | Current list element (only in `source.expand` context) |
+| `.ItemIndex` | int | `0` | 0-based index of `.Item` in the expanded list |
 
 ### Available Functions
 
@@ -423,6 +468,36 @@ If the user says "delete" or "destroy", set `destroy: true` (either at operation
 ```
 
 The user must provide the import ID (ARN, resource ID, etc.) or you must ask for it.
+
+### "Import resources derived from another resource's attributes" / "Split resource into sub-resources"
+
+Use source-based imports to derive import IDs from an existing resource's state:
+
+```yaml
+- type: import
+  layer: "<layer path>"
+  imports:
+    - address: "<new resource type>.all"
+      id: '{{ .Attributes.id }}'
+      source:
+        layer: "<layer path>"
+        address: "<existing resource>.all"
+```
+
+When the source resource has a list attribute that should be expanded into multiple new resources:
+
+```yaml
+- type: import
+  layer: "<layer path>"
+  imports:
+    - address: "<new resource type>.all"
+      id: '{{ .Attributes.id }}/subResource/{{ .Item.<field> }}'
+      key: '{{ .Key }}_{{ .Item.<field> }}'
+      source:
+        layer: "<layer path>"
+        address: "<existing resource>.all"
+        expand: "<list attribute name>"
+```
 
 ### "Re-key for_each resources" / "Rename instance keys"
 
@@ -593,7 +668,8 @@ When generating YAML, ensure:
 7. `rename` requires `layer` and non-empty `renames` list; each entry requires `from` and `to`
 8. `remove` requires `layer` and non-empty `entries` list; each entry requires `address`
 9. `import` requires `layer` and non-empty `imports` list; each entry requires `address` and `id`
-10. Template expressions (`{{ }}`) are only valid in `keys` map values, `import_id` fields (move), and `id` fields (import)
+9a. Import entries may have an optional `source` block: requires `source.layer` (non-empty) and `source.address` (non-empty). When `source.expand` is set, `key` is required. `key` without `source` is invalid.
+10. Template expressions (`{{ }}`) are only valid in `keys` map values, `import_id` fields (move), and `id`/`key` fields (import with `source`)
 11. Layer paths are relative to where `tfmigrate generate` is run
 12. When `keys` is present, all state keys must be covered (completeness check)
 13. A key matching multiple operations is an overlap error

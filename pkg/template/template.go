@@ -32,6 +32,16 @@ type TemplateContext struct {
 	// Attributes contains all attribute values from the Terraform state.
 	// Nested objects are represented as map[string]interface{}.
 	Attributes map[string]interface{}
+
+	// Item is the current list element when expanding an attribute list
+	// (via ImportSource.Expand). It is nil when not in an expansion context.
+	// For objects, it is a map[string]interface{} supporting field access
+	// (e.g., .Item.resource_app_id).
+	Item interface{}
+
+	// ItemIndex is the 0-based index of the current Item within the expanded
+	// list. It is 0 when not in an expansion context.
+	ItemIndex int
 }
 
 // Evaluate processes a Go template string with the given context and returns
