@@ -101,7 +101,53 @@ With `merge_duplicates: true`:
 - `merge_duplicates` requires `keys` to be present (keyed move only)
 - Not valid on module-level moves
 - Not valid on `all_resources` overrides
+- Not valid on same-layer moves (`source_layer == destination_layer`)
 - Scoped to a single migration YAML file (not cross-file)
+
+## Same-Layer Keyed Moves
+
+When `source_layer` and `destination_layer` are the same, keyed moves generate `moved` blocks instead of `removed` + `import` blocks. This is useful for re-keying `for_each` resources in place:
+
+```yaml
+- type: move
+  source_layer: "./layers/app"
+  destination_layer: "./layers/app"
+  resources:
+    - from: "aws_instance.web"
+      keys:
+        old_key_1: new_key_1
+        old_key_2: new_key_2
+```
+
+Generates:
+```hcl
+moved {
+  from = aws_instance.web["old_key_1"]
+  to   = aws_instance.web["new_key_1"]
+}
+moved {
+  from = aws_instance.web["old_key_2"]
+  to   = aws_instance.web["new_key_2"]
+}
+```
+
+Identity moves (where the source and destination address are the same, e.g., `old_key: old_key`) are silently skipped.
+
+You can also use `source_prefix` and `destination_prefix` to change the module path during a same-layer keyed move:
+
+```yaml
+- type: move
+  source_layer: "./layers/app"
+  destination_layer: "./layers/app"
+  source_prefix: "module.v1"
+  destination_prefix: "module.v2"
+  resources:
+    - from: "aws_instance.web"
+      keys:
+        key1: key1
+```
+
+Generates: `moved { from = module.v1.aws_instance.web["key1"]; to = module.v2.aws_instance.web["key1"] }`
 
 ## Real-World Example
 

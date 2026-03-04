@@ -778,6 +778,72 @@ func TestYamlStem(t *testing.T) {
 	}
 }
 
+func TestParseFile_MoveWithSourceDestPrefix(t *testing.T) {
+	content := `
+description: "Move with source and destination prefix"
+operations:
+  - type: move
+    source_layer: "./src"
+    destination_layer: "./dst"
+    source_prefix: module.old
+    destination_prefix: module.new
+    resources:
+      - from: aws_instance.web
+`
+	path := writeTestFile(t, "010_prefix_split.yaml", content)
+	parser := NewParser()
+
+	mf, err := parser.ParseFile(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	op := mf.Operations[0]
+	if op.SourcePrefix != "module.old" {
+		t.Errorf("expected source_prefix %q, got %q", "module.old", op.SourcePrefix)
+	}
+	if op.DestinationPrefix != "module.new" {
+		t.Errorf("expected destination_prefix %q, got %q", "module.new", op.DestinationPrefix)
+	}
+	if op.AddressPrefix != "" {
+		t.Errorf("expected empty address_prefix, got %q", op.AddressPrefix)
+	}
+	if op.EffectiveSourcePrefix() != "module.old" {
+		t.Errorf("expected effective source prefix %q, got %q", "module.old", op.EffectiveSourcePrefix())
+	}
+	if op.EffectiveDestinationPrefix() != "module.new" {
+		t.Errorf("expected effective destination prefix %q, got %q", "module.new", op.EffectiveDestinationPrefix())
+	}
+}
+
+func TestParseFile_AddressPrefixFallback(t *testing.T) {
+	content := `
+description: "Move with address_prefix fallback"
+operations:
+  - type: move
+    source_layer: "./src"
+    destination_layer: "./dst"
+    address_prefix: module.shared
+    resources:
+      - from: aws_instance.web
+`
+	path := writeTestFile(t, "011_prefix_fallback.yaml", content)
+	parser := NewParser()
+
+	mf, err := parser.ParseFile(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	op := mf.Operations[0]
+	if op.EffectiveSourcePrefix() != "module.shared" {
+		t.Errorf("expected effective source prefix %q, got %q", "module.shared", op.EffectiveSourcePrefix())
+	}
+	if op.EffectiveDestinationPrefix() != "module.shared" {
+		t.Errorf("expected effective destination prefix %q, got %q", "module.shared", op.EffectiveDestinationPrefix())
+	}
+}
+
 // writeTestFile creates a temporary YAML file and returns its path.
 func writeTestFile(t *testing.T, name, content string) string {
 	t.Helper()

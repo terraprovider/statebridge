@@ -120,8 +120,22 @@ type Operation struct {
 	// AddressPrefix is an optional prefix prepended (with a dot separator) to
 	// all resource addresses in this operation. Useful for factoring out common
 	// module paths (e.g., "module.identity_governance").
-	// Cannot be combined with all_resources.
+	// For move operations, acts as shorthand for setting both SourcePrefix and
+	// DestinationPrefix to the same value. Cannot be combined with source_prefix
+	// or destination_prefix. Cannot be combined with all_resources.
 	AddressPrefix string `yaml:"address_prefix,omitempty"`
+
+	// SourcePrefix is an optional prefix prepended (with a dot separator) to
+	// source resource addresses in move operations. Use when the source and
+	// destination module paths differ. Cannot be combined with address_prefix.
+	// Only valid for move operations.
+	SourcePrefix string `yaml:"source_prefix,omitempty"`
+
+	// DestinationPrefix is an optional prefix prepended (with a dot separator)
+	// to destination resource addresses in move operations. Use when the source
+	// and destination module paths differ. Cannot be combined with address_prefix.
+	// Only valid for move operations.
+	DestinationPrefix string `yaml:"destination_prefix,omitempty"`
 
 	// SourceLayer is the filesystem path to the source Terraform root module (move operations).
 	SourceLayer string `yaml:"source_layer,omitempty"`
@@ -322,6 +336,24 @@ func FullAddress(prefix, addr string) string {
 		return addr
 	}
 	return prefix + "." + addr
+}
+
+// EffectiveSourcePrefix returns the prefix to use for source addresses in
+// move operations. Returns SourcePrefix if set, otherwise falls back to AddressPrefix.
+func (o *Operation) EffectiveSourcePrefix() string {
+	if o.SourcePrefix != "" {
+		return o.SourcePrefix
+	}
+	return o.AddressPrefix
+}
+
+// EffectiveDestinationPrefix returns the prefix to use for destination addresses
+// in move operations. Returns DestinationPrefix if set, otherwise falls back to AddressPrefix.
+func (o *Operation) EffectiveDestinationPrefix() string {
+	if o.DestinationPrefix != "" {
+		return o.DestinationPrefix
+	}
+	return o.AddressPrefix
 }
 
 // IsModuleAddress returns true if the address is a pure module path with no

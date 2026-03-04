@@ -44,11 +44,34 @@ All operation types support an optional `address_prefix` field that is prepended
     # Full address: module.identity_governance.azuread_access_package.all
 ```
 
+### `source_prefix` / `destination_prefix` (move only)
+
+Move operations additionally support `source_prefix` and `destination_prefix` for independent control over the address prefix applied to the source and destination sides:
+
+```yaml
+- type: move
+  source_layer: "./layers/old"
+  destination_layer: "./layers/new"
+  source_prefix: "module.old_root"
+  destination_prefix: "module.new_root"
+  resources:
+    - from: "aws_instance.web"
+    # Source address:      module.old_root.aws_instance.web
+    # Destination address: module.new_root.aws_instance.web
+```
+
+**Rules:**
+- `source_prefix` / `destination_prefix` cannot be combined with `address_prefix` — use one or the other
+- If only `source_prefix` is set, destination addresses have no prefix (and vice versa)
+- `address_prefix` remains a shorthand that applies the same prefix to both sides
+- These fields are only valid on `move` operations; `rename`, `remove`, and `import` only support `address_prefix`
+- Cannot be combined with `all_resources: true`
+
 ## Operation Types
 
-### `move` — Cross-Layer Resource Move
+### `move` — Resource Move
 
-Moves resources between OpenTofu layers. Generates `removed` blocks in the source layer and `import` blocks in the destination layer.
+Moves resources between OpenTofu layers, or renames them within the same layer. When `source_layer` and `destination_layer` differ, generates `removed` blocks in the source layer and `import` blocks in the destination layer. When they are the same, generates `moved` blocks instead (see [Same-Layer Moves](#same-layer-moves) below).
 
 **Required fields:** `source_layer`, `destination_layer`, and either `resources` (non-empty list) or `all_resources: true`
 
@@ -58,6 +81,8 @@ Moves resources between OpenTofu layers. Generates `removed` blocks in the sourc
   source_layer: "./layers/compute"
   destination_layer: "./layers/app"
   address_prefix: "module.main"              # optional
+  source_prefix: "module.src"                # optional: move-only, see Common Fields
+  destination_prefix: "module.dst"           # optional: move-only, see Common Fields
   resources:
     - from: "aws_instance.web"
       import_id: "i-0abc123def456"           # optional: auto-resolved from state if omitted
@@ -157,6 +182,54 @@ Exclude specific resources from import during an `all_resources` move:
 Omitted resources get `removed` blocks in the source layer (with `destroy = false` by default) but no `import` blocks in the destination layer. Set `destroy: true` per entry if the resource should also be destroyed.
 
 `omit` is only valid with `all_resources: true`, and omit addresses cannot overlap with `overrides` addresses.
+
+#### Same-Layer Moves
+
+When `source_layer` and `destination_layer` point to the same layer, tfmigrate generates `moved` blocks instead of `removed` + `import` blocks. This is useful when you want to rename resources or change module paths within a single layer using the move operation's features (keyed moves, prefix remapping, etc.).
+
+**Simple rename via move:**
+
+```yaml
+- type: move
+  source_layer: "./layers/app"
+  destination_layer: "./layers/app"
+  resources:
+    - from: "aws_instance.old"
+      to: "aws_instance.new"
+```
+
+Generates: `moved { from = aws_instance.old; to = aws_instance.new }`
+
+**Same-layer keyed move (re-key for_each):**
+
+```yaml
+- type: move
+  source_layer: "./layers/app"
+  destination_layer: "./layers/app"
+  resources:
+    - from: "aws_instance.web"
+      keys:
+        old_key: new_key
+```
+
+**Same-layer with different prefixes:**
+
+```yaml
+- type: move
+  source_layer: "./layers/app"
+  destination_layer: "./layers/app"
+  source_prefix: "module.v1"
+  destination_prefix: "module.v2"
+  resources:
+    - from: "aws_instance.web"
+    # Generates: moved { from = module.v1.aws_instance.web; to = module.v2.aws_instance.web }
+```
+
+**Behavior notes:**
+- Identity moves (where source and destination addresses are identical) are silently skipped — no blocks are generated
+- `merge_duplicates` is not supported for same-layer moves
+- Module-level same-layer moves generate a single `moved` block for the module
+- `all_resources` works with same-layer moves, generating a `moved` block per resource instance
 
 ---
 
@@ -312,3 +385,7 @@ When writing YAML, ensure:
 14. Template expressions (`{{ }}`) are valid in `keys` map values, `import_id` fields (move), and `id`/`key` fields (import — especially with `source`)
 15. Layer paths are relative to where `tfmigrate generate` is run
 16. `status` is optional; if present, must be `"retired"` (unknown values are errors). Retired files skip all validation.
+17. `source_prefix` and `destination_prefix` are only valid on `move` operations; `rename`, `remove`, and `import` reject them
+18. `address_prefix` cannot be used together with `source_prefix` or `destination_prefix` on the same operation
+19. `source_prefix` / `destination_prefix` cannot be combined with `all_resources: true`
+20. Same-layer moves (`source_layer == destination_layer`) generate `moved` blocks; `merge_duplicates` is not supported in this mode
