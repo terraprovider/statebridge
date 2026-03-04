@@ -271,9 +271,6 @@ func (e *Engine) processMoveResource(
 	}
 
 	if len(res.Keys) > 0 {
-		if sameLayer && res.MergeDuplicates {
-			return nil, fmt.Errorf("merge_duplicates is not supported for same-layer moves (source_layer == destination_layer)")
-		}
 		return e.processMoveKeyed(ctx, srcLayer, dstLayer, sameLayer, srcAddr, dstAddr, res, opIndex, tracker, description)
 	}
 
@@ -719,7 +716,19 @@ func (e *Engine) processMoveKeyed(
 		destFullAddr := fmt.Sprintf("%s[\"%s\"]", dstAddr, destKey)
 
 		if sameLayer {
-			// Same-layer: emit moved block, skip identity moves
+			// Same-layer: check for destination-side duplicates (merge_duplicates support)
+			if res.MergeDuplicates {
+				// Use destFullAddr as the "import ID" — for same-layer moves there is no
+				// physical import ID, so duplicates are always compatible.
+				skip, err := tracker.claimDestination(srcLayer, destFullAddr, destFullAddr, opIndex, srcAddr, res.MergeDuplicates)
+				if err != nil {
+					return nil, fmt.Errorf("key %q: %w", r.Key, err)
+				}
+				if skip {
+					continue
+				}
+			}
+			// Emit moved block, skip identity moves
 			if srcFullAddr != destFullAddr {
 				blocks = append(blocks, &generator.MovedBlock{
 					From:        srcFullAddr,

@@ -227,7 +227,7 @@ Generates: `moved { from = aws_instance.old; to = aws_instance.new }`
 
 **Behavior notes:**
 - Identity moves (where source and destination addresses are identical) are silently skipped — no blocks are generated
-- `merge_duplicates` is not supported for same-layer moves
+- `merge_duplicates` is supported — the first `moved` block for a destination wins, subsequent duplicates are skipped
 - Module-level same-layer moves generate a single `moved` block for the module
 - `all_resources` works with same-layer moves, generating a `moved` block per resource instance
 
@@ -388,4 +388,4 @@ When writing YAML, ensure:
 17. `source_prefix` and `destination_prefix` are only valid on `move` operations; `rename`, `remove`, and `import` reject them
 18. `address_prefix` cannot be used together with `source_prefix` or `destination_prefix` on the same operation
 19. `source_prefix` / `destination_prefix` cannot be combined with `all_resources: true`
-20. Same-layer moves (`source_layer == destination_layer`) generate `moved` blocks; `merge_duplicates` is not supported in this mode
+20. Same-layer moves (`source_layer == destination_layer`) generate `moved` blocks; `merge_duplicates` is supported (first `moved` block wins, duplicates are skipped)

@@ -101,7 +101,8 @@ With `merge_duplicates: true`:
 - `merge_duplicates` requires `keys` to be present (keyed move only)
 - Not valid on module-level moves
 - Not valid on `all_resources` overrides
-- Not valid on same-layer moves (`source_layer == destination_layer`)
+- For cross-layer moves, import IDs must match (error if they differ)
+- For same-layer moves, duplicates targeting the same destination are always compatible (first `moved` block wins)
 - Scoped to a single migration YAML file (not cross-file)
 
 ## Same-Layer Keyed Moves

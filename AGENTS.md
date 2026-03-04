@@ -201,7 +201,7 @@ resources:
       key_y: unique_eligible
 ```
 
-When `merge_duplicates: true`, the first import block for a destination address wins and subsequent duplicates with matching import IDs are silently skipped. If import IDs differ, an error is raised. Only valid when `keys` is present. Not valid on module moves, `all_resources` overrides, or same-layer moves. Both resources involved in the collision must have this flag set.
+When `merge_duplicates: true`, the first block for a destination address wins and subsequent duplicates are silently skipped. For cross-layer moves, import IDs must match (error if they differ). For same-layer moves, duplicates targeting the same destination are always compatible. Only valid when `keys` is present. Not valid on module moves or `all_resources` overrides. Both resources involved in the collision must have this flag set.
 
 **`to`** — Override when the destination base address differs from source:
 
@@ -279,7 +279,7 @@ Omitted resources get `removed` blocks in the source layer (with `destroy = fals
 
 Same-layer behavior:
 - Identity moves (where `from` and `to` resolve to the same address) are silently skipped
-- `merge_duplicates` is not supported
+- `merge_duplicates` is supported — the first `moved` block for a destination wins, subsequent duplicates are skipped
 - Module-level same-layer moves generate a single `moved` block for the module
 - `all_resources: true` generates a `moved` block per resource instance, skipping identities
 - Keyed moves generate `moved` blocks per matched key
@@ -800,7 +800,7 @@ When generating YAML, ensure:
 17. `status` is optional; if present, must be `"retired"` (unknown values are errors). Retired files skip all validation.
 18. `condition.layer_exists` and `condition.layer_not_exists` entries must be non-empty strings
 19. Non-strict mode (default): migration files referencing non-existent operational layers (`source_layer`, `layer`) are auto-skipped. Strict mode (`--strict`) makes these hard errors.
-20. `merge_duplicates` is optional on resource move entries; only valid when `keys` is present. Not valid on module moves, `all_resources` overrides, or same-layer moves. Both resources involved in a destination collision must have `merge_duplicates: true`.
+20. `merge_duplicates` is optional on resource move entries; only valid when `keys` is present. Not valid on module moves or `all_resources` overrides. Both resources involved in a destination collision must have `merge_duplicates: true`.
 21. `source_prefix` and `destination_prefix` are only valid on `move` operations; `rename`, `remove`, and `import` reject them
 22. `address_prefix` cannot be used together with `source_prefix` or `destination_prefix` on the same operation
 23. `source_prefix` / `destination_prefix` cannot be combined with `all_resources: true`

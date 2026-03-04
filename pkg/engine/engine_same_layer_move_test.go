@@ -225,37 +225,62 @@ operations:
 	}
 }
 
-func TestEngine_ProcessFiles_SameLayerMove_MergeDuplicatesError(t *testing.T) {
+func TestEngine_ProcessFiles_SameLayerMove_MergeDuplicates(t *testing.T) {
 	_, layers := testutil.SetupLayers(t, "layer")
 	layerDir := layers["layer"]
 
+	// Two source resources with keyed moves that produce the same destination address.
+	// merge_duplicates: true should deduplicate the moved blocks.
 	yaml := `
-description: "Same-layer merge duplicates should fail"
+description: "Same-layer merge duplicates"
 operations:
   - type: move
     source_layer: "` + layerDir + `"
     destination_layer: "` + layerDir + `"
     resources:
-      - from: "aws_resource.items"
+      - from: "aws_resource.policy_active"
+        to: "aws_resource.policy"
         merge_duplicates: true
         keys:
-          old_key: new_key
+          key_a: shared_key
+          key_b: unique_active
+      - from: "aws_resource.policy_eligible"
+        to: "aws_resource.policy"
+        merge_duplicates: true
+        keys:
+          key_x: shared_key
+          key_y: unique_eligible
 `
 	dir := t.TempDir()
-	migrationFile := testutil.WriteMigration(t, dir, "001_move.yaml", yaml)
+	migrationFile := testutil.WriteMigration(t, dir, "001_merge.yaml", yaml)
 
 	mock := testutil.NewMockStateReader(map[string]*tfjson.State{
 		layerDir: testutil.BuildState(
-			testutil.NewResource(`aws_resource.items["old_key"]`, "aws_resource", "items", "old_key",
-				map[string]interface{}{"id": "id-old"}),
+			// policy_active instances
+			testutil.NewResource(`aws_resource.policy_active["key_a"]`, "aws_resource", "policy_active", "key_a",
+				map[string]interface{}{"id": "id-active-a"}),
+			testutil.NewResource(`aws_resource.policy_active["key_b"]`, "aws_resource", "policy_active", "key_b",
+				map[string]interface{}{"id": "id-active-b"}),
+			// policy_eligible instances
+			testutil.NewResource(`aws_resource.policy_eligible["key_x"]`, "aws_resource", "policy_eligible", "key_x",
+				map[string]interface{}{"id": "id-eligible-x"}),
+			testutil.NewResource(`aws_resource.policy_eligible["key_y"]`, "aws_resource", "policy_eligible", "key_y",
+				map[string]interface{}{"id": "id-eligible-y"}),
 		),
 	})
-	err := runEngineExpectError(t, Config{StateReader: mock}, []string{migrationFile})
-	// The error is wrapped by resilient processing as "all migration files were skipped".
-	// The detailed merge_duplicates error is printed to stderr by ProcessFiles.
-	if !strings.Contains(err.Error(), "all migration files were skipped") {
-		t.Errorf("expected all-files-skipped error wrapping merge_duplicates rejection, got: %v", err)
-	}
+
+	result := runEngine(t, Config{StateReader: mock}, []string{migrationFile})
+
+	testutil.RequireOutputCount(t, result.OutputFiles, 1)
+
+	// Should have 3 moved blocks (not 4): shared_key is deduplicated
+	content := readLayerFile(t, result.OutputFiles, layerDir)
+	testutil.AssertBlockCount(t, content, "moved {", 3)
+	testutil.AssertBlockCount(t, content, "removed {", 0)
+	testutil.AssertBlockCount(t, content, "import {", 0)
+	testutil.AssertContains(t, content, `aws_resource.policy["shared_key"]`)
+	testutil.AssertContains(t, content, `aws_resource.policy["unique_active"]`)
+	testutil.AssertContains(t, content, `aws_resource.policy["unique_eligible"]`)
 }
 
 func TestEngine_ProcessFiles_SourceDestinationPrefix(t *testing.T) {
