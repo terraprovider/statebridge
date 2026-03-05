@@ -106,13 +106,36 @@ All operation types support an optional `address_prefix` field that is prepended
     # Resolved address: module.identity_governance.azuread_access_package.all
 ```
 
+### Move-Only Fields: `source_prefix` / `destination_prefix`
+
+Move operations additionally support `source_prefix` and `destination_prefix` for independent control over the address prefix applied to source and destination sides:
+
+```yaml
+- type: move
+  source_layer: "./layers/old"
+  destination_layer: "./layers/new"
+  source_prefix: "module.old_root"
+  destination_prefix: "module.new_root"
+  resources:
+    - from: "aws_instance.web"
+    # Source address:      module.old_root.aws_instance.web
+    # Destination address: module.new_root.aws_instance.web
+```
+
+Rules:
+- Cannot be combined with `address_prefix` — use one or the other
+- If only `source_prefix` is set, destination addresses have no prefix (and vice versa)
+- `address_prefix` remains a shorthand that applies the same prefix to both sides
+- Only valid on `move` operations; `rename`, `remove`, and `import` reject them
+- Cannot be combined with `all_resources: true`
+
 ### Operation: `move`
 
-Moves resources between two layers. Generates `removed` in source + `import` in destination.
+Moves resources between two layers, or renames them within the same layer. When `source_layer` and `destination_layer` differ, generates `removed` in source + `import` in destination. When they are the same (same-layer move), generates `moved` blocks by default (controllable via `use_moved_blocks`).
 
 Required fields: `source_layer`, `destination_layer`, and either `resources` (non-empty list) or `all_resources: true`
 Each resource requires: `from`
-Optional fields: `description`, `address_prefix`, `all_resources`, per-resource `to`, `keys`, `import_id`, `merge_duplicates`
+Optional fields: `description`, `address_prefix`, `source_prefix`, `destination_prefix`, `all_resources`, `use_moved_blocks`, per-resource `to`, `keys`, `import_id`, `merge_duplicates`, `use_moved_blocks`
 
 **Simple move (single or non-for_each resource):**
 
@@ -178,7 +201,7 @@ resources:
       key_y: unique_eligible
 ```
 
-When `merge_duplicates: true`, the first import block for a destination address wins and subsequent duplicates with matching import IDs are silently skipped. If import IDs differ, an error is raised. Only valid when `keys` is present. Not valid on module moves or `all_resources` overrides. Both resources involved in the collision must have this flag set.
+When `merge_duplicates: true`, the first block for a destination address wins and subsequent duplicates are silently skipped. For cross-layer moves, import IDs must match (error if they differ). For same-layer moves, duplicates targeting the same destination are always compatible. Only valid when `keys` is present. Not valid on module moves or `all_resources` overrides. Both resources involved in the collision must have this flag set.
 
 **`to`** — Override when the destination base address differs from source:
 
@@ -240,6 +263,56 @@ Override constraints: `to` or `import_id` (or both) is required, `keys` is not a
 ```
 
 Omitted resources get `removed` blocks in the source layer (with `destroy = false` by default) but no `import` blocks in the destination layer. Set `destroy: true` per entry to also destroy the resource. `omit` is only valid with `all_resources: true`, and omit addresses cannot overlap with `overrides` addresses.
+
+**Same-layer moves** — When `source_layer` and `destination_layer` are the same, all move sub-types generate `moved` blocks by default instead of `removed` + `import`:
+
+```yaml
+- type: move
+  source_layer: "./layers/app"
+  destination_layer: "./layers/app"
+  source_prefix: "module.v1"
+  destination_prefix: "module.v2"
+  resources:
+    - from: "aws_instance.web"
+    # Generates: moved { from = module.v1.aws_instance.web; to = module.v2.aws_instance.web }
+```
+
+Same-layer behavior:
+- Identity moves (where `from` and `to` resolve to the same address) are silently skipped
+- `merge_duplicates` is supported — the first `moved` block for a destination wins, subsequent duplicates are skipped
+- Module-level same-layer moves generate a single `moved` block for the module
+- `all_resources: true` generates a `moved` block per resource instance, skipping identities
+- Keyed moves generate `moved` blocks per matched key
+
+**`use_moved_blocks`** — Override same-layer block generation behavior:
+
+By default (`true`), same-layer moves generate `moved` blocks. Set to `false` to force `removed` + `import` block generation even when source and destination layers are the same. Can be set at operation level or per-resource (per-resource overrides operation-level).
+
+```yaml
+- type: move
+  source_layer: "./layers/app"
+  destination_layer: "./layers/app"
+  use_moved_blocks: false                    # force removed + import for all resources
+  resources:
+    - from: "aws_instance.old"
+      to: "aws_instance.new"
+```
+
+Per-resource override:
+
+```yaml
+- type: move
+  source_layer: "./layers/app"
+  destination_layer: "./layers/app"
+  resources:
+    - from: "aws_instance.old"
+      to: "aws_instance.new"
+      use_moved_blocks: false                # this resource gets removed + import
+    - from: "aws_instance.other"
+      to: "aws_instance.renamed"            # this resource gets moved block (default)
+```
+
+Constraints: `use_moved_blocks` is only valid on `move` operations. `use_moved_blocks: false` is not supported on module-level moves.
 
 ### Operation: `rename`
 
@@ -534,6 +607,49 @@ Use a keyed move with exact key mappings:
         old_key_2: new_key_2
 ```
 
+When source and destination layers are the same, generates `moved` blocks by default. Set `use_moved_blocks: false` to force `removed` + `import` instead. When different, always generates `removed` + `import`.
+
+### "Move resources between module paths" / "Change module prefix"
+
+Use `source_prefix` and `destination_prefix` for independent prefix control:
+
+```yaml
+- type: move
+  source_layer: "<source layer>"
+  destination_layer: "<destination layer>"
+  source_prefix: "<old module path>"
+  destination_prefix: "<new module path>"
+  resources:
+    - from: "<resource address>"
+```
+
+Works with both cross-layer and same-layer moves. For same-layer moves, generates `moved` blocks by default (override with `use_moved_blocks: false`).
+
+### "Rename resources within a layer using move" / "Same-layer move"
+
+When `source_layer` equals `destination_layer`, the move operation generates `moved` blocks by default:
+
+```yaml
+- type: move
+  source_layer: "<layer path>"
+  destination_layer: "<layer path>"
+  resources:
+    - from: "<old address>"
+      to: "<new address>"
+```
+
+This is equivalent to a `rename` but supports all move features (keyed moves, prefix remapping, module moves, `all_resources`). Set `use_moved_blocks: false` to force `removed` + `import` generation instead:
+
+```yaml
+- type: move
+  source_layer: "<layer path>"
+  destination_layer: "<layer path>"
+  use_moved_blocks: false
+  resources:
+    - from: "<old address>"
+      to: "<new address>"
+```
+
 ### "Merge multiple source resources into one destination" / "Deduplicate import blocks"
 
 When two source resources produce the same destination address via keyed moves, use `merge_duplicates: true`:
@@ -725,6 +841,12 @@ When generating YAML, ensure:
 18. `condition.layer_exists` and `condition.layer_not_exists` entries must be non-empty strings
 19. Non-strict mode (default): migration files referencing non-existent operational layers (`source_layer`, `layer`) are auto-skipped. Strict mode (`--strict`) makes these hard errors.
 20. `merge_duplicates` is optional on resource move entries; only valid when `keys` is present. Not valid on module moves or `all_resources` overrides. Both resources involved in a destination collision must have `merge_duplicates: true`.
+21. `source_prefix` and `destination_prefix` are only valid on `move` operations; `rename`, `remove`, and `import` reject them
+22. `address_prefix` cannot be used together with `source_prefix` or `destination_prefix` on the same operation
+23. `source_prefix` / `destination_prefix` cannot be combined with `all_resources: true`
+24. Same-layer moves (`source_layer == destination_layer`) generate `moved` blocks by default instead of `removed` + `import`
+25. `use_moved_blocks` is optional on `move` operations (both operation-level and per-resource); not valid on `rename`, `remove`, or `import`
+26. `use_moved_blocks: false` is not supported on module-level moves (module addresses like `module.foo`)
 
 ## File Naming Convention
 
@@ -1052,4 +1174,5 @@ Key source files for understanding the codebase:
 - `cmd/plan.go` — CLI entry point for targeted plan command
 - `e2e/e2e_test.go` — E2E test functions (build tag: e2e)
 - `e2e/helpers_test.go` — E2E test helpers (terraform-exec wrappers, engine runner)
+- `e2e/fast_e2e_same_layer_test.go` — Fast E2E tests for same-layer moves and source/destination prefix (build tag: e2e_fast)
 - `e2e/testproject/` — Static Terraform project with 3 layers for e2e tests

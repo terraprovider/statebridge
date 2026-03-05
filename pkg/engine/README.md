@@ -28,6 +28,7 @@ Tests are split by topic for readability. All files are in `package engine` and 
 | `engine_import_test.go` | Import operations: basic, operation-level provider |
 | `engine_conditions_test.go` | Condition evaluation: resources_exist, resources_not_exist, state errors, partial/full skip, layer_exists, layer_not_exists |
 | `engine_lifecycle_test.go` | Lifecycle & misc: validation errors, dry-run, status:retired, layer auto-skip, auto-skip (rename/remove/import/mixed), strict mode |
+| `engine_same_layer_move_test.go` | Same-layer moves: simple, identity skip, for_each, keyed, prefix patterns, module rename, module identity no-op, merge_duplicates dedup, source/destination prefix, same-layer with prefixes |
 | `consolidate_test.go` | Unit tests for module consolidation logic |
 | `keymatcher_test.go` | Unit tests for key pattern matching |
 | `resolver_test.go` | Unit tests for state resolution |

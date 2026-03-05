@@ -120,8 +120,22 @@ type Operation struct {
 	// AddressPrefix is an optional prefix prepended (with a dot separator) to
 	// all resource addresses in this operation. Useful for factoring out common
 	// module paths (e.g., "module.identity_governance").
-	// Cannot be combined with all_resources.
+	// For move operations, acts as shorthand for setting both SourcePrefix and
+	// DestinationPrefix to the same value. Cannot be combined with source_prefix
+	// or destination_prefix. Cannot be combined with all_resources.
 	AddressPrefix string `yaml:"address_prefix,omitempty"`
+
+	// SourcePrefix is an optional prefix prepended (with a dot separator) to
+	// source resource addresses in move operations. Use when the source and
+	// destination module paths differ. Cannot be combined with address_prefix.
+	// Only valid for move operations.
+	SourcePrefix string `yaml:"source_prefix,omitempty"`
+
+	// DestinationPrefix is an optional prefix prepended (with a dot separator)
+	// to destination resource addresses in move operations. Use when the source
+	// and destination module paths differ. Cannot be combined with address_prefix.
+	// Only valid for move operations.
+	DestinationPrefix string `yaml:"destination_prefix,omitempty"`
 
 	// SourceLayer is the filesystem path to the source Terraform root module (move operations).
 	SourceLayer string `yaml:"source_layer,omitempty"`
@@ -171,6 +185,13 @@ type Operation struct {
 	// Provider is an optional default provider alias for import operations.
 	// Applied to all import entries that don't specify their own provider.
 	Provider string `yaml:"provider,omitempty"`
+
+	// UseMovedBlocks controls whether same-layer moves generate moved blocks
+	// (true, default) or removed+import blocks (false). When nil, defaults to
+	// true for same-layer moves. Per-resource UseMovedBlocks on ResourceMove
+	// overrides this operation-level setting. Only meaningful for move operations
+	// where source_layer == destination_layer.
+	UseMovedBlocks *bool `yaml:"use_moved_blocks,omitempty"`
 }
 
 // ResourceMove describes a resource to move between layers, optionally with
@@ -209,6 +230,11 @@ type ResourceMove struct {
 	// matching import IDs are silently skipped. An error is raised if import
 	// IDs differ. Only valid when keys is present.
 	MergeDuplicates bool `yaml:"merge_duplicates,omitempty"`
+
+	// UseMovedBlocks overrides the operation-level UseMovedBlocks for this
+	// specific resource. When nil, inherits the operation-level setting.
+	// Only meaningful for same-layer moves.
+	UseMovedBlocks *bool `yaml:"use_moved_blocks,omitempty"`
 }
 
 // RenameEntry describes a single address rename within a layer.
@@ -322,6 +348,34 @@ func FullAddress(prefix, addr string) string {
 		return addr
 	}
 	return prefix + "." + addr
+}
+
+// UseMovedBlocksValue returns the effective value of UseMovedBlocks for this
+// resource, resolving the per-resource → operation-level → default chain.
+// The default is true (same-layer moves generate moved blocks).
+func (r *ResourceMove) UseMovedBlocksValue(opDefault *bool) bool {
+	if r.UseMovedBlocks != nil {
+		return *r.UseMovedBlocks
+	}
+	return boolPtrDefault(opDefault, true)
+}
+
+// EffectiveSourcePrefix returns the prefix to use for source addresses in
+// move operations. Returns SourcePrefix if set, otherwise falls back to AddressPrefix.
+func (o *Operation) EffectiveSourcePrefix() string {
+	if o.SourcePrefix != "" {
+		return o.SourcePrefix
+	}
+	return o.AddressPrefix
+}
+
+// EffectiveDestinationPrefix returns the prefix to use for destination addresses
+// in move operations. Returns DestinationPrefix if set, otherwise falls back to AddressPrefix.
+func (o *Operation) EffectiveDestinationPrefix() string {
+	if o.DestinationPrefix != "" {
+		return o.DestinationPrefix
+	}
+	return o.AddressPrefix
 }
 
 // IsModuleAddress returns true if the address is a pure module path with no

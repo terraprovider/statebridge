@@ -77,6 +77,22 @@ import {
 
 Generates `removed` blocks in the source layer and `import` blocks in the destination.
 
+### Move or rename within the same layer
+
+When `source_layer` and `destination_layer` are the same, generates `moved` blocks by default (set `use_moved_blocks: false` to force `removed` + `import` instead):
+
+```yaml
+- type: move
+  source_layer: "./layers/app"
+  destination_layer: "./layers/app"
+  source_prefix: "module.v1"
+  destination_prefix: "module.v2"
+  resources:
+    - from: "aws_instance.web"
+```
+
+Use `source_prefix` / `destination_prefix` for independent control over each side's address prefix (move operations only). `address_prefix` remains available as a shorthand that applies to both sides.
+
 ### Rename resources within a layer
 
 ```yaml

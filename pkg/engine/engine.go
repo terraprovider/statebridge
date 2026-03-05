@@ -214,28 +214,40 @@ func (e *Engine) processOperation(ctx context.Context, op *migration.Operation, 
 }
 
 // processMove handles move operations, iterating over each resource entry
-// and generating removed blocks in the source layer and import blocks in
-// the destination layer. Supports keyed moves with key matching and cross-
-// operation completeness tracking.
+// and generating blocks. For cross-layer moves, generates removed blocks in the
+// source layer and import blocks in the destination layer. For same-layer moves
+// (source_layer == destination_layer), generates moved blocks instead.
+// Supports keyed moves with key matching and cross-operation completeness tracking.
 func (e *Engine) processMove(ctx context.Context, op *migration.Operation, opIndex int, tracker *wildcardTracker) ([]generator.Block, error) {
 	srcLayer := op.SourceLayer
 	dstLayer := op.DestinationLayer
+	sameLayer := srcLayer == dstLayer
 
 	if op.AllResources {
-		return e.processMoveAllResources(ctx, srcLayer, dstLayer, op.Overrides, op.Omit, op.Description)
+		// For all_resources, use operation-level UseMovedBlocks (no per-resource override)
+		useMovedBlocks := boolPtrDefault(op.UseMovedBlocks, true)
+		effectiveSameLayer := sameLayer && useMovedBlocks
+		return e.processMoveAllResources(ctx, srcLayer, dstLayer, effectiveSameLayer, op.Overrides, op.Omit, op.Description)
 	}
+
+	srcPrefix := op.EffectiveSourcePrefix()
+	dstPrefix := op.EffectiveDestinationPrefix()
 
 	var blocks []generator.Block
 
 	for i, res := range op.Resources {
-		srcAddr := migration.FullAddress(op.AddressPrefix, res.From)
+		srcAddr := migration.FullAddress(srcPrefix, res.From)
 		dstBaseAddr := res.To
 		if dstBaseAddr == "" {
 			dstBaseAddr = res.From
 		}
-		dstAddr := migration.FullAddress(op.AddressPrefix, dstBaseAddr)
+		dstAddr := migration.FullAddress(dstPrefix, dstBaseAddr)
 
-		resBlocks, err := e.processMoveResource(ctx, srcLayer, dstLayer, srcAddr, dstAddr, &res, opIndex, i, tracker, op.Description)
+		// Resolve per-resource use_moved_blocks (resource → operation → default true)
+		useMovedBlocks := res.UseMovedBlocksValue(op.UseMovedBlocks)
+		effectiveSameLayer := sameLayer && useMovedBlocks
+
+		resBlocks, err := e.processMoveResource(ctx, srcLayer, dstLayer, effectiveSameLayer, srcAddr, dstAddr, &res, opIndex, i, tracker, op.Description)
 		if err != nil {
 			return nil, fmt.Errorf("resource %q: %w", res.From, err)
 		}
@@ -249,9 +261,12 @@ func (e *Engine) processMove(ctx context.Context, op *migration.Operation, opInd
 // If the address is a module path, it discovers all resources under the module
 // and generates blocks for each. If the resource has a keys map, it performs
 // keyed expansion with pattern matching. Otherwise, it moves the resource as-is.
+// When sameLayer is true, generates moved blocks instead of removed+import.
 func (e *Engine) processMoveResource(
 	ctx context.Context,
-	srcLayer, dstLayer, srcAddr, dstAddr string,
+	srcLayer, dstLayer string,
+	sameLayer bool,
+	srcAddr, dstAddr string,
 	res *migration.ResourceMove,
 	opIndex, resIndex int,
 	tracker *wildcardTracker,
@@ -259,29 +274,50 @@ func (e *Engine) processMoveResource(
 ) ([]generator.Block, error) {
 	// Module-level move: discover all resources under the module prefix
 	if migration.IsModuleAddress(srcAddr) {
-		return e.processMoveModule(ctx, srcLayer, dstLayer, srcAddr, dstAddr, description)
+		return e.processMoveModule(ctx, srcLayer, dstLayer, sameLayer, srcAddr, dstAddr, description)
 	}
 
 	if len(res.Keys) > 0 {
-		return e.processMoveKeyed(ctx, srcLayer, dstLayer, srcAddr, dstAddr, res, opIndex, tracker, description)
+		return e.processMoveKeyed(ctx, srcLayer, dstLayer, sameLayer, srcAddr, dstAddr, res, opIndex, tracker, description)
 	}
 
-	return e.processMoveSimple(ctx, srcLayer, dstLayer, srcAddr, dstAddr, res, tracker, description)
+	return e.processMoveSimple(ctx, srcLayer, dstLayer, sameLayer, srcAddr, dstAddr, res, tracker, description)
 }
 
 // processMoveModule handles a module-level move by discovering all managed
-// resources under the source module prefix and generating removed + import
-// blocks for each. Resources are grouped by base address so that for_each
-// resources get a single removed block per base and individual import blocks
-// per instance.
+// resources under the source module prefix. For cross-layer moves, generates
+// removed + import blocks. For same-layer moves, generates moved blocks.
+// When same-layer and srcAddr == dstAddr (no rename), this is a no-op.
 //
 // The existing consolidateModuleRemovals post-processing step will collapse
-// the individual removed blocks into a single module-level removed block.
+// the individual removed blocks into a single module-level removed block
+// (cross-layer only).
 func (e *Engine) processMoveModule(
 	ctx context.Context,
-	srcLayer, dstLayer, srcAddr, dstAddr string,
+	srcLayer, dstLayer string,
+	sameLayer bool,
+	srcAddr, dstAddr string,
 	description string,
 ) ([]generator.Block, error) {
+	// Same-layer module move with no rename is a no-op
+	if sameLayer && srcAddr == dstAddr {
+		return nil, nil
+	}
+
+	// Same-layer module rename: emit a single module-level moved block
+	// OpenTofu/Terraform supports moved { from = module.foo; to = module.bar }
+	if sameLayer {
+		return []generator.Block{
+			&generator.MovedBlock{
+				From:        srcAddr,
+				To:          dstAddr,
+				Layer:       srcLayer,
+				Description: description,
+				Source:      e.currentSourceFile,
+			},
+		}, nil
+	}
+
 	resources, err := e.resolver.LookupModuleResources(ctx, srcLayer, srcAddr)
 	if err != nil {
 		return nil, err
@@ -359,11 +395,14 @@ func stripKeyFromAddress(address string) string {
 }
 
 // processMoveAllResources handles an all_resources move by discovering all
-// managed resources in the source layer and generating removed + import blocks
-// for each. Optional overrides allow renaming specific resources during the move.
+// managed resources in the source layer and generating blocks for each.
+// For cross-layer moves: removed + import blocks.
+// For same-layer moves: moved blocks (skipping identity moves).
+// Optional overrides allow renaming specific resources during the move.
 func (e *Engine) processMoveAllResources(
 	ctx context.Context,
 	srcLayer, dstLayer string,
+	sameLayer bool,
 	overrides []migration.ResourceMove,
 	omitEntries []migration.OmitEntry,
 	description string,
@@ -418,6 +457,10 @@ func (e *Engine) processMoveAllResources(
 
 		// Check if this resource group is omitted from import
 		if cfg, isOmitted := omitMap[g.baseAddr]; isOmitted {
+			if sameLayer {
+				// For same-layer moves, omitted resources are just skipped (no removed block needed)
+				continue
+			}
 			blocks = append(blocks, &generator.RemovedBlock{
 				From:        g.baseAddr,
 				Destroy:     cfg.destroy,
@@ -435,38 +478,59 @@ func (e *Engine) processMoveAllResources(
 			destBase = overrideCfg.destinationAddress
 		}
 
-		// Emit removed block
-		blocks = append(blocks, &generator.RemovedBlock{
-			From:        g.baseAddr,
-			Destroy:     false,
-			Layer:       srcLayer,
-			Description: description,
-			Source:      e.currentSourceFile,
-		})
-
-		// Emit import blocks for each instance
-		for _, r := range g.resources {
-			importIDExpr := ""
-			if hasOverride {
-				importIDExpr = overrideCfg.importID
+		if sameLayer {
+			// Same-layer: emit moved blocks per instance, skip identity moves
+			for _, r := range g.resources {
+				srcFullAddr := r.Address
+				destAddr := destBase
+				if r.Key != "" {
+					destAddr = fmt.Sprintf("%s[\"%s\"]", destBase, r.Key)
+				}
+				// Skip identity moves
+				if srcFullAddr == destAddr {
+					continue
+				}
+				blocks = append(blocks, &generator.MovedBlock{
+					From:        srcFullAddr,
+					To:          destAddr,
+					Layer:       srcLayer,
+					Description: description,
+					Source:      e.currentSourceFile,
+				})
 			}
-			importID, err := e.resolver.ResolveImportID(r, importIDExpr)
-			if err != nil {
-				return nil, fmt.Errorf("resolving import ID for %q: %w", r.Address, err)
-			}
-
-			destAddr := destBase
-			if r.Key != "" {
-				destAddr = fmt.Sprintf("%s[\"%s\"]", destBase, r.Key)
-			}
-
-			blocks = append(blocks, &generator.ImportBlock{
-				To:          destAddr,
-				ID:          importID,
-				Layer:       dstLayer,
+		} else {
+			// Cross-layer: emit removed + import blocks
+			blocks = append(blocks, &generator.RemovedBlock{
+				From:        g.baseAddr,
+				Destroy:     false,
+				Layer:       srcLayer,
 				Description: description,
 				Source:      e.currentSourceFile,
 			})
+
+			for _, r := range g.resources {
+				importIDExpr := ""
+				if hasOverride {
+					importIDExpr = overrideCfg.importID
+				}
+				importID, err := e.resolver.ResolveImportID(r, importIDExpr)
+				if err != nil {
+					return nil, fmt.Errorf("resolving import ID for %q: %w", r.Address, err)
+				}
+
+				destAddr := destBase
+				if r.Key != "" {
+					destAddr = fmt.Sprintf("%s[\"%s\"]", destBase, r.Key)
+				}
+
+				blocks = append(blocks, &generator.ImportBlock{
+					To:          destAddr,
+					ID:          importID,
+					Layer:       dstLayer,
+					Description: description,
+					Source:      e.currentSourceFile,
+				})
+			}
 		}
 	}
 
@@ -475,11 +539,13 @@ func (e *Engine) processMoveAllResources(
 
 // processMoveSimple handles a resource move without a keys map.
 // It looks up the resource in state and generates appropriate blocks:
-//   - For for_each resources: expands all instances, imports each, removes the base resource
-//   - For single resources: removes and imports the single resource
+//   - Cross-layer: removed blocks in source, import blocks in destination
+//   - Same-layer: moved blocks (skipping identity moves where from == to)
 func (e *Engine) processMoveSimple(
 	ctx context.Context,
-	srcLayer, dstLayer, srcAddr, dstAddr string,
+	srcLayer, dstLayer string,
+	sameLayer bool,
+	srcAddr, dstAddr string,
 	res *migration.ResourceMove,
 	tracker *wildcardTracker,
 	description string,
@@ -495,8 +561,44 @@ func (e *Engine) processMoveSimple(
 	// Check if this is a for_each resource (multiple instances or instances with keys)
 	isForEach := len(resources) > 1 || (len(resources) == 1 && resources[0].Key != "")
 
-	if isForEach {
-		// For_each resource without keys map: move all instances with same keys
+	if sameLayer {
+		// Same-layer: emit moved blocks, skip identity moves
+		if isForEach {
+			srcKey := wildcardSourceKey{layer: srcLayer, baseAddr: srcAddr}
+			allKeys := make([]string, len(resources))
+			for i, r := range resources {
+				allKeys[i] = r.Key
+			}
+			tracker.setAllKeys(srcKey, allKeys)
+
+			for _, r := range resources {
+				srcFullAddr := fmt.Sprintf("%s[\"%s\"]", srcAddr, r.Key)
+				destFullAddr := fmt.Sprintf("%s[\"%s\"]", dstAddr, r.Key)
+				if srcFullAddr == destFullAddr {
+					continue
+				}
+				blocks = append(blocks, &generator.MovedBlock{
+					From:        srcFullAddr,
+					To:          destFullAddr,
+					Layer:       srcLayer,
+					Description: description,
+					Source:      e.currentSourceFile,
+				})
+			}
+		} else {
+			// Single resource
+			if srcAddr != dstAddr {
+				blocks = append(blocks, &generator.MovedBlock{
+					From:        srcAddr,
+					To:          dstAddr,
+					Layer:       srcLayer,
+					Description: description,
+					Source:      e.currentSourceFile,
+				})
+			}
+		}
+	} else if isForEach {
+		// Cross-layer for_each resource without keys map: move all instances with same keys
 		srcKey := wildcardSourceKey{layer: srcLayer, baseAddr: srcAddr}
 
 		allKeys := make([]string, len(resources))
@@ -530,7 +632,7 @@ func (e *Engine) processMoveSimple(
 			})
 		}
 	} else {
-		// Single resource (non-for_each)
+		// Cross-layer single resource (non-for_each)
 		r := resources[0]
 		importID, err := e.resolver.ResolveImportID(r, res.ImportID)
 		if err != nil {
@@ -559,12 +661,16 @@ func (e *Engine) processMoveSimple(
 }
 
 // processMoveKeyed handles a resource move with a keys map, performing pattern
-// matching against state keys and generating import blocks for each match.
+// matching against state keys and generating blocks for each match.
+// For cross-layer moves: import blocks in destination, removed blocks in source.
+// For same-layer moves: moved blocks (skipping identity moves).
 // Uses the wildcard tracker for cross-operation coordination, overlap detection,
 // and completeness checking.
 func (e *Engine) processMoveKeyed(
 	ctx context.Context,
-	srcLayer, dstLayer, srcAddr, dstAddr string,
+	srcLayer, dstLayer string,
+	sameLayer bool,
+	srcAddr, dstAddr string,
 	res *migration.ResourceMove,
 	opIndex int,
 	tracker *wildcardTracker,
@@ -594,7 +700,7 @@ func (e *Engine) processMoveKeyed(
 		return nil, fmt.Errorf("building key matcher: %w", err)
 	}
 
-	// Match state keys and generate import blocks
+	// Match state keys and generate blocks
 	var blocks []generator.Block
 	var claimedKeys []string
 
@@ -612,31 +718,57 @@ func (e *Engine) processMoveKeyed(
 			return nil, fmt.Errorf("evaluating destination key template for key %q: %w", r.Key, err)
 		}
 
-		// Construct full destination address
+		// Construct full source and destination addresses
+		srcFullAddr := fmt.Sprintf("%s[\"%s\"]", srcAddr, r.Key)
 		destFullAddr := fmt.Sprintf("%s[\"%s\"]", dstAddr, destKey)
 
-		// Resolve import ID
-		importID, err := e.resolver.ResolveImportID(r, res.ImportID)
-		if err != nil {
-			return nil, fmt.Errorf("resolving import ID for key %q: %w", r.Key, err)
-		}
+		if sameLayer {
+			// Same-layer: check for destination-side duplicates (merge_duplicates support)
+			if res.MergeDuplicates {
+				// Use destFullAddr as the "import ID" — for same-layer moves there is no
+				// physical import ID, so duplicates are always compatible.
+				skip, err := tracker.claimDestination(srcLayer, destFullAddr, destFullAddr, opIndex, srcAddr, res.MergeDuplicates)
+				if err != nil {
+					return nil, fmt.Errorf("key %q: %w", r.Key, err)
+				}
+				if skip {
+					continue
+				}
+			}
+			// Emit moved block, skip identity moves
+			if srcFullAddr != destFullAddr {
+				blocks = append(blocks, &generator.MovedBlock{
+					From:        srcFullAddr,
+					To:          destFullAddr,
+					Layer:       srcLayer,
+					Description: description,
+					Source:      e.currentSourceFile,
+				})
+			}
+		} else {
+			// Cross-layer: resolve import ID and emit import block
+			importID, err := e.resolver.ResolveImportID(r, res.ImportID)
+			if err != nil {
+				return nil, fmt.Errorf("resolving import ID for key %q: %w", r.Key, err)
+			}
 
-		// Check for destination-side duplicates (merge_duplicates support)
-		skip, err := tracker.claimDestination(dstLayer, destFullAddr, importID, opIndex, srcAddr, res.MergeDuplicates)
-		if err != nil {
-			return nil, fmt.Errorf("key %q: %w", r.Key, err)
-		}
-		if skip {
-			continue
-		}
+			// Check for destination-side duplicates (merge_duplicates support)
+			skip, err := tracker.claimDestination(dstLayer, destFullAddr, importID, opIndex, srcAddr, res.MergeDuplicates)
+			if err != nil {
+				return nil, fmt.Errorf("key %q: %w", r.Key, err)
+			}
+			if skip {
+				continue
+			}
 
-		blocks = append(blocks, &generator.ImportBlock{
-			To:          destFullAddr,
-			ID:          importID,
-			Layer:       dstLayer,
-			Description: description,
-			Source:      e.currentSourceFile,
-		})
+			blocks = append(blocks, &generator.ImportBlock{
+				To:          destFullAddr,
+				ID:          importID,
+				Layer:       dstLayer,
+				Description: description,
+				Source:      e.currentSourceFile,
+			})
+		}
 	}
 
 	// Claim matched keys in tracker (detects overlaps)
@@ -644,8 +776,8 @@ func (e *Engine) processMoveKeyed(
 		return nil, err
 	}
 
-	// Emit removed block (deduplicated across operations)
-	if tracker.shouldEmitRemoved(srcKey) {
+	// Emit removed block for cross-layer moves (deduplicated across operations)
+	if !sameLayer && tracker.shouldEmitRemoved(srcKey) {
 		// Prepend removed block before import blocks
 		removedBlock := &generator.RemovedBlock{
 			From:        srcAddr,
@@ -1036,4 +1168,12 @@ func checkLayerPaths(paths []string) string {
 		}
 	}
 	return ""
+}
+
+// boolPtrDefault returns the value of a *bool pointer, or defaultVal if nil.
+func boolPtrDefault(p *bool, defaultVal bool) bool {
+	if p != nil {
+		return *p
+	}
+	return defaultVal
 }

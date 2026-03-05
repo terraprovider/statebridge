@@ -85,6 +85,15 @@ func validateOperation(index int, op *Operation) []ValidationError {
 		})
 	}
 
+	// use_moved_blocks is only valid on move operations
+	if op.UseMovedBlocks != nil && op.Type != OpMove {
+		errs = append(errs, ValidationError{
+			OperationIndex: index,
+			Field:          "use_moved_blocks",
+			Message:        "use_moved_blocks is only valid for move operations",
+		})
+	}
+
 	switch op.Type {
 	case OpMove:
 		errs = append(errs, validateMove(index, op)...)
@@ -129,12 +138,24 @@ func validateMove(index int, op *Operation) []ValidationError {
 			Message:        "move operation requires a destination_layer",
 		})
 	}
+
+	// address_prefix cannot coexist with source_prefix or destination_prefix
+	if op.AddressPrefix != "" && (op.SourcePrefix != "" || op.DestinationPrefix != "") {
+		errs = append(errs, ValidationError{
+			OperationIndex: index,
+			Field:          "address_prefix",
+			Message:        "address_prefix cannot be combined with source_prefix or destination_prefix; use source_prefix/destination_prefix instead",
+		})
+	}
+
+	hasAnyPrefix := op.AddressPrefix != "" || op.SourcePrefix != "" || op.DestinationPrefix != ""
+
 	if op.AllResources {
-		if op.AddressPrefix != "" {
+		if hasAnyPrefix {
 			errs = append(errs, ValidationError{
 				OperationIndex: index,
 				Field:          "address_prefix",
-				Message:        "address_prefix cannot be used with all_resources",
+				Message:        "address_prefix/source_prefix/destination_prefix cannot be used with all_resources",
 			})
 		}
 		for i, res := range op.Overrides {
@@ -247,6 +268,13 @@ func validateResourceMove(opIndex, resIndex int, res *ResourceMove) []Validation
 				Message:        "merge_duplicates is not supported for module-level moves",
 			})
 		}
+		if res.UseMovedBlocks != nil && !*res.UseMovedBlocks {
+			errs = append(errs, ValidationError{
+				OperationIndex: opIndex,
+				Field:          fieldPrefix + ".use_moved_blocks",
+				Message:        "use_moved_blocks: false is not supported for module-level moves",
+			})
+		}
 		if res.To != "" && !IsModuleAddress(res.To) {
 			errs = append(errs, ValidationError{
 				OperationIndex: opIndex,
@@ -320,6 +348,22 @@ func validateAllResourcesOverride(opIndex, resIndex int, res *ResourceMove) []Va
 func validateRename(index int, op *Operation) []ValidationError {
 	var errs []ValidationError
 
+	// source_prefix and destination_prefix are only valid for move operations
+	if op.SourcePrefix != "" {
+		errs = append(errs, ValidationError{
+			OperationIndex: index,
+			Field:          "source_prefix",
+			Message:        "source_prefix is only valid for move operations",
+		})
+	}
+	if op.DestinationPrefix != "" {
+		errs = append(errs, ValidationError{
+			OperationIndex: index,
+			Field:          "destination_prefix",
+			Message:        "destination_prefix is only valid for move operations",
+		})
+	}
+
 	if op.Layer == "" {
 		errs = append(errs, ValidationError{
 			OperationIndex: index,
@@ -362,6 +406,22 @@ func validateRename(index int, op *Operation) []ValidationError {
 func validateRemove(index int, op *Operation) []ValidationError {
 	var errs []ValidationError
 
+	// source_prefix and destination_prefix are only valid for move operations
+	if op.SourcePrefix != "" {
+		errs = append(errs, ValidationError{
+			OperationIndex: index,
+			Field:          "source_prefix",
+			Message:        "source_prefix is only valid for move operations",
+		})
+	}
+	if op.DestinationPrefix != "" {
+		errs = append(errs, ValidationError{
+			OperationIndex: index,
+			Field:          "destination_prefix",
+			Message:        "destination_prefix is only valid for move operations",
+		})
+	}
+
 	if op.Layer == "" {
 		errs = append(errs, ValidationError{
 			OperationIndex: index,
@@ -395,6 +455,22 @@ func validateRemove(index int, op *Operation) []ValidationError {
 // validateImport checks that an import operation has all required fields.
 func validateImport(index int, op *Operation) []ValidationError {
 	var errs []ValidationError
+
+	// source_prefix and destination_prefix are only valid for move operations
+	if op.SourcePrefix != "" {
+		errs = append(errs, ValidationError{
+			OperationIndex: index,
+			Field:          "source_prefix",
+			Message:        "source_prefix is only valid for move operations",
+		})
+	}
+	if op.DestinationPrefix != "" {
+		errs = append(errs, ValidationError{
+			OperationIndex: index,
+			Field:          "destination_prefix",
+			Message:        "destination_prefix is only valid for move operations",
+		})
+	}
 
 	if op.Layer == "" {
 		errs = append(errs, ValidationError{

@@ -1438,3 +1438,245 @@ func TestValidate_MergeDuplicatesOnAllResourcesOverride(t *testing.T) {
 		t.Errorf("expected validation error for merge_duplicates on override, got %v", errs)
 	}
 }
+
+func TestValidate_ValidMoveWithSourceDestPrefix(t *testing.T) {
+	mf := &MigrationFile{
+		Description: "Valid move with source/destination prefix",
+		Operations: []Operation{
+			{
+				Type:              OpMove,
+				SourceLayer:       "./src",
+				DestinationLayer:  "./dst",
+				SourcePrefix:      "module.old",
+				DestinationPrefix: "module.new",
+				Resources: []ResourceMove{
+					{From: "aws_instance.web"},
+				},
+			},
+		},
+	}
+
+	errs := Validate(mf)
+	if len(errs) != 0 {
+		t.Errorf("expected no errors, got %v", errs)
+	}
+}
+
+func TestValidate_ValidMoveWithSourcePrefixOnly(t *testing.T) {
+	mf := &MigrationFile{
+		Description: "Valid move with only source prefix",
+		Operations: []Operation{
+			{
+				Type:             OpMove,
+				SourceLayer:      "./src",
+				DestinationLayer: "./dst",
+				SourcePrefix:     "module.old",
+				Resources: []ResourceMove{
+					{From: "aws_instance.web"},
+				},
+			},
+		},
+	}
+
+	errs := Validate(mf)
+	if len(errs) != 0 {
+		t.Errorf("expected no errors, got %v", errs)
+	}
+}
+
+func TestValidate_AddressPrefixConflictsWithSourcePrefix(t *testing.T) {
+	mf := &MigrationFile{
+		Description: "Conflicting address_prefix and source_prefix",
+		Operations: []Operation{
+			{
+				Type:             OpMove,
+				SourceLayer:      "./src",
+				DestinationLayer: "./dst",
+				AddressPrefix:    "module.shared",
+				SourcePrefix:     "module.old",
+				Resources: []ResourceMove{
+					{From: "aws_instance.web"},
+				},
+			},
+		},
+	}
+
+	errs := Validate(mf)
+	if !hasError(errs, "address_prefix") {
+		t.Errorf("expected validation error for conflicting address_prefix, got %v", errs)
+	}
+}
+
+func TestValidate_AddressPrefixConflictsWithDestPrefix(t *testing.T) {
+	mf := &MigrationFile{
+		Description: "Conflicting address_prefix and destination_prefix",
+		Operations: []Operation{
+			{
+				Type:              OpMove,
+				SourceLayer:       "./src",
+				DestinationLayer:  "./dst",
+				AddressPrefix:     "module.shared",
+				DestinationPrefix: "module.new",
+				Resources: []ResourceMove{
+					{From: "aws_instance.web"},
+				},
+			},
+		},
+	}
+
+	errs := Validate(mf)
+	if !hasError(errs, "address_prefix") {
+		t.Errorf("expected validation error for conflicting address_prefix, got %v", errs)
+	}
+}
+
+func TestValidate_AllResourcesWithSourceDestPrefix(t *testing.T) {
+	mf := &MigrationFile{
+		Description: "All resources with source/dest prefix (invalid)",
+		Operations: []Operation{
+			{
+				Type:              OpMove,
+				SourceLayer:       "./src",
+				DestinationLayer:  "./dst",
+				AllResources:      true,
+				SourcePrefix:      "module.old",
+				DestinationPrefix: "module.new",
+			},
+		},
+	}
+
+	errs := Validate(mf)
+	if !hasError(errs, "address_prefix") {
+		t.Errorf("expected validation error for prefix with all_resources, got %v", errs)
+	}
+}
+
+func TestValidate_SourcePrefixOnRenameInvalid(t *testing.T) {
+	mf := &MigrationFile{
+		Description: "Source prefix on rename (invalid)",
+		Operations: []Operation{
+			{
+				Type:         OpRename,
+				Layer:        "./layer",
+				SourcePrefix: "module.foo",
+				Renames: []RenameEntry{
+					{From: "aws_instance.old", To: "aws_instance.new"},
+				},
+			},
+		},
+	}
+
+	errs := Validate(mf)
+	if !hasError(errs, "source_prefix") {
+		t.Errorf("expected validation error for source_prefix on rename, got %v", errs)
+	}
+}
+
+func TestValidate_DestinationPrefixOnRemoveInvalid(t *testing.T) {
+	mf := &MigrationFile{
+		Description: "Destination prefix on remove (invalid)",
+		Operations: []Operation{
+			{
+				Type:              OpRemove,
+				Layer:             "./layer",
+				DestinationPrefix: "module.foo",
+				Entries: []RemoveEntry{
+					{Address: "aws_instance.web"},
+				},
+			},
+		},
+	}
+
+	errs := Validate(mf)
+	if !hasError(errs, "destination_prefix") {
+		t.Errorf("expected validation error for destination_prefix on remove, got %v", errs)
+	}
+}
+
+func TestValidate_SourcePrefixOnImportInvalid(t *testing.T) {
+	mf := &MigrationFile{
+		Description: "Source prefix on import (invalid)",
+		Operations: []Operation{
+			{
+				Type:         OpImport,
+				Layer:        "./layer",
+				SourcePrefix: "module.foo",
+				Imports: []ImportEntry{
+					{Address: "aws_instance.web", ID: "i-123"},
+				},
+			},
+		},
+	}
+
+	errs := Validate(mf)
+	if !hasError(errs, "source_prefix") {
+		t.Errorf("expected validation error for source_prefix on import, got %v", errs)
+	}
+}
+
+func TestValidate_UseMovedBlocksOnNonMoveInvalid(t *testing.T) {
+	trueVal := true
+	mf := &MigrationFile{
+		Description: "use_moved_blocks on rename (invalid)",
+		Operations: []Operation{
+			{
+				Type:           OpRename,
+				Layer:          "./layer",
+				UseMovedBlocks: &trueVal,
+				Renames: []RenameEntry{
+					{From: "aws_instance.old", To: "aws_instance.new"},
+				},
+			},
+		},
+	}
+
+	errs := Validate(mf)
+	if !hasError(errs, "use_moved_blocks") {
+		t.Errorf("expected validation error for use_moved_blocks on rename, got %v", errs)
+	}
+}
+
+func TestValidate_UseMovedBlocksFalseOnModuleMoveInvalid(t *testing.T) {
+	falseVal := false
+	mf := &MigrationFile{
+		Description: "use_moved_blocks false on module move (invalid)",
+		Operations: []Operation{
+			{
+				Type:             OpMove,
+				SourceLayer:      "./src",
+				DestinationLayer: "./src",
+				Resources: []ResourceMove{
+					{From: "module.foo", UseMovedBlocks: &falseVal},
+				},
+			},
+		},
+	}
+
+	errs := Validate(mf)
+	if !hasError(errs, "resources[0].use_moved_blocks") {
+		t.Errorf("expected validation error for use_moved_blocks false on module move, got %v", errs)
+	}
+}
+
+func TestValidate_UseMovedBlocksOnMoveValid(t *testing.T) {
+	falseVal := false
+	mf := &MigrationFile{
+		Description: "use_moved_blocks false on move (valid)",
+		Operations: []Operation{
+			{
+				Type:             OpMove,
+				SourceLayer:      "./src",
+				DestinationLayer: "./src",
+				UseMovedBlocks:   &falseVal,
+				Resources: []ResourceMove{
+					{From: "aws_instance.web"},
+				},
+			},
+		},
+	}
+
+	errs := Validate(mf)
+	if len(errs) != 0 {
+		t.Errorf("expected no errors, got %v", errs)
+	}
+}
