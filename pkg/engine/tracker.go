@@ -44,7 +44,13 @@ type wildcardTracker struct {
 	// destinationImports tracks import blocks by (layer, destAddr) to detect
 	// and deduplicate cases where multiple source resources produce the same
 	// destination address.
-	destinationImports map[string]*destinationClaim
+	destinationImports map[destinationKey]*destinationClaim
+}
+
+// destinationKey uniquely identifies a destination address within a layer.
+type destinationKey struct {
+	layer   string
+	address string
 }
 
 // destinationClaim records the first import block claim for a destination address.
@@ -58,7 +64,7 @@ type destinationClaim struct {
 func newWildcardTracker() *wildcardTracker {
 	return &wildcardTracker{
 		groups:             make(map[wildcardSourceKey]*wildcardGroup),
-		destinationImports: make(map[string]*destinationClaim),
+		destinationImports: make(map[destinationKey]*destinationClaim),
 	}
 }
 
@@ -159,7 +165,7 @@ func (t *wildcardTracker) checkCompleteness() error {
 //   - If a previous claim exists, an error is returned (duplicate destination).
 //   - Otherwise, the import is registered and skip=false.
 func (t *wildcardTracker) claimDestination(layer, destAddr, importID string, opIndex int, sourceAddr string, mergeDuplicates bool) (skip bool, err error) {
-	key := layer + "\x00" + destAddr
+	key := destinationKey{layer: layer, address: destAddr}
 	existing, ok := t.destinationImports[key]
 	if !ok {
 		t.destinationImports[key] = &destinationClaim{
