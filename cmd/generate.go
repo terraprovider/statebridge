@@ -90,16 +90,13 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 	var stateReader state.StateReader
 	var resolvedTofuPath string
 
+	var lazy *lazyStateReader
 	if flagTofuPath != "" {
 		resolvedTofuPath = flagTofuPath
 		stateReader = state.NewTofuStateReader(flagTofuPath, initArgs)
 	} else {
-		lazy := newLazyStateReader(initArgs)
+		lazy = newLazyStateReader(initArgs)
 		stateReader = lazy
-		// resolvedTofuPath will be populated after ProcessFiles if lazy resolved.
-		defer func() {
-			resolvedTofuPath = lazy.tofuPath()
-		}()
 	}
 
 	cfg := engine.Config{
@@ -114,6 +111,12 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 	result, err := eng.ProcessFiles(ctx, args)
 	if err != nil {
 		return err
+	}
+
+	// Populate resolvedTofuPath from lazy reader after ProcessFiles,
+	// so it's available for the upload guard below.
+	if lazy != nil {
+		resolvedTofuPath = lazy.tofuPath()
 	}
 
 	if flagDryRun {
