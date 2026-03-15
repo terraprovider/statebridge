@@ -1175,14 +1175,18 @@ func collectLayerPaths(mf *migration.MigrationFile) []string {
 }
 
 // checkLayerPaths checks that all given layer paths exist on disk.
-// Returns the first missing path, or "" if all exist.
-func checkLayerPaths(paths []string) string {
+// Returns the first missing path and nil error for simple "not exist" cases.
+// Returns a non-nil error for unexpected stat failures (e.g., permission denied).
+func checkLayerPaths(paths []string) (string, error) {
 	for _, path := range paths {
-		if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
-			return path
+		if _, err := os.Stat(path); err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				return path, nil
+			}
+			return path, fmt.Errorf("checking layer %q: %w", path, err)
 		}
 	}
-	return ""
+	return "", nil
 }
 
 // boolPtrDefault returns the value of a *bool pointer, or defaultVal if nil.

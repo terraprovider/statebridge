@@ -75,8 +75,11 @@ func (r *TofuStateReader) ReadState(ctx context.Context, layerPath string) (*tfj
 	}
 
 	// Check that the layer directory actually exists before attempting tofu operations.
-	if _, err := os.Stat(absPath); errors.Is(err, os.ErrNotExist) {
-		return nil, fmt.Errorf("layer directory %q does not exist", absPath)
+	if _, err := os.Stat(absPath); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, fmt.Errorf("layer directory %q does not exist", absPath)
+		}
+		return nil, fmt.Errorf("checking layer directory %q: %w", absPath, err)
 	}
 
 	tf, err := tfexec.NewTerraform(absPath, r.tofuPath)

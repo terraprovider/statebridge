@@ -77,8 +77,9 @@ func Evaluate(tmplStr string, ctx *TemplateContext) (string, error) {
 		}
 		templateCacheMu.Lock()
 		if templateCacheLen.Load() < maxTemplateCacheSize {
-			templateCache.Store(tmplStr, tmpl)
-			templateCacheLen.Add(1)
+			if _, loaded := templateCache.LoadOrStore(tmplStr, tmpl); !loaded {
+				templateCacheLen.Add(1)
+			}
 		}
 		templateCacheMu.Unlock()
 	}

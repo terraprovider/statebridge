@@ -173,8 +173,9 @@ func regexReplaceFunc(pattern, repl, s string) (string, error) {
 		}
 		regexCacheMu.Lock()
 		if regexCacheLen.Load() < maxRegexCacheSize {
-			regexCache.Store(pattern, re)
-			regexCacheLen.Add(1)
+			if _, loaded := regexCache.LoadOrStore(pattern, re); !loaded {
+				regexCacheLen.Add(1)
+			}
 		}
 		regexCacheMu.Unlock()
 	}

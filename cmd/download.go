@@ -76,14 +76,21 @@ func runDownload(cmd *cobra.Command, args []string) error {
 	// Build init args from --backend-config flags
 	initArgs := buildInitArgs(flagDownloadBackendConfig)
 
-	// Resolve tofu path upfront (required for condition evaluation)
-	tofuPath, err := resolveTofuPath(flagDownloadTofuPath)
-	if err != nil {
-		return fmt.Errorf("%w (required for condition evaluation)", err)
+	// Only resolve tofu path when explicitly provided; otherwise let the
+	// download package lazily discover it when state evaluation is needed.
+	// This allows downloads to succeed without tofu when no state-based
+	// conditions are present (e.g., layer_exists-only or no conditions).
+	var dlOpts []download.DownloaderOption
+	if flagDownloadTofuPath != "" {
+		tofuPath, err := resolveTofuPath(flagDownloadTofuPath)
+		if err != nil {
+			return fmt.Errorf("%w", err)
+		}
+		dlOpts = append(dlOpts, download.WithTofuPath(tofuPath))
 	}
+	dlOpts = append(dlOpts, download.WithDryRun(flagDownloadDryRun))
 
-	dl := download.NewDownloader(cred, initArgs,
-		download.WithTofuPath(tofuPath),
+	dl := download.NewDownloader(cred, initArgs, dlOpts...)
 		download.WithDryRun(flagDownloadDryRun),
 	)
 	ctx := context.Background()
