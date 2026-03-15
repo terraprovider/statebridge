@@ -13,7 +13,10 @@ import (
 // Bounded to maxRegexCacheSize entries to prevent unbounded memory growth.
 var regexCache sync.Map
 
-var regexCacheLen atomic.Int64
+var (
+	regexCacheLen atomic.Int64
+	regexCacheMu  sync.Mutex
+)
 
 const maxRegexCacheSize = 1000
 
@@ -168,10 +171,13 @@ func regexReplaceFunc(pattern, repl, s string) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("regexReplace: invalid pattern %q: %w", pattern, err)
 		}
+		regexCacheMu.Lock()
 		if regexCacheLen.Load() < maxRegexCacheSize {
-			regexCache.Store(pattern, re)
-			regexCacheLen.Add(1)
+			if _, loaded := regexCache.LoadOrStore(pattern, re); !loaded {
+				regexCacheLen.Add(1)
+			}
 		}
+		regexCacheMu.Unlock()
 	}
 	return re.ReplaceAllString(s, repl), nil
 }

@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -261,7 +262,7 @@ operations:
 
 	// Verify NO files were actually written
 	for _, f := range result.OutputFiles {
-		if _, err := os.Stat(f); !os.IsNotExist(err) {
+		if _, err := os.Stat(f); !errors.Is(err, os.ErrNotExist) {
 			t.Errorf("expected file %q to NOT exist in dry-run mode", f)
 		}
 	}

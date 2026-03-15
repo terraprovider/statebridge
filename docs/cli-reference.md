@@ -64,7 +64,7 @@ Each layer directory is scanned for `migration.*.tf` files and uploaded to the s
 |------|-------------|
 | `--backend-config` | Backend configuration passed to tofu init, as `key=value` or path to a file (repeatable) |
 | `--force` | Force upload even if existing migrations are still active (overwrite protection bypass) |
-| `--tofu-path <path>` | Override path to the `tofu` binary for upload guard state evaluation (default: auto-detect from PATH) |
+| `--tofu-path <path>` | Override path to the `tofu` binary (default: auto-detect from PATH) |
 
 ```bash
 # Upload from specific layers

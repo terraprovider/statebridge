@@ -46,7 +46,8 @@ func (r *Resolver) LookupResources(
 		return nil, fmt.Errorf("reading state for layer %q: %w", layerPath, err)
 	}
 
-	resources, err := state.LookupResourcesByPrefix(s, baseAddr)
+	idx := state.NewStateIndex(s)
+	resources, err := idx.LookupResourcesByPrefix(baseAddr)
 	if err != nil {
 		return nil, fmt.Errorf("looking up resources for %q: %w", baseAddr, err)
 	}
@@ -71,7 +72,8 @@ func (r *Resolver) LookupResource(
 		return nil, fmt.Errorf("reading state for layer %q: %w", layerPath, err)
 	}
 
-	resource, err := state.LookupResource(s, address)
+	idx := state.NewStateIndex(s)
+	resource, err := idx.LookupResource(address)
 	if err != nil {
 		return nil, fmt.Errorf("looking up resource %q: %w", address, err)
 	}
@@ -218,17 +220,4 @@ func buildExpandedTemplateContext(res *state.ResourceInfo, item interface{}, ite
 		Item:       item,
 		ItemIndex:  itemIndex,
 	}
-}
-
-// ExpandedInstance represents a single resource instance produced by expanding
-// a keyed resource against state.
-type ExpandedInstance struct {
-	// SourceResource is the resource info from the source state.
-	SourceResource *state.ResourceInfo
-
-	// DestAddress is the rendered destination address for this instance.
-	DestAddress string
-
-	// ImportID is the resolved import ID for this instance.
-	ImportID string
 }

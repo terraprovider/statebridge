@@ -3,7 +3,6 @@ package cmd
 import (
 	"context"
 	"fmt"
-	"os"
 
 	"github.com/spf13/cobra"
 
@@ -49,7 +48,7 @@ func init() {
 	uploadCmd.Flags().BoolVar(&flagUploadForce, "force", false,
 		"Force upload even if existing migrations are still active (overwrite protection bypass)")
 	uploadCmd.Flags().StringVar(&flagUploadTofuPath, "tofu-path", "",
-		"Path to the tofu binary for upload guard state evaluation (default: auto-detect from PATH)")
+		"Path to the tofu binary (default: auto-detect from PATH)")
 }
 
 func runUpload(cmd *cobra.Command, args []string) error {
@@ -68,17 +67,15 @@ func runUpload(cmd *cobra.Command, args []string) error {
 	// Build init args from --backend-config flags
 	initArgs := buildInitArgs(flagUploadBackendConfig)
 
-	var opts []upload.ManagerOption
-	opts = append(opts, upload.WithForce(flagUploadForce))
-
-	// Resolve tofu path for the upload guard
+	// Resolve the tofu binary eagerly — required for upload guard.
 	tofuPath, err := resolveTofuPath(flagUploadTofuPath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: %v; upload guard (overwrite protection) will be disabled\n", err)
+		return err
 	}
-	if tofuPath != "" {
-		opts = append(opts, upload.WithTofuPath(tofuPath, initArgs))
-	}
+
+	var opts []upload.ManagerOption
+	opts = append(opts, upload.WithForce(flagUploadForce))
+	opts = append(opts, upload.WithTofuPath(tofuPath, initArgs))
 
 	mgr := upload.NewManager(cred, initArgs, opts...)
 	ctx := context.Background()

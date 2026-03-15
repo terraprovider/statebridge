@@ -76,10 +76,17 @@ func runDownload(cmd *cobra.Command, args []string) error {
 	// Build init args from --backend-config flags
 	initArgs := buildInitArgs(flagDownloadBackendConfig)
 
-	dl := download.NewDownloader(cred, initArgs,
-		download.WithTofuPath(flagDownloadTofuPath),
-		download.WithDryRun(flagDownloadDryRun),
-	)
+	// Resolve the tofu binary eagerly — required for condition evaluation.
+	tofuPath, err := resolveTofuPath(flagDownloadTofuPath)
+	if err != nil {
+		return err
+	}
+
+	var dlOpts []download.DownloaderOption
+	dlOpts = append(dlOpts, download.WithTofuPath(tofuPath))
+	dlOpts = append(dlOpts, download.WithDryRun(flagDownloadDryRun))
+
+	dl := download.NewDownloader(cred, initArgs, dlOpts...)
 	ctx := context.Background()
 
 	files, err := dl.Download(ctx, cwd)

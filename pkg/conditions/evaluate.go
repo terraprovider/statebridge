@@ -6,6 +6,7 @@ package conditions
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 
@@ -48,13 +49,17 @@ func EvaluateMetadataConditions(
 
 	// Layer existence conditions — cheap checks, no state reading needed.
 	for _, path := range cond.LayerExists {
-		if _, err := os.Stat(path); os.IsNotExist(err) {
+		if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
 			return false, nil
+		} else if err != nil {
+			return false, fmt.Errorf("checking layer %q: %w", path, err)
 		}
 	}
 	for _, path := range cond.LayerNotExists {
 		if _, err := os.Stat(path); err == nil {
 			return false, nil
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return false, fmt.Errorf("checking layer %q: %w", path, err)
 		}
 	}
 
@@ -75,13 +80,16 @@ func EvaluateMetadataConditions(
 		}
 	}
 
-	var s *tfjson.State
+	var idx *state.StateIndex
 	if needsState {
-		var err error
-		s, err = readState(ctx, layerDir)
+		if readState == nil {
+			return false, fmt.Errorf("state evaluation required for %q but no state reader available", layerDir)
+		}
+		s, err := readState(ctx, layerDir)
 		if err != nil {
 			return false, fmt.Errorf("reading state for %q: %w", layerDir, err)
 		}
+		idx = state.NewStateIndex(s)
 	}
 
 	for _, check := range cond.ResourcesExist {
@@ -91,7 +99,7 @@ func EvaluateMetadataConditions(
 		}
 
 		for _, addr := range check.Addresses {
-			if !state.ResourceExists(s, addr) {
+			if !idx.ResourceExists(addr) {
 				return false, nil
 			}
 		}
@@ -104,7 +112,7 @@ func EvaluateMetadataConditions(
 		}
 
 		for _, addr := range check.Addresses {
-			if state.ResourceExists(s, addr) {
+			if idx.ResourceExists(addr) {
 				return false, nil
 			}
 		}

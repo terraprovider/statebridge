@@ -210,3 +210,18 @@ func TestEvaluateMetadataConditions_BothConditionTypes(t *testing.T) {
 		t.Error("expected true when both condition types pass")
 	}
 }
+
+func TestEvaluateMetadataConditions_NilReadState(t *testing.T) {
+	meta := &generator.MigrationMetadata{
+		Conditions: &generator.MetadataCondition{
+			ResourcesExist: []generator.MetadataResourceCheck{
+				{Layer: ".", Addresses: []string{"aws_instance.web"}},
+			},
+		},
+	}
+
+	_, err := EvaluateMetadataConditions(context.Background(), meta, nil, "/layer")
+	if err == nil {
+		t.Fatal("expected error when readState is nil and state is needed")
+	}
+}

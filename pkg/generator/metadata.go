@@ -3,6 +3,7 @@ package generator
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -45,7 +46,10 @@ func RenderMetadataComment(meta *MigrationMetadata) string {
 
 	data, err := json.Marshal(meta)
 	if err != nil {
-		// Should not happen with well-formed metadata
+		// MigrationMetadata contains only basic types, so Marshal should
+		// never fail. If it does, surface the error rather than silently
+		// dropping metadata.
+		fmt.Fprintf(os.Stderr, "BUG: failed to marshal migration metadata: %v\n", err)
 		return ""
 	}
 

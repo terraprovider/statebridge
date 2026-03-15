@@ -1,6 +1,7 @@
 package generator
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -367,7 +368,7 @@ func TestWriter_WriteAll_DryRun(t *testing.T) {
 	}
 
 	// File should not actually exist
-	if _, err := os.Stat(files[0]); !os.IsNotExist(err) {
+	if _, err := os.Stat(files[0]); !errors.Is(err, os.ErrNotExist) {
 		t.Error("expected file to not exist in dry-run mode")
 	}
 }

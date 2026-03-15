@@ -1020,7 +1020,7 @@ Uploads pre-generated `migration.*.tf` files from layer directories. Useful when
 |------|-------------|
 | `--backend-config` | Backend configuration passed to tofu init, as `key=value` or path to a file (repeatable) |
 | `--force` | Force upload even if existing migrations are still active (overwrite protection bypass) |
-| `--tofu-path <path>` | Override path to the tofu binary for upload guard state evaluation (default: auto-detect from PATH) |
+| `--tofu-path <path>` | Override path to the tofu binary (default: auto-detect from PATH) |
 
 **Examples:**
 
@@ -1075,7 +1075,7 @@ Error: refusing to overwrite "migrations/migration.001_move.a1b2c3d4.tf": migrat
 
 This protects against a common CI failure mode: a pipeline partially applies migrations across layers (e.g., L10 applied, L30 fails, L50 pending), then re-runs `generate --upload` which would otherwise overwrite the still-needed import blocks.
 
-The guard requires the `tofu` binary to read layer state. If `tofu` is not available, the guard is silently disabled and upload proceeds without protection. Use `--force` to explicitly bypass the guard when intentional overwrite is needed.
+The guard requires the `tofu` binary to read layer state. Since `tofu` is a hard requirement for all commands, the guard is always active. Use `--force` to explicitly bypass the guard when intentional overwrite is needed.
 
 The guard logic lives in `pkg/upload/upload.go` (`checkActiveBlobs` method) and uses shared condition evaluation from `pkg/conditions/evaluate.go`.
 

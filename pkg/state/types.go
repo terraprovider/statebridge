@@ -244,6 +244,9 @@ func formatIndex(index interface{}) string {
 
 // LookupResource finds a single resource by exact address in the flattened state.
 // Returns an error if the resource is not found.
+//
+// Deprecated: This rebuilds the StateIndex on every call. For multiple lookups
+// against the same state, use NewStateIndex and call methods on it directly.
 func LookupResource(s *tfjson.State, address string) (*ResourceInfo, error) {
 	idx := NewStateIndex(s)
 	return idx.LookupResource(address)
@@ -253,6 +256,9 @@ func LookupResource(s *tfjson.State, address string) (*ResourceInfo, error) {
 // The baseAddress should not include any index notation — e.g., "aws_s3_bucket.data"
 // will match "aws_s3_bucket.data[\"key1\"]", "aws_s3_bucket.data[\"key2\"]", etc.
 // It also matches the exact address "aws_s3_bucket.data" (no index).
+//
+// Deprecated: This rebuilds the StateIndex on every call. For multiple lookups
+// against the same state, use NewStateIndex and call methods on it directly.
 func LookupResourcesByPrefix(s *tfjson.State, baseAddress string) ([]*ResourceInfo, error) {
 	idx := NewStateIndex(s)
 	return idx.LookupResourcesByPrefix(baseAddress)
@@ -262,6 +268,9 @@ func LookupResourcesByPrefix(s *tfjson.State, baseAddress string) ([]*ResourceIn
 // in state. For a base address (e.g., "aws_instance.web"), it matches any
 // for_each instance. For an address with an index (e.g., "aws_instance.web[\"key\"]"),
 // it matches only that specific instance. Returns false for nil or empty state.
+//
+// Deprecated: This rebuilds the StateIndex on every call. For multiple lookups
+// against the same state, use NewStateIndex and call methods on it directly.
 func ResourceExists(s *tfjson.State, address string) bool {
 	idx := NewStateIndex(s)
 	return idx.ResourceExists(address)

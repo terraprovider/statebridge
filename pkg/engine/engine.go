@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -110,7 +111,16 @@ func (e *Engine) ProcessFiles(ctx context.Context, paths []string) (*ProcessResu
 		}
 
 		// F2: Auto-skip when referenced layers don't exist on disk.
-		if missing := checkLayerPaths(collectLayerPaths(mf)); missing != "" {
+		missing, checkErr := checkLayerPaths(collectLayerPaths(mf))
+		if checkErr != nil {
+			if e.config.Strict {
+				return nil, fmt.Errorf("checking layers for %q: %w", mf.FilePath, checkErr)
+			}
+			fmt.Fprintf(os.Stderr, "Skipping %q: checking layers: %v\n", mf.FilePath, checkErr)
+			skippedFiles = append(skippedFiles, SkippedFile{mf.FilePath, migration.YamlStem(mf.FilePath), SkipError})
+			continue
+		}
+		if missing != "" {
 			if e.config.Strict {
 				return nil, fmt.Errorf("layer %q does not exist (referenced by %q)", missing, mf.FilePath)
 			}
@@ -237,7 +247,7 @@ func (e *Engine) processMove(ctx context.Context, op *migration.Operation, opInd
 
 	var blocks []generator.Block
 
-	for i, res := range op.Resources {
+	for _, res := range op.Resources {
 		srcAddr := migration.FullAddress(srcPrefix, res.From)
 		dstBaseAddr := res.To
 		if dstBaseAddr == "" {
@@ -249,7 +259,7 @@ func (e *Engine) processMove(ctx context.Context, op *migration.Operation, opInd
 		useMovedBlocks := res.UseMovedBlocksValue(op.UseMovedBlocks)
 		effectiveSameLayer := sameLayer && useMovedBlocks
 
-		resBlocks, err := e.processMoveResource(ctx, srcLayer, dstLayer, effectiveSameLayer, srcAddr, dstAddr, &res, opIndex, i, tracker, op.Description, sourceFile)
+		resBlocks, err := e.processMoveResource(ctx, srcLayer, dstLayer, effectiveSameLayer, srcAddr, dstAddr, &res, opIndex, tracker, op.Description, sourceFile)
 		if err != nil {
 			return nil, fmt.Errorf("resource %q: %w", res.From, err)
 		}
@@ -270,7 +280,7 @@ func (e *Engine) processMoveResource(
 	sameLayer bool,
 	srcAddr, dstAddr string,
 	res *migration.ResourceMove,
-	opIndex, resIndex int,
+	opIndex int,
 	tracker *wildcardTracker,
 	description string,
 	sourceFile string,
@@ -1016,9 +1026,11 @@ func (e *Engine) evaluateCondition(ctx context.Context, mf *migration.MigrationF
 
 	// F3: Layer existence conditions — cheap checks, no state reading.
 	for _, path := range mf.Condition.LayerExists {
-		if _, err := os.Stat(path); os.IsNotExist(err) {
+		if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
 			fmt.Fprintf(os.Stderr, "Skipping %q: layer %q does not exist (layer_exists condition)\n", mf.FilePath, path)
 			return false, nil
+		} else if err != nil {
+			return false, fmt.Errorf("checking layer %q: %w", path, err)
 		}
 	}
 
@@ -1026,6 +1038,8 @@ func (e *Engine) evaluateCondition(ctx context.Context, mf *migration.MigrationF
 		if _, err := os.Stat(path); err == nil {
 			fmt.Fprintf(os.Stderr, "Skipping %q: layer %q exists (layer_not_exists condition)\n", mf.FilePath, path)
 			return false, nil
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return false, fmt.Errorf("checking layer %q: %w", path, err)
 		}
 	}
 
@@ -1170,14 +1184,18 @@ func collectLayerPaths(mf *migration.MigrationFile) []string {
 }
 
 // checkLayerPaths checks that all given layer paths exist on disk.
-// Returns the first missing path, or "" if all exist.
-func checkLayerPaths(paths []string) string {
+// Returns the first missing path and nil error for simple "not exist" cases.
+// Returns a non-nil error for unexpected stat failures (e.g., permission denied).
+func checkLayerPaths(paths []string) (string, error) {
 	for _, path := range paths {
-		if _, err := os.Stat(path); os.IsNotExist(err) {
-			return path
+		if _, err := os.Stat(path); err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				return path, nil
+			}
+			return path, fmt.Errorf("checking layer %q: %w", path, err)
 		}
 	}
-	return ""
+	return "", nil
 }
 
 // boolPtrDefault returns the value of a *bool pointer, or defaultVal if nil.

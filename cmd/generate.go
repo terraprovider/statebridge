@@ -6,7 +6,6 @@ import (
 	"os"
 	"sort"
 
-	tfjson "github.com/hashicorp/terraform-json"
 	"github.com/spf13/cobra"
 
 	"github.com/redtenant/tfmigrate/pkg/auth"
@@ -81,26 +80,12 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 	// Build init args from --backend-config flags
 	initArgs := buildInitArgs(flagGenerateBackendConfig)
 
-	// Resolve the tofu binary and create the state reader
-	var stateReader state.StateReader
-	var resolvedTofuPath string
-
-	if flagTofuPath != "" {
-		resolvedTofuPath = flagTofuPath
-		stateReader = state.NewTofuStateReader(flagTofuPath, initArgs)
-	} else {
-		reader, lookupErr := state.NewTofuStateReaderFromPath(initArgs)
-		if lookupErr != nil {
-			// tofu not found is acceptable in dry-run mode or when state
-			// lookup is not needed; we'll fail later if state is actually needed
-			fmt.Fprintf(os.Stderr, "Warning: %v\n", lookupErr)
-			fmt.Fprintf(os.Stderr, "State auto-resolution will not be available. Use explicit import_id values.\n")
-			stateReader = &noopStateReader{}
-		} else {
-			resolvedTofuPath = reader.TofuPath()
-			stateReader = reader
-		}
+	// Resolve the tofu binary eagerly — required for state reads.
+	resolvedTofuPath, err := resolveTofuPath(flagTofuPath)
+	if err != nil {
+		return err
 	}
+	stateReader := state.NewTofuStateReader(resolvedTofuPath, initArgs)
 
 	cfg := engine.Config{
 		StateReader: stateReader,
@@ -166,9 +151,7 @@ func runUploadAfterGenerate(ctx context.Context, eng *engine.Engine, tofuPath st
 
 	var opts []upload.ManagerOption
 	opts = append(opts, upload.WithForce(flagGenerateForce))
-	if tofuPath != "" {
-		opts = append(opts, upload.WithTofuPath(tofuPath, initArgs))
-	}
+	opts = append(opts, upload.WithTofuPath(tofuPath, initArgs))
 
 	mgr := upload.NewManager(cred, initArgs, opts...)
 	rendered := eng.Writer().RenderAll()
@@ -199,13 +182,4 @@ func runUploadAfterGenerate(ctx context.Context, eng *engine.Engine, tofuPath st
 	}
 
 	return nil
-}
-
-// noopStateReader is used as a fallback when the tofu binary is not found.
-// It returns an error when state is actually requested, guiding the user
-// to provide explicit import IDs.
-type noopStateReader struct{}
-
-func (n *noopStateReader) ReadState(_ context.Context, layerPath string) (*tfjson.State, error) {
-	return nil, fmt.Errorf("tofu binary not available; cannot read state for layer %q. Provide explicit import_id values in your migration file", layerPath)
 }

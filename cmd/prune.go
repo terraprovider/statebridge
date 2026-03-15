@@ -78,22 +78,19 @@ func runPrune(cmd *cobra.Command, args []string) error {
 	// Build init args from --backend-config flags
 	initArgs := buildInitArgs(flagPruneBackendConfig)
 
-	// Resolve tofu path for condition evaluation (not needed with --force)
-	var stateReader state.StateReader
-	if !flagPruneForce {
-		tofuPath, err := resolveTofuPath(flagPruneTofuPath)
-		if err != nil {
-			return fmt.Errorf("%w (required for condition evaluation; use --force to skip)", err)
-		}
-		stateReader = state.NewTofuStateReader(tofuPath, initArgs)
+	// Resolve the tofu binary eagerly — required for condition evaluation.
+	tofuPath, err := resolveTofuPath(flagPruneTofuPath)
+	if err != nil {
+		return err
 	}
+	stateReader := state.NewTofuStateReader(tofuPath, initArgs)
 
 	ctx := context.Background()
 
 	var totalPruned, totalKept int
 
 	for _, layerDir := range args {
-		pruned, kept, err := pruneLayer(ctx, layerDir, cred, stateReader)
+		pruned, kept, err := pruneLayer(ctx, layerDir, cred, stateReader, initArgs, flagPruneForce, flagPruneDryRun)
 		if err != nil {
 			return fmt.Errorf("pruning %q: %w", layerDir, err)
 		}
@@ -110,9 +107,10 @@ func pruneLayer(
 	layerDir string,
 	cred azcore.TokenCredential,
 	stateReader state.StateReader,
+	initArgs []string,
+	force bool,
+	dryRun bool,
 ) (int, int, error) {
-	initArgs := buildInitArgs(flagPruneBackendConfig)
-
 	config, err := upload.DiscoverBackendConfig(layerDir, initArgs)
 	if err != nil {
 		return 0, 0, fmt.Errorf("discovering backend config: %w", err)
@@ -136,7 +134,7 @@ func pruneLayer(
 	var pruned, kept int
 
 	for _, blobName := range migrationBlobs {
-		action, err := pruneBlob(ctx, uploader, blobName, layerDir, stateReader)
+		action, err := pruneBlob(ctx, uploader, blobName, layerDir, stateReader, force, dryRun)
 		if err != nil {
 			return pruned, kept, err
 		}
@@ -175,11 +173,13 @@ func pruneBlob(
 	blobName string,
 	layerDir string,
 	stateReader state.StateReader,
+	force bool,
+	dryRun bool,
 ) (bool, error) {
 	filename := filepath.Base(blobName)
 
-	if flagPruneForce {
-		return deleteOrDryRun(ctx, uploader, blobName, layerDir, filename)
+	if force {
+		return deleteOrDryRun(ctx, uploader, blobName, layerDir, filename, dryRun)
 	}
 
 	// Download and parse metadata for condition evaluation
@@ -214,7 +214,7 @@ func pruneBlob(
 		return false, nil
 	}
 
-	return deleteOrDryRun(ctx, uploader, blobName, layerDir, filename)
+	return deleteOrDryRun(ctx, uploader, blobName, layerDir, filename, dryRun)
 }
 
 // deleteOrDryRun deletes a blob or prints a dry-run message.
@@ -225,8 +225,9 @@ func deleteOrDryRun(
 	blobName string,
 	layerDir string,
 	filename string,
+	dryRun bool,
 ) (bool, error) {
-	if flagPruneDryRun {
+	if dryRun {
 		fmt.Fprintf(os.Stdout, "Would prune: %s/%s\n", layerDir, filename)
 		return true, nil
 	}
