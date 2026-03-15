@@ -214,11 +214,11 @@ func TestSortBlocks(t *testing.T) {
 
 	// Expected order: removed(a), removed(b), moved(m), import(a), import(z)
 	expected := []string{
-		"a_resource.x",  // removed
-		"b_resource.y",  // removed
-		"m_resource.c",  // moved
-		"a_resource.a",  // import
-		"z_resource.b",  // import
+		"a_resource.x", // removed
+		"b_resource.y", // removed
+		"m_resource.c", // moved
+		"a_resource.a", // import
+		"z_resource.b", // import
 	}
 
 	for i, exp := range expected {

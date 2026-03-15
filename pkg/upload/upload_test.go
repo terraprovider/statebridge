@@ -15,11 +15,11 @@ import (
 
 // mockBlobUploader records all operations for verification.
 type mockBlobUploader struct {
-	mu        sync.Mutex
-	uploaded  map[string][]byte   // blobName -> content
-	deleted   []string            // blob names deleted (in order)
-	blobs     map[string][]string // prefix -> blob names returned by ListBlobs
-	blobData  map[string][]byte   // blobName -> content for DownloadBlob
+	mu       sync.Mutex
+	uploaded map[string][]byte   // blobName -> content
+	deleted  []string            // blob names deleted (in order)
+	blobs    map[string][]string // prefix -> blob names returned by ListBlobs
+	blobData map[string][]byte   // blobName -> content for DownloadBlob
 }
 
 func newMockUploader() *mockBlobUploader {

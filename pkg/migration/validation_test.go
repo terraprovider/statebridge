@@ -41,9 +41,9 @@ func TestValidate_ValidMoveWithKeys(t *testing.T) {
 					{
 						From: "aws_s3_bucket.data",
 						Keys: map[string]string{
-							"exact_key":  "new_key",
-							"prefix_*":   `{{ .Key | trimPrefix "prefix_" }}`,
-							"*":          "{{ .Key }}",
+							"exact_key": "new_key",
+							"prefix_*":  `{{ .Key | trimPrefix "prefix_" }}`,
+							"*":         "{{ .Key }}",
 						},
 					},
 				},
@@ -586,8 +586,8 @@ func TestIsModuleAddress(t *testing.T) {
 		{"aws_instance.web", false},
 		{"module.foo.module.bar.aws_instance.web", false},
 		{"", false},
-		{"module", false},                  // odd number of segments
-		{"module.foo.module", false},        // odd number of segments
+		{"module", false},                      // odd number of segments
+		{"module.foo.module", false},           // odd number of segments
 		{"aws_instance.web.module.foo", false}, // doesn't start with module
 	}
 	for _, tt := range tests {

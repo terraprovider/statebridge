@@ -8,12 +8,12 @@ import (
 
 func TestParseHCLBackend(t *testing.T) {
 	tests := []struct {
-		name     string
-		files    map[string]string
-		wantSA   string
-		wantCN   string
-		wantRG   string
-		wantErr  bool
+		name    string
+		files   map[string]string
+		wantSA  string
+		wantCN  string
+		wantRG  string
+		wantErr bool
 	}{
 		{
 			name: "standard azurerm backend",

@@ -50,7 +50,7 @@ func (e *Engine) consolidateModuleRemovals(ctx context.Context, blocks []generat
 
 	// For each layer, check if any modules can be consolidated
 	consolidated := make(map[int]bool) // indices of blocks to remove
-	var newBlocks []generator.Block     // consolidated module-level blocks to add
+	var newBlocks []generator.Block    // consolidated module-level blocks to add
 
 	for layerPath, lr := range removedByLayer {
 		// Build set of removed base addresses

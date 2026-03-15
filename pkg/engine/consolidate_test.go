@@ -99,9 +99,9 @@ func TestConsolidateModuleRemovals_AllResourcesInModule(t *testing.T) {
 	}
 
 	result, err := engine.consolidateModuleRemovals(context.Background(), blocks)
-if err != nil {
-t.Fatalf("consolidateModuleRemovals returned unexpected error: %v", err)
-}
+	if err != nil {
+		t.Fatalf("consolidateModuleRemovals returned unexpected error: %v", err)
+	}
 
 	var removedBlocks []*generator.RemovedBlock
 	var otherBlocks []generator.Block
@@ -145,9 +145,9 @@ func TestConsolidateModuleRemovals_PartialModule(t *testing.T) {
 	}
 
 	result, err := engine.consolidateModuleRemovals(context.Background(), blocks)
-if err != nil {
-t.Fatalf("consolidateModuleRemovals returned unexpected error: %v", err)
-}
+	if err != nil {
+		t.Fatalf("consolidateModuleRemovals returned unexpected error: %v", err)
+	}
 
 	if len(result) != 1 {
 		t.Fatalf("expected 1 block (no consolidation), got %d", len(result))
@@ -183,9 +183,9 @@ func TestConsolidateModuleRemovals_NestedModulePartial(t *testing.T) {
 	}
 
 	result, err := engine.consolidateModuleRemovals(context.Background(), blocks)
-if err != nil {
-t.Fatalf("consolidateModuleRemovals returned unexpected error: %v", err)
-}
+	if err != nil {
+		t.Fatalf("consolidateModuleRemovals returned unexpected error: %v", err)
+	}
 
 	var removedBlocks []*generator.RemovedBlock
 	for _, b := range result {
@@ -224,9 +224,9 @@ func TestConsolidateModuleRemovals_FullNestedConsolidation(t *testing.T) {
 	}
 
 	result, err := engine.consolidateModuleRemovals(context.Background(), blocks)
-if err != nil {
-t.Fatalf("consolidateModuleRemovals returned unexpected error: %v", err)
-}
+	if err != nil {
+		t.Fatalf("consolidateModuleRemovals returned unexpected error: %v", err)
+	}
 
 	var removedBlocks []*generator.RemovedBlock
 	for _, b := range result {
@@ -264,9 +264,9 @@ func TestConsolidateModuleRemovals_MixModuleAndRoot(t *testing.T) {
 	}
 
 	result, err := engine.consolidateModuleRemovals(context.Background(), blocks)
-if err != nil {
-t.Fatalf("consolidateModuleRemovals returned unexpected error: %v", err)
-}
+	if err != nil {
+		t.Fatalf("consolidateModuleRemovals returned unexpected error: %v", err)
+	}
 
 	var removedBlocks []*generator.RemovedBlock
 	for _, b := range result {
@@ -309,9 +309,9 @@ func TestConsolidateModuleRemovals_NoModules(t *testing.T) {
 	}
 
 	result, err := engine.consolidateModuleRemovals(context.Background(), blocks)
-if err != nil {
-t.Fatalf("consolidateModuleRemovals returned unexpected error: %v", err)
-}
+	if err != nil {
+		t.Fatalf("consolidateModuleRemovals returned unexpected error: %v", err)
+	}
 
 	if len(result) != 1 {
 		t.Fatalf("expected 1 block unchanged, got %d", len(result))
@@ -322,17 +322,17 @@ func TestConsolidateModuleRemovals_EmptyBlocks(t *testing.T) {
 	engine := New(Config{StateReader: testutil.NewMockStateReader(nil)})
 
 	result, err := engine.consolidateModuleRemovals(context.Background(), nil)
-if err != nil {
-t.Fatalf("consolidateModuleRemovals returned unexpected error: %v", err)
-}
+	if err != nil {
+		t.Fatalf("consolidateModuleRemovals returned unexpected error: %v", err)
+	}
 	if len(result) != 0 {
 		t.Errorf("expected empty result, got %d blocks", len(result))
 	}
 
 	result, err = engine.consolidateModuleRemovals(context.Background(), []generator.Block{})
-if err != nil {
-t.Fatalf("consolidateModuleRemovals returned unexpected error: %v", err)
-}
+	if err != nil {
+		t.Fatalf("consolidateModuleRemovals returned unexpected error: %v", err)
+	}
 	if len(result) != 0 {
 		t.Errorf("expected empty result, got %d blocks", len(result))
 	}
@@ -359,9 +359,9 @@ func TestConsolidateModuleRemovals_MultipleIndependentModules(t *testing.T) {
 	}
 
 	result, err := engine.consolidateModuleRemovals(context.Background(), blocks)
-if err != nil {
-t.Fatalf("consolidateModuleRemovals returned unexpected error: %v", err)
-}
+	if err != nil {
+		t.Fatalf("consolidateModuleRemovals returned unexpected error: %v", err)
+	}
 
 	var removedBlocks []*generator.RemovedBlock
 	for _, b := range result {
@@ -431,9 +431,9 @@ func TestConsolidateModuleRemovals_DataSourcesIgnored(t *testing.T) {
 	}
 
 	result, err := engine.consolidateModuleRemovals(context.Background(), blocks)
-if err != nil {
-t.Fatalf("consolidateModuleRemovals returned unexpected error: %v", err)
-}
+	if err != nil {
+		t.Fatalf("consolidateModuleRemovals returned unexpected error: %v", err)
+	}
 
 	var removedBlocks []*generator.RemovedBlock
 	for _, b := range result {
@@ -474,9 +474,9 @@ func TestConsolidateModuleRemovals_ThreeLevelNesting(t *testing.T) {
 	}
 
 	result, err := engine.consolidateModuleRemovals(context.Background(), blocks)
-if err != nil {
-t.Fatalf("consolidateModuleRemovals returned unexpected error: %v", err)
-}
+	if err != nil {
+		t.Fatalf("consolidateModuleRemovals returned unexpected error: %v", err)
+	}
 
 	var removedBlocks []*generator.RemovedBlock
 	for _, b := range result {
@@ -518,9 +518,9 @@ func TestConsolidateModuleRemovals_ThreeLevelPartial(t *testing.T) {
 	}
 
 	result, err := engine.consolidateModuleRemovals(context.Background(), blocks)
-if err != nil {
-t.Fatalf("consolidateModuleRemovals returned unexpected error: %v", err)
-}
+	if err != nil {
+		t.Fatalf("consolidateModuleRemovals returned unexpected error: %v", err)
+	}
 
 	var removedBlocks []*generator.RemovedBlock
 	for _, b := range result {
@@ -563,9 +563,9 @@ func TestConsolidateModuleRemovals_MixedSiblingConsolidation(t *testing.T) {
 	}
 
 	result, err := engine.consolidateModuleRemovals(context.Background(), blocks)
-if err != nil {
-t.Fatalf("consolidateModuleRemovals returned unexpected error: %v", err)
-}
+	if err != nil {
+		t.Fatalf("consolidateModuleRemovals returned unexpected error: %v", err)
+	}
 
 	var removedBlocks []*generator.RemovedBlock
 	for _, b := range result {

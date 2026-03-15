@@ -209,4 +209,3 @@ terraform {
 		t.Errorf("expected no uploads when guard blocks, got: %v", mock.uploaded)
 	}
 }
-

@@ -549,8 +549,8 @@ func TestEvaluate_ItemFieldAccess(t *testing.T) {
 			"id": "app-123",
 		},
 		Item: map[string]interface{}{
-			"resource_app_id":  "00000003-0000-0000-c000-000000000000",
-			"resource_access":  []interface{}{"Scope.Read", "Scope.Write"},
+			"resource_app_id": "00000003-0000-0000-c000-000000000000",
+			"resource_access": []interface{}{"Scope.Read", "Scope.Write"},
 		},
 		ItemIndex: 0,
 	}
