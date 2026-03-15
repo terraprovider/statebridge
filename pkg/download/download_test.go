@@ -147,9 +147,15 @@ func TestDownloadConditionMet(t *testing.T) {
 	}))
 
 	// Without tofu installed, Download will fail when trying to evaluate conditions.
-	// The important thing is it doesn't panic.
-	_, err := dl.Download(context.Background(), dir)
-	_ = err
+	files, err := dl.Download(context.Background(), dir)
+	if err == nil {
+		t.Fatal("expected error when evaluating conditions without tofu, got nil")
+	}
+
+	// No migration files should have been written.
+	if len(files) != 0 {
+		t.Errorf("expected no files written, got %d", len(files))
+	}
 }
 
 func TestEvaluateConditionsResourcesExist(t *testing.T) {

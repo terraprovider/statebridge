@@ -82,6 +82,9 @@ func EvaluateMetadataConditions(
 
 	var idx *state.StateIndex
 	if needsState {
+		if readState == nil {
+			return false, fmt.Errorf("state evaluation required for %q but no state reader available", layerDir)
+		}
 		s, err := readState(ctx, layerDir)
 		if err != nil {
 			return false, fmt.Errorf("reading state for %q: %w", layerDir, err)
