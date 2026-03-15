@@ -15,7 +15,10 @@ import (
 // Bounded to maxTemplateCacheSize entries to prevent unbounded memory growth.
 var templateCache sync.Map
 
-var templateCacheLen atomic.Int64
+var (
+	templateCacheLen atomic.Int64
+	templateCacheMu  sync.Mutex
+)
 
 const maxTemplateCacheSize = 1000
 
@@ -72,10 +75,12 @@ func Evaluate(tmplStr string, ctx *TemplateContext) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("parsing template %q: %w", tmplStr, err)
 		}
+		templateCacheMu.Lock()
 		if templateCacheLen.Load() < maxTemplateCacheSize {
 			templateCache.Store(tmplStr, tmpl)
 			templateCacheLen.Add(1)
 		}
+		templateCacheMu.Unlock()
 	}
 
 	var buf bytes.Buffer
