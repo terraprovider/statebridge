@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 
 	"github.com/spf13/cobra"
 
@@ -127,16 +126,4 @@ func runPlan(cmd *cobra.Command, args []string) error {
 		return &ExitCodeError{Code: 2}
 	}
 	return nil
-}
-
-// resolveTofuPath returns the tofu binary path from a flag or PATH lookup.
-func resolveTofuPath(flagPath string) (string, error) {
-	if flagPath != "" {
-		return flagPath, nil
-	}
-	path, err := exec.LookPath("tofu")
-	if err != nil {
-		return "", fmt.Errorf("tofu binary not found in PATH; use --tofu-path to specify it")
-	}
-	return path, nil
 }

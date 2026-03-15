@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -82,13 +81,9 @@ func runPrune(cmd *cobra.Command, args []string) error {
 	// Resolve tofu path for condition evaluation (not needed with --force)
 	var stateReader state.StateReader
 	if !flagPruneForce {
-		tofuPath := flagPruneTofuPath
-		if tofuPath == "" {
-			if resolved, err := exec.LookPath("tofu"); err == nil {
-				tofuPath = resolved
-			} else {
-				return fmt.Errorf("tofu binary not found in PATH (required for condition evaluation; use --force to skip)")
-			}
+		tofuPath, err := resolveTofuPath(flagPruneTofuPath)
+		if err != nil {
+			return fmt.Errorf("%w (required for condition evaluation; use --force to skip)", err)
 		}
 		stateReader = state.NewTofuStateReader(tofuPath, initArgs)
 	}
