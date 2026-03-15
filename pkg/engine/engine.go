@@ -247,7 +247,7 @@ func (e *Engine) processMove(ctx context.Context, op *migration.Operation, opInd
 
 	var blocks []generator.Block
 
-	for i, res := range op.Resources {
+	for _, res := range op.Resources {
 		srcAddr := migration.FullAddress(srcPrefix, res.From)
 		dstBaseAddr := res.To
 		if dstBaseAddr == "" {
@@ -259,7 +259,7 @@ func (e *Engine) processMove(ctx context.Context, op *migration.Operation, opInd
 		useMovedBlocks := res.UseMovedBlocksValue(op.UseMovedBlocks)
 		effectiveSameLayer := sameLayer && useMovedBlocks
 
-		resBlocks, err := e.processMoveResource(ctx, srcLayer, dstLayer, effectiveSameLayer, srcAddr, dstAddr, &res, opIndex, i, tracker, op.Description, sourceFile)
+		resBlocks, err := e.processMoveResource(ctx, srcLayer, dstLayer, effectiveSameLayer, srcAddr, dstAddr, &res, opIndex, tracker, op.Description, sourceFile)
 		if err != nil {
 			return nil, fmt.Errorf("resource %q: %w", res.From, err)
 		}
@@ -280,7 +280,7 @@ func (e *Engine) processMoveResource(
 	sameLayer bool,
 	srcAddr, dstAddr string,
 	res *migration.ResourceMove,
-	opIndex, resIndex int,
+	opIndex int,
 	tracker *wildcardTracker,
 	description string,
 	sourceFile string,
