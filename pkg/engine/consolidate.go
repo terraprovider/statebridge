@@ -203,7 +203,7 @@ func (e *Engine) consolidateModuleRemovals(ctx context.Context, blocks []generat
 				Description: fmt.Sprintf("Remove entire module %s from state", mp),
 				Source:      source,
 			})
-			fmt.Fprintf(os.Stderr, "Consolidated removed blocks: %s (all managed resources moved)\n", mp)
+			fmt.Fprintf(os.Stderr, "Consolidated removed blocks: %s (all managed resources in module removed)\n", mp)
 		}
 	}
 

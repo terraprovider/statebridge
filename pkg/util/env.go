@@ -19,7 +19,7 @@ func Getenv[T SupportedEnvTypes](envVar string) *T {
 	if val, ok := os.LookupEnv(envVar); ok {
 		parsed, err := Parse[T](val)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: invalid value for %s=%q: %v\n", envVar, val, err)
+			fmt.Fprintf(os.Stderr, "Warning: invalid value for %s: %v\n", envVar, err)
 			return nil
 		}
 		return &parsed
@@ -32,7 +32,7 @@ func GetMultienv[T SupportedEnvTypes](envVars ...string) *T {
 		if val, ok := os.LookupEnv(envVar); ok {
 			parsed, err := Parse[T](val)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: invalid value for %s=%q: %v\n", envVar, val, err)
+				fmt.Fprintf(os.Stderr, "Warning: invalid value for %s: %v\n", envVar, err)
 				continue
 			}
 			return &parsed

@@ -11,7 +11,12 @@ import (
 )
 
 // templateCache caches parsed templates keyed by template string.
+// Bounded to maxTemplateCacheSize entries to prevent unbounded memory growth.
 var templateCache sync.Map
+
+var templateCacheLen int64
+
+const maxTemplateCacheSize = 1000
 
 // funcMap is re-exported from funcs.go where it is defined as a package-level var.
 
@@ -66,7 +71,10 @@ func Evaluate(tmplStr string, ctx *TemplateContext) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("parsing template %q: %w", tmplStr, err)
 		}
-		templateCache.Store(tmplStr, tmpl)
+		if templateCacheLen < maxTemplateCacheSize {
+			templateCache.Store(tmplStr, tmpl)
+			templateCacheLen++
+		}
 	}
 
 	var buf bytes.Buffer

@@ -9,7 +9,12 @@ import (
 )
 
 // regexCache caches compiled regular expressions keyed by pattern string.
+// Bounded to maxRegexCacheSize entries to prevent unbounded memory growth.
 var regexCache sync.Map
+
+var regexCacheLen int64
+
+const maxRegexCacheSize = 1000
 
 // funcMap is the shared, immutable function map for all template evaluations.
 // These supplement Go's built-in template functions with string manipulation
@@ -162,7 +167,10 @@ func regexReplaceFunc(pattern, repl, s string) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("regexReplace: invalid pattern %q: %w", pattern, err)
 		}
-		regexCache.Store(pattern, re)
+		if regexCacheLen < maxRegexCacheSize {
+			regexCache.Store(pattern, re)
+			regexCacheLen++
+		}
 	}
 	return re.ReplaceAllString(s, repl), nil
 }
