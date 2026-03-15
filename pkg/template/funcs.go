@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"text/template"
 )
 
@@ -12,7 +13,7 @@ import (
 // Bounded to maxRegexCacheSize entries to prevent unbounded memory growth.
 var regexCache sync.Map
 
-var regexCacheLen int64
+var regexCacheLen atomic.Int64
 
 const maxRegexCacheSize = 1000
 
@@ -167,9 +168,9 @@ func regexReplaceFunc(pattern, repl, s string) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("regexReplace: invalid pattern %q: %w", pattern, err)
 		}
-		if regexCacheLen < maxRegexCacheSize {
+		if regexCacheLen.Load() < maxRegexCacheSize {
 			regexCache.Store(pattern, re)
-			regexCacheLen++
+			regexCacheLen.Add(1)
 		}
 	}
 	return re.ReplaceAllString(s, repl), nil

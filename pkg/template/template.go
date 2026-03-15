@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"text/template"
 )
 
@@ -14,7 +15,7 @@ import (
 // Bounded to maxTemplateCacheSize entries to prevent unbounded memory growth.
 var templateCache sync.Map
 
-var templateCacheLen int64
+var templateCacheLen atomic.Int64
 
 const maxTemplateCacheSize = 1000
 
@@ -71,9 +72,9 @@ func Evaluate(tmplStr string, ctx *TemplateContext) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("parsing template %q: %w", tmplStr, err)
 		}
-		if templateCacheLen < maxTemplateCacheSize {
+		if templateCacheLen.Load() < maxTemplateCacheSize {
 			templateCache.Store(tmplStr, tmpl)
-			templateCacheLen++
+			templateCacheLen.Add(1)
 		}
 	}
 
