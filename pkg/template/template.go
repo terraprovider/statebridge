@@ -6,8 +6,15 @@ import (
 	"bytes"
 	"fmt"
 	"strings"
+	"sync"
 	"text/template"
 )
+
+// templateCache caches parsed templates keyed by template string.
+var templateCache sync.Map
+
+// funcMap is the shared, immutable function map for all template evaluations.
+var funcMap = FuncMap()
 
 // TemplateContext is the data made available to Go templates when evaluating
 // address and import_id expressions. It contains the full state context
@@ -48,12 +55,19 @@ type TemplateContext struct {
 // the rendered result. Returns an error if the template is syntactically invalid
 // or if evaluation fails (e.g., accessing a missing attribute).
 func Evaluate(tmplStr string, ctx *TemplateContext) (string, error) {
-	tmpl, err := template.New("migration").
-		Funcs(FuncMap()).
-		Option("missingkey=error").
-		Parse(tmplStr)
-	if err != nil {
-		return "", fmt.Errorf("parsing template %q: %w", tmplStr, err)
+	var tmpl *template.Template
+	if cached, ok := templateCache.Load(tmplStr); ok {
+		tmpl = cached.(*template.Template)
+	} else {
+		var err error
+		tmpl, err = template.New("migration").
+			Funcs(funcMap).
+			Option("missingkey=error").
+			Parse(tmplStr)
+		if err != nil {
+			return "", fmt.Errorf("parsing template %q: %w", tmplStr, err)
+		}
+		templateCache.Store(tmplStr, tmpl)
 	}
 
 	var buf bytes.Buffer

@@ -4,8 +4,12 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"sync"
 	"text/template"
 )
+
+// regexCache caches compiled regular expressions keyed by pattern string.
+var regexCache sync.Map
 
 // FuncMap returns custom template functions available in migration templates.
 // These supplement Go's built-in template functions with string manipulation
@@ -151,9 +155,16 @@ var nonAlphanumRegex = regexp.MustCompile(`[^a-zA-Z0-9]+`)
 // regexReplaceFunc replaces all matches of a regex pattern with a replacement string.
 // The input string is the last parameter for pipe compatibility.
 func regexReplaceFunc(pattern, repl, s string) (string, error) {
-	re, err := regexp.Compile(pattern)
-	if err != nil {
-		return "", fmt.Errorf("regexReplace: invalid pattern %q: %w", pattern, err)
+	var re *regexp.Regexp
+	if cached, ok := regexCache.Load(pattern); ok {
+		re = cached.(*regexp.Regexp)
+	} else {
+		var err error
+		re, err = regexp.Compile(pattern)
+		if err != nil {
+			return "", fmt.Errorf("regexReplace: invalid pattern %q: %w", pattern, err)
+		}
+		regexCache.Store(pattern, re)
 	}
 	return re.ReplaceAllString(s, repl), nil
 }
