@@ -49,7 +49,8 @@ operations:
 	requireGenerate(t, migDir)
 
 	// Upload generated files from both layers
-	mgr := upload.NewManager(env.cred, env.initArgs)
+	factory := upload.BucketUploaderFactory(env.cred)
+	mgr := upload.NewManager(factory, env.initArgs)
 	if err := mgr.UploadFromDisk(env.ctx, []string{env.appDir}); err != nil {
 		t.Fatalf("upload: %v", err)
 	}
@@ -62,7 +63,7 @@ operations:
 	cleanupMigrationFiles(t, env.sharedDir)
 
 	// Download into app layer
-	dl := download.NewDownloader(env.cred, env.initArgs, download.WithTofuPath(tofuExecPath(t)))
+	dl := download.NewDownloader(factory, env.initArgs, download.WithTofuPath(tofuExecPath(t)))
 	downloaded, err := dl.Download(env.ctx, env.appDir)
 	if err != nil {
 		t.Fatalf("download: %v", err)
@@ -117,7 +118,8 @@ operations:
 	requireGenerate(t, migDir)
 
 	// First upload: should succeed
-	mgr := upload.NewManager(env.cred, env.initArgs,
+	factory := upload.BucketUploaderFactory(env.cred)
+	mgr := upload.NewManager(factory, env.initArgs,
 		upload.WithTofuPath(tofuExecPath(t), env.initArgs),
 	)
 	if err := mgr.UploadFromDisk(env.ctx, []string{env.appDir}); err != nil {
@@ -142,7 +144,7 @@ operations:
 	runGenerate(t, []string{migDir})
 
 	// Second upload with guard: should be refused (migration still active)
-	mgr2 := upload.NewManager(env.cred, env.initArgs,
+	mgr2 := upload.NewManager(factory, env.initArgs,
 		upload.WithTofuPath(tofuExecPath(t), env.initArgs),
 	)
 	err := mgr2.UploadFromDisk(env.ctx, []string{env.appDir})
@@ -154,7 +156,7 @@ operations:
 	}
 
 	// Upload with --force: should succeed
-	mgr3 := upload.NewManager(env.cred, env.initArgs,
+	mgr3 := upload.NewManager(factory, env.initArgs,
 		upload.WithTofuPath(tofuExecPath(t), env.initArgs),
 		upload.WithForce(true),
 	)
@@ -195,7 +197,8 @@ operations:
 	requireGenerate(t, migDir)
 
 	// Upload migration files from app layer (import blocks)
-	mgr := upload.NewManager(env.cred, env.initArgs)
+	factory := upload.BucketUploaderFactory(env.cred)
+	mgr := upload.NewManager(factory, env.initArgs)
 	if err := mgr.UploadFromDisk(env.ctx, []string{env.appDir}); err != nil {
 		t.Fatalf("upload: %v", err)
 	}
@@ -211,7 +214,7 @@ operations:
 	cleanupMigrationFiles(t, env.appDir)
 
 	// Download: auto-inferred conditions should detect migration is done
-	dl := download.NewDownloader(env.cred, env.initArgs, download.WithTofuPath(tofuExecPath(t)))
+	dl := download.NewDownloader(factory, env.initArgs, download.WithTofuPath(tofuExecPath(t)))
 	downloaded, err := dl.Download(env.ctx, env.appDir)
 	if err != nil {
 		t.Fatalf("download: %v", err)
@@ -258,13 +261,17 @@ operations:
 	requireGenerate(t, migDir)
 
 	// Upload from app layer
-	mgr := upload.NewManager(env.cred, env.initArgs)
+	factory := upload.BucketUploaderFactory(env.cred)
+	mgr := upload.NewManager(factory, env.initArgs)
 	if err := mgr.UploadFromDisk(env.ctx, []string{env.appDir}); err != nil {
 		t.Fatalf("upload: %v", err)
 	}
 
 	// Verify blobs exist before prune
-	uploader, err := upload.DefaultUploaderFactory(env.storageAccount, env.containerName, env.cred)
+	uploader, err := factory(&upload.AzurermBackendConfig{
+		StorageAccountName: env.storageAccount,
+		ContainerName:      env.containerName,
+	})
 	if err != nil {
 		t.Fatalf("creating uploader: %v", err)
 	}

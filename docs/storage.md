@@ -1,16 +1,32 @@
-# Azure Blob Storage
+# Blob Storage
 
-tfmigrate can persist generated migration files to Azure Blob Storage and download them per-layer during CI runs. This enables a workflow where migrations are generated centrally and applied per-layer in separate pipeline steps.
+tfmigrate persists generated migration files to blob storage and downloads them per-layer during CI runs. This enables a workflow where migrations are generated centrally and applied per-layer in separate pipeline steps.
+
+The storage backend is auto-detected from each layer's Terraform/OpenTofu backend configuration. Supported backends:
+
+| Backend | HCL block | Storage target |
+|---------|-----------|----------------|
+| **Azure Blob Storage** | `backend "azurerm"` | Azure Storage container |
+| **AWS S3** | `backend "s3"` | S3 bucket |
+| **Google Cloud Storage** | `backend "gcs"` | GCS bucket |
+| **Local filesystem** | `backend "local"` | Local directory |
 
 ## Upload
 
 ### Generate and Upload in One Step
 
 ```bash
+# Azure
 tfmigrate generate --upload --backend-config=storage_account_name=myacct migrations/
+
+# S3
+tfmigrate generate --upload --backend-config=bucket=my-state-bucket migrations/
+
+# GCS
+tfmigrate generate --upload --backend-config=bucket=my-state-bucket migrations/
 ```
 
-This runs the full generation pipeline, writes files to disk, then uploads each generated `.tf` file to `migrations/<filename>` in the Azure Blob Storage container configured in that layer's backend. Cannot be combined with `--dry-run`.
+This runs the full generation pipeline, writes files to disk, then uploads each generated `.tf` file to `migrations/<filename>` in the storage container/bucket configured in that layer's backend. Cannot be combined with `--dry-run`.
 
 ### Standalone Upload
 
@@ -29,6 +45,7 @@ tfmigrate upload ./layers/compute ./layers/networking
 ```bash
 # Override backend config values
 tfmigrate upload --backend-config=storage_account_name=myacct ./layers/compute
+tfmigrate upload --backend-config=bucket=my-state-bucket ./layers/networking
 
 # Use a backend config file
 tfmigrate upload --backend-config=backend.hcl ./layers/compute
@@ -36,13 +53,30 @@ tfmigrate upload --backend-config=backend.hcl ./layers/compute
 
 ## Backend Configuration Discovery
 
-The upload target (storage account and container) is resolved per layer by:
+The storage target is resolved per layer by:
 
-1. Parsing `.tf` files in the layer directory for a `backend "azurerm"` block
+1. Parsing `.tf` files in the layer directory for a `backend "<type>"` block
 2. Extracting `key=value` pairs from `--backend-config` CLI flags. File paths are also supported: `--backend-config=path/to/file.hcl` reads key=value pairs from the file (HCL or plain text format)
 3. Merging: `--backend-config` flags override inline HCL values
 
-Required backend fields: `storage_account_name`, `container_name`.
+### Required fields per backend
+
+| Backend | Required fields |
+|---------|----------------|
+| `azurerm` | `storage_account_name`, `container_name` |
+| `s3` | `bucket` |
+| `gcs` | `bucket` |
+| `local` | `path` |
+
+### Recognized fields per backend
+
+**azurerm**: `storage_account_name`, `container_name`, `resource_group_name`
+
+**s3**: `bucket`, `region`, `endpoint`, `key`, `force_path_style`
+
+**gcs**: `bucket`, `prefix`
+
+**local**: `path`
 
 ## Version Cleanup
 
@@ -53,7 +87,7 @@ Removed old version: migrations/migration.001_move.oldold00.tf
 Uploaded: migrations/migration.001_move.newnew99.tf
 ```
 
-The storage account is expected to have blob versioning enabled, so deleted versions remain recoverable through Azure's versioning.
+For Azure, blob versioning can make deleted versions recoverable. S3 and GCS have their own versioning features that serve the same purpose.
 
 ## Upload Guard (Overwrite Protection)
 
@@ -70,13 +104,13 @@ This protects against a common CI failure mode: a pipeline partially applies mig
 
 ## Auto-Pruning Stale Blobs
 
-When using `generate --upload`, migration blobs for retired files (`status: retired`) and files whose source layers no longer exist are automatically pruned from blob storage. This keeps storage clean without manual intervention.
+When using `generate --upload`, migration blobs for retired files (`status: retired`) and files whose source layers no longer exist are automatically pruned from storage. This keeps storage clean without manual intervention.
 
 Auto-pruning only applies to layers that active migrations are uploading to. For complete cleanup across all layers, use the `prune` command.
 
 ## Download
 
-Download applicable migration files from the layer's blob storage container:
+Download applicable migration files from the layer's storage container/bucket:
 
 ```bash
 cd layers/compute && tfmigrate download
@@ -93,15 +127,15 @@ Must be run from within a layer directory containing backend configuration.
 ### Download Flow
 
 1. Discovers backend config from `.tf` files in the current directory (+ `--backend-config` overrides)
-2. Lists all `migrations/migration.*.tf` blobs in the layer's storage container
-3. Cleans up all existing `migration.*.tf` files in the target directory (blob storage is source of truth)
+2. Lists all `migrations/migration.*.tf` blobs in the layer's storage
+3. Cleans up all existing `migration.*.tf` files in the target directory (storage is source of truth)
 4. Downloads each blob and parses embedded metadata
 5. Evaluates auto-inferred + explicit conditions: for `layer == "."`, reads state and checks; for cross-layer conditions, warns and treats as met
 6. Writes only applicable files; skipped files print a message to stderr
 
 ## Prune
 
-Remove completed migration blobs from Azure Blob Storage:
+Remove completed migration blobs from storage:
 
 ```bash
 # Dry run: see what would be pruned
@@ -123,7 +157,11 @@ tfmigrate prune --force ./layers/compute
 
 ## Authentication
 
-Upload, download, and prune commands authenticate using Azure SDK credentials configured through environment variables:
+Authentication is resolved per backend using the native credential chain for each cloud provider.
+
+### Azure (`azurerm`)
+
+Uses Azure SDK credentials configured through environment variables:
 
 | Variable(s) | Method |
 |-------------|--------|
@@ -134,3 +172,28 @@ Upload, download, and prune commands authenticate using Azure SDK credentials co
 | `ARM_OIDC_TOKEN` | Direct OIDC assertion token |
 | `ARM_OIDC_REQUEST_URL` / `ACTIONS_ID_TOKEN_REQUEST_URL` | OIDC token request URL |
 | `ARM_OIDC_REQUEST_TOKEN` / `ACTIONS_ID_TOKEN_REQUEST_TOKEN` | OIDC request auth token |
+
+### AWS S3 (`s3`)
+
+Uses the default AWS SDK credential chain:
+
+| Source | Description |
+|--------|-------------|
+| Environment variables | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN` |
+| Shared credentials | `~/.aws/credentials` and `~/.aws/config` |
+| IAM role | EC2 instance role, ECS task role |
+| OIDC / Web identity | `AWS_WEB_IDENTITY_TOKEN_FILE`, `AWS_ROLE_ARN` |
+
+### Google Cloud Storage (`gcs`)
+
+Uses the default GCP credential chain:
+
+| Source | Description |
+|--------|-------------|
+| Environment variable | `GOOGLE_APPLICATION_CREDENTIALS` pointing to a service account key |
+| Application Default Credentials | `gcloud auth application-default login` |
+| Metadata server | GCE/GKE workload identity |
+
+### Local filesystem (`local`)
+
+No authentication required. Migration files are stored as regular files on disk at the configured path. Useful for local development and testing.

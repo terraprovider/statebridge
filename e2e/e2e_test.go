@@ -1141,7 +1141,7 @@ resource "azurerm_resource_group" "test" {
 		"-backend-config=container_name=" + containerName,
 	}
 
-	mgr := upload.NewManager(cred, initArgs)
+	mgr := upload.NewManager(upload.BucketUploaderFactory(cred), initArgs)
 	if err := mgr.UploadFromDisk(ctx, []string{networkingDir}); err != nil {
 		t.Fatalf("uploading migration files: %v", err)
 	}
@@ -1156,7 +1156,7 @@ resource "azurerm_resource_group" "test" {
 	}
 
 	// Download from blob storage back to networking layer
-	dl := download.NewDownloader(cred, initArgs, download.WithTofuPath(tofuExecPath(t)))
+	dl := download.NewDownloader(upload.BucketUploaderFactory(cred), initArgs, download.WithTofuPath(tofuExecPath(t)))
 	downloaded, err := dl.Download(ctx, networkingDir)
 	if err != nil {
 		t.Fatalf("downloading migration files: %v", err)
@@ -1303,7 +1303,9 @@ resource "azurerm_resource_group" "test" {
 		"-backend-config=container_name=" + containerName,
 	}
 
-	guardedMgr := upload.NewManager(cred, initArgs, upload.WithTofuPath(tofuExecPath(t), initArgs))
+	factory := upload.BucketUploaderFactory(cred)
+
+	guardedMgr := upload.NewManager(factory, initArgs, upload.WithTofuPath(tofuExecPath(t), initArgs))
 	if err := guardedMgr.UploadFromDisk(ctx, []string{networkingDir}); err != nil {
 		t.Fatalf("initial upload failed: %v", err)
 	}
@@ -1339,7 +1341,7 @@ operations:
 
 	// Force should bypass guard and succeed
 	forceMgr := upload.NewManager(
-		cred,
+		factory,
 		initArgs,
 		upload.WithTofuPath(tofuExecPath(t), initArgs),
 		upload.WithForce(true),

@@ -14,37 +14,104 @@ import (
 	"github.com/redtenant/tfmigrate/pkg/state"
 )
 
-// UploaderFactory creates BlobUploader instances for a given storage account
-// and container. Used for dependency injection in tests.
-type UploaderFactory func(storageAccountName, containerName string, cred azcore.TokenCredential) (BlobUploader, error)
+// BucketUploaderFactory creates a UploaderFactory that uses gocloud.dev/blob
+// for all supported backends. Azure requires a credential; S3/GCS use their
+// respective SDK default credential chains; local needs no credentials.
+func BucketUploaderFactory(azureCred azcore.TokenCredential) UploaderFactory {
+	return func(config BackendConfig) (BlobUploader, error) {
+		ctx := context.Background()
+		switch c := config.(type) {
+		case *AzurermBackendConfig:
+			if azureCred == nil {
+				return nil, fmt.Errorf("azurerm backend requires Azure credentials; set ARM_* environment variables")
+			}
+			bucket, err := openAzureBucket(ctx, c, azureCred)
+			if err != nil {
+				return nil, err
+			}
+			return NewGoCDKUploader(bucket), nil
+		case *S3BackendConfig:
+			bucket, err := openS3Bucket(ctx, c)
+			if err != nil {
+				return nil, err
+			}
+			return NewGoCDKUploader(bucket), nil
+		case *GCSBackendConfig:
+			bucket, err := openGCSBucket(ctx, c)
+			if err != nil {
+				return nil, err
+			}
+			return NewGoCDKUploader(bucket), nil
+		case *LocalBackendConfig:
+			bucket, err := openLocalBucket(ctx, c)
+			if err != nil {
+				return nil, err
+			}
+			return NewGoCDKUploader(bucket), nil
+		default:
+			return nil, fmt.Errorf("unsupported backend type %q for blob storage", config.Type())
+		}
+	}
+}
 
-// DefaultUploaderFactory creates AzureBlobUploader instances.
-func DefaultUploaderFactory(storageAccountName, containerName string, cred azcore.TokenCredential) (BlobUploader, error) {
-	return NewAzureBlobUploader(storageAccountName, containerName, cred)
+// UploaderFactory creates BlobUploader instances from backend configuration.
+// Used for dependency injection in tests.
+type UploaderFactory func(config BackendConfig) (BlobUploader, error)
+
+// DefaultUploaderFactory creates BlobUploader instances based on backend type.
+// For azurerm, it requires Azure credentials to be configured via environment.
+// For S3/GCS, it uses the respective SDK default credential chains.
+// For local, no credentials are needed.
+var DefaultUploaderFactory UploaderFactory = defaultUploaderFactory
+
+func defaultUploaderFactory(config BackendConfig) (BlobUploader, error) {
+	ctx := context.Background()
+	switch c := config.(type) {
+	case *AzurermBackendConfig:
+		return nil, fmt.Errorf("azurerm backend requires credential injection; use BucketUploaderFactory")
+	case *S3BackendConfig:
+		bucket, err := openS3Bucket(ctx, c)
+		if err != nil {
+			return nil, err
+		}
+		return NewGoCDKUploader(bucket), nil
+	case *GCSBackendConfig:
+		bucket, err := openGCSBucket(ctx, c)
+		if err != nil {
+			return nil, err
+		}
+		return NewGoCDKUploader(bucket), nil
+	case *LocalBackendConfig:
+		bucket, err := openLocalBucket(ctx, c)
+		if err != nil {
+			return nil, err
+		}
+		return NewGoCDKUploader(bucket), nil
+	default:
+		return nil, fmt.Errorf("unsupported backend type %q for blob storage", config.Type())
+	}
 }
 
 // GuardChecker evaluates whether an existing blob's migration conditions are
 // still met. Returns true if the blob is still active (should NOT be overwritten).
 type GuardChecker func(ctx context.Context, blobContent []byte, layerPath string) (bool, error)
 
-// Manager orchestrates upload of generated migration files to Azure Blob Storage.
+// Manager orchestrates upload of generated migration files to blob storage.
 // It discovers backend configuration per layer and manages uploader lifecycle.
 type Manager struct {
-	cred              azcore.TokenCredential
 	uploaderFactory   UploaderFactory
 	initArgs          []string
-	uploaderCache     map[string]BlobUploader // keyed by "account|container"
+	uploaderCache     map[string]BlobUploader // keyed by BackendConfig.CacheKey()
 	uploadedInSession map[string]bool         // track blobs uploaded in this session to avoid cleanup
 	force             bool
 	guardChecker      GuardChecker
 }
 
-// NewManager creates an upload Manager with the given credential and
+// NewManager creates an upload Manager with the given factory and
 // init args (used for backend config discovery in all layers).
-func NewManager(cred azcore.TokenCredential, initArgs []string, opts ...ManagerOption) *Manager {
+func NewManager(factory UploaderFactory, initArgs []string, opts ...ManagerOption) *Manager {
 	m := &Manager{
-		cred:              cred,
-		uploaderFactory:   DefaultUploaderFactory,
+		uploaderFactory:   factory,
 		initArgs:          initArgs,
 		uploaderCache:     make(map[string]BlobUploader),
 		uploadedInSession: make(map[string]bool),
@@ -79,10 +146,9 @@ func WithGuardChecker(gc GuardChecker) ManagerOption {
 }
 
 // WithUploaderFactory replaces the default uploader factory.
-// Used in tests to inject a mock. Returns m for chaining.
-func (m *Manager) WithUploaderFactory(factory UploaderFactory) *Manager {
-	m.uploaderFactory = factory
-	return m
+// Used in tests to inject a mock.
+func WithUploaderFactory(factory UploaderFactory) ManagerOption {
+	return func(m *Manager) { m.uploaderFactory = factory }
 }
 
 // defaultGuardChecker creates a GuardChecker that parses migration metadata
@@ -181,14 +247,14 @@ func (m *Manager) getUploader(layerPath string) (BlobUploader, error) {
 		return nil, err
 	}
 
-	cacheKey := config.StorageAccountName + "|" + config.ContainerName
+	cacheKey := config.CacheKey()
 	if uploader, ok := m.uploaderCache[cacheKey]; ok {
 		return uploader, nil
 	}
 
-	uploader, err := m.uploaderFactory(config.StorageAccountName, config.ContainerName, m.cred)
+	uploader, err := m.uploaderFactory(config)
 	if err != nil {
-		return nil, fmt.Errorf("creating uploader for %s/%s: %w", config.StorageAccountName, config.ContainerName, err)
+		return nil, fmt.Errorf("creating uploader for %s: %w", cacheKey, err)
 	}
 
 	m.uploaderCache[cacheKey] = uploader

@@ -51,7 +51,7 @@ pkg/migration/ → YAML schema types + validation (no external pkg/ deps)
 pkg/state/     → OpenTofu state reading (terraform-exec, caching, auto-init)
 pkg/generator/ → HCL block rendering + metadata embedding
 pkg/template/  → Go template evaluation + custom functions
-pkg/upload/    → Azure Blob Storage operations + overwrite guard
+pkg/upload/    → Blob storage operations (Azure, S3, GCS, local) via gocloud.dev + overwrite guard
 pkg/download/  → Download orchestration with condition evaluation
 pkg/conditions/→ Shared condition evaluation (upload guard + download)
 pkg/auth/      → Azure credential management (HashiCorp SDK → azcore bridge)
@@ -867,7 +867,7 @@ tfmigrate prune ./layers/compute ./layers/networking
 tfmigrate prune --force ./layers/compute
 ```
 
-The prune command lists migration blobs in Azure Blob Storage, evaluates their embedded conditions, and deletes blobs whose conditions no longer hold (migration completed). Blobs without conditions are kept.
+The prune command lists migration blobs in blob storage, evaluates their embedded conditions, and deletes blobs whose conditions no longer hold (migration completed). Blobs without conditions are kept.
 
 ## Validation Rules
 
@@ -949,7 +949,7 @@ tfmigrate generate migrations/
 # Generate with backend config for auto-init
 tfmigrate generate --backend-config=storage_account_name=myacct migrations/
 
-# Generate and upload to Azure Blob Storage in one step
+# Generate and upload to blob storage in one step
 tfmigrate generate --upload --backend-config=storage_account_name=myacct migrations/
 ```
 
@@ -994,9 +994,9 @@ The consolidation logic lives in `pkg/engine/consolidate.go` and runs as a post-
 
 For condition handling, `ResourceExists` in `pkg/state/types.go` was extended to support module addresses: `ResourceExists(s, "module.foo")` returns true if any resource under `module.foo` exists in state. This ensures download-time condition evaluation works correctly with module-level removed blocks.
 
-## Uploading Migrations to Azure Blob Storage
+## Uploading Migrations to Blob Storage
 
-Generated migration files can be persisted to Azure Blob Storage using either the `--upload` flag on `generate` or the standalone `upload` command.
+Generated migration files can be persisted to blob storage using either the `--upload` flag on `generate` or the standalone `upload` command. The backend type (azurerm, s3, gcs, local) is auto-detected from each layer's HCL configuration.
 
 ### Generate and Upload
 
@@ -1004,7 +1004,7 @@ Generated migration files can be persisted to Azure Blob Storage using either th
 tfmigrate generate --upload --backend-config=storage_account_name=myacct migrations/
 ```
 
-Runs the full pipeline, writes files to disk, then uploads each generated `.tf` file to `migrations/<filename>` in the Azure Blob Storage container configured in that layer's backend. Cannot be combined with `--dry-run`. The `--backend-config` flag is used both for auto-init during state reads and for backend config discovery during upload.
+Runs the full pipeline, writes files to disk, then uploads each generated `.tf` file to `migrations/<filename>` in the storage container/bucket configured in that layer's backend. Cannot be combined with `--dry-run`. The `--backend-config` flag is used both for auto-init during state reads and for backend config discovery during upload.
 
 ### Standalone Upload
 
@@ -1037,13 +1037,13 @@ tfmigrate upload --backend-config=backend.hcl ./layers/compute
 
 ### Backend Configuration Discovery
 
-The upload target (storage account + container) is resolved per layer:
+The upload target is resolved per layer:
 
-1. Parse `.tf` files in the layer directory for `terraform { backend "azurerm" { ... } }`
+1. Parse `.tf` files in the layer directory for `terraform { backend "<type>" { ... } }`
 2. Extract `key=value` pairs from `--backend-config` CLI flags. File paths are also supported: `--backend-config=path/to/file.hcl` reads key=value pairs from the file (HCL or plain text format)
 3. Merge: `--backend-config` overrides inline HCL values
 
-Required fields: `storage_account_name`, `container_name`.
+Required fields per backend: azurerm (`storage_account_name`, `container_name`), s3 (`bucket`), gcs (`bucket`), local (`path`).
 
 ### Version Cleanup
 
@@ -1056,14 +1056,11 @@ Uploaded: migrations/migration.001_move.newnew99.tf
 
 ### Authentication
 
-Uses `pkg/auth` for Azure credentials via environment variables:
-- `ARM_CLIENT_ID`, `ARM_TENANT_ID`, `ARM_CLIENT_SECRET` (service principal)
-- `ARM_USE_CLI` (Azure CLI)
-- `ARM_USE_MSI` (managed identity)
-- `ARM_USE_OIDC` (OIDC federation — GitHub Actions, ADO Pipeline, generic)
-- `ARM_OIDC_TOKEN` (direct OIDC assertion token)
-- `ARM_OIDC_REQUEST_URL` / `ACTIONS_ID_TOKEN_REQUEST_URL` (OIDC token request URL)
-- `ARM_OIDC_REQUEST_TOKEN` / `ACTIONS_ID_TOKEN_REQUEST_TOKEN` (OIDC request auth token)
+Authentication is resolved per backend using the native credential chain:
+- **azurerm**: `pkg/auth` for Azure credentials via environment variables (`ARM_CLIENT_ID`, `ARM_TENANT_ID`, `ARM_CLIENT_SECRET`, `ARM_USE_CLI`, `ARM_USE_MSI`, `ARM_USE_OIDC`)
+- **s3**: AWS SDK default credential chain (env vars, shared config, IAM role, OIDC)
+- **gcs**: GCP Application Default Credentials (`GOOGLE_APPLICATION_CREDENTIALS`, metadata server)
+- **local**: No authentication required
 
 ### Upload Guard (Overwrite Protection)
 
@@ -1085,13 +1082,13 @@ When using `--upload`, migration files that are retired (`status: retired`) or a
 
 Only blobs in layers that are being actively uploaded to are auto-pruned. For fully orphaned layers (no active migrations target them), use `tfmigrate prune` manually.
 
-## Downloading Migrations from Azure Blob Storage
+## Downloading Migrations from Blob Storage
 
 ```bash
 tfmigrate download [flags]
 ```
 
-Downloads applicable migration files from the layer's blob container to the current working directory. Operates per-layer (must run from a layer directory).
+Downloads applicable migration files from the layer's storage container/bucket to the current working directory. Operates per-layer (must run from a layer directory).
 
 **Flags:**
 
@@ -1219,7 +1216,9 @@ Key source files for understanding the codebase:
 - `pkg/auth/` — Azure credential management (HashiCorp go-azure-sdk wrapper for azcore.TokenCredential)
 - `pkg/auth/credential.go` — TokenCredential wrapper bridging HashiCorp SDK auth to azcore
 - `pkg/upload/backend.go` — backend config discovery (HCL parsing + init arg merging)
-- `pkg/upload/uploader.go` — Azure Blob Storage operations (BlobUploader interface)
+- `pkg/upload/uploader.go` — BlobUploader interface for blob storage operations
+- `pkg/upload/uploader_gcdk.go` — gocloud.dev adapter implementing BlobUploader (Azure, S3, GCS, local)
+- `pkg/upload/bucket.go` — Per-backend bucket openers using gocloud.dev
 - `pkg/upload/upload.go` — upload orchestration (Manager, version cleanup, overwrite protection guard)
 - `pkg/conditions/evaluate.go` — shared condition evaluation for upload guard and download
 - `pkg/download/download.go` — download orchestration with condition evaluation

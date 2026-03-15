@@ -31,7 +31,7 @@ tfmigrate generate migrations/001_move.yaml other_migrations/
 |------|-------------|
 | `--dry-run` | Print generated HCL to stdout without writing files |
 | `--tofu-path <path>` | Override path to the `tofu` binary (default: auto-detect from PATH) |
-| `--upload` | Upload generated files to Azure Blob Storage after generation |
+| `--upload` | Upload generated files to blob storage after generation |
 | `--backend-config` | Backend configuration passed to tofu init, as `key=value` or path to a file (repeatable) |
 | `--force` | Force upload even if existing migrations are still active (overwrite protection bypass; only relevant with `--upload`) |
 | `--strict` | Treat missing layer directories as hard errors instead of auto-skipping |
@@ -50,13 +50,13 @@ By default, migration files referencing non-existent layer directories (e.g., `s
 
 ## `upload`
 
-Upload pre-generated migration files to Azure Blob Storage.
+Upload pre-generated migration files to blob storage.
 
 ```
 tfmigrate upload [layer-dirs...] [flags]
 ```
 
-Each layer directory is scanned for `migration.*.tf` files and uploaded to the storage container discovered from the layer's backend configuration.
+Each layer directory is scanned for `migration.*.tf` files and uploaded to the storage container/bucket discovered from the layer's backend configuration. The backend type (azurerm, s3, gcs, local) is auto-detected from the layer's HCL.
 
 ### Flags
 
@@ -77,19 +77,19 @@ tfmigrate upload --backend-config=storage_account_name=myacct ./layers/compute
 tfmigrate upload --backend-config=backend.hcl ./layers/compute
 ```
 
-See [Azure Blob Storage](azure-storage.md) for details on backend discovery, upload guard, and authentication.
+See [Blob Storage](storage.md) for details on backend discovery, upload guard, and authentication.
 
 ---
 
 ## `download`
 
-Download applicable migration files from the layer's blob storage container to the current directory.
+Download applicable migration files from the layer's blob storage to the current directory.
 
 ```
 tfmigrate download [flags]
 ```
 
-This command must be run from within a layer directory containing backend configuration. Conditions embedded in migration metadata are evaluated against the layer's state, and only migrations that need to be applied are written.
+This command must be run from within a layer directory containing backend configuration. The backend type is auto-detected from the layer's HCL. Conditions embedded in migration metadata are evaluated against the layer's state, and only migrations that need to be applied are written.
 
 ### Flags
 
@@ -124,7 +124,7 @@ tfmigrate download --dry-run
    - Writes the file to the current directory only if conditions are met
 4. Skipped migrations print an informational message to stderr
 
-See [Azure Blob Storage](azure-storage.md) for details on backend discovery and authentication.
+See [Blob Storage](storage.md) for details on backend discovery and authentication.
 
 ---
 
@@ -182,7 +182,7 @@ fi
 
 ## `prune`
 
-Removes completed migration blobs from Azure Blob Storage.
+Removes completed migration blobs from blob storage.
 
 ```bash
 # Dry run: see what would be pruned

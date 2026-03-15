@@ -8,6 +8,9 @@ import (
 	"os/exec"
 
 	"github.com/spf13/cobra"
+
+	"github.com/redtenant/tfmigrate/pkg/auth"
+	"github.com/redtenant/tfmigrate/pkg/upload"
 )
 
 // ExitCodeError wraps an exit code so that cobra RunE handlers can propagate
@@ -70,4 +73,26 @@ func resolveTofuPath(flagPath string) (string, error) {
 		return "", fmt.Errorf("tofu binary not found in PATH; use --tofu-path to specify it")
 	}
 	return path, nil
+}
+
+// createUploaderFactory builds a UploaderFactory that handles all backends.
+// Azure credentials are resolved lazily: only when an azurerm backend is
+// encountered. S3/GCS use their native SDK credential chains; local needs
+// no credentials.
+func createUploaderFactory() (upload.UploaderFactory, error) {
+	credCfg, err := auth.NewCredentialConfiguration(
+		auth.WithDefaultEnvironmentVariables(),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("configuring credentials: %w", err)
+	}
+
+	cred, err := credCfg.TokenCredential()
+	if err != nil {
+		// Azure cred failed — create a factory that works for non-Azure
+		// backends but returns a clear error for azurerm.
+		return upload.BucketUploaderFactory(nil), nil
+	}
+
+	return upload.BucketUploaderFactory(cred), nil
 }

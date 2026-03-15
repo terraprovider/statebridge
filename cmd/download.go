@@ -7,7 +7,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/redtenant/tfmigrate/pkg/auth"
 	"github.com/redtenant/tfmigrate/pkg/download"
 )
 
@@ -20,14 +19,14 @@ var (
 // downloadCmd represents the download command.
 var downloadCmd = &cobra.Command{
 	Use:   "download",
-	Short: "Download applicable migration files from Azure Blob Storage",
-	Long: `Download migration files from the Azure Blob Storage container configured
+	Short: "Download applicable migration files from blob storage",
+	Long: `Download migration files from the blob storage container/bucket configured
 in the current layer's backend. Each migration file's conditions are evaluated
 against the layer's state, and only applicable migrations are written to the
 current directory.
 
 This command must be run from within a layer directory that contains Terraform
-backend configuration (backend "azurerm" block in .tf files).
+backend configuration. The backend type (azurerm, s3, gcs, local) is auto-detected.
 
 The backend is automatically initialized to read state for condition evaluation.
 
@@ -56,16 +55,9 @@ func init() {
 }
 
 func runDownload(cmd *cobra.Command, args []string) error {
-	credCfg, err := auth.NewCredentialConfiguration(
-		auth.WithDefaultEnvironmentVariables(),
-	)
+	factory, err := createUploaderFactory()
 	if err != nil {
-		return fmt.Errorf("configuring Azure credentials: %w", err)
-	}
-
-	cred, err := credCfg.TokenCredential()
-	if err != nil {
-		return fmt.Errorf("creating Azure credential: %w", err)
+		return err
 	}
 
 	cwd, err := os.Getwd()
@@ -86,7 +78,7 @@ func runDownload(cmd *cobra.Command, args []string) error {
 	dlOpts = append(dlOpts, download.WithTofuPath(tofuPath))
 	dlOpts = append(dlOpts, download.WithDryRun(flagDownloadDryRun))
 
-	dl := download.NewDownloader(cred, initArgs, dlOpts...)
+	dl := download.NewDownloader(factory, initArgs, dlOpts...)
 	ctx := context.Background()
 
 	files, err := dl.Download(ctx, cwd)

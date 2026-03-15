@@ -1,7 +1,10 @@
-// Package upload provides Azure Blob Storage upload capabilities for
-// generated migration files. It discovers backend configuration from
-// Terraform layer directories and migration YAML init arguments, then
-// uploads migration files to the appropriate storage containers.
+// Package upload provides blob storage upload capabilities for generated
+// migration files. It discovers backend configuration from Terraform layer
+// directories and migration YAML init arguments, then uploads migration
+// files to the appropriate storage containers.
+//
+// Supported backends: azurerm (Azure Blob Storage), s3 (AWS S3),
+// gcs (Google Cloud Storage), local (filesystem).
 package upload
 
 import (
@@ -15,41 +18,148 @@ import (
 	"github.com/hashicorp/hcl/v2/hclsyntax"
 )
 
-// BackendConfig holds Azure Blob Storage backend configuration
-// discovered from a Terraform layer's backend block and/or init args.
-type BackendConfig struct {
+// BackendType identifies the storage backend kind.
+type BackendType string
+
+const (
+	BackendAzurerm BackendType = "azurerm"
+	BackendS3      BackendType = "s3"
+	BackendGCS     BackendType = "gcs"
+	BackendLocal   BackendType = "local"
+)
+
+// BackendConfig is the interface all backend configurations implement.
+type BackendConfig interface {
+	// Type returns the backend type identifier.
+	Type() BackendType
+	// Validate checks that all required fields are populated.
+	Validate() error
+	// CacheKey returns a string that uniquely identifies this storage target
+	// for uploader caching (e.g., "azurerm|acct|container").
+	CacheKey() string
+}
+
+// ---------------------------------------------------------------------------
+// Azure (azurerm) backend
+// ---------------------------------------------------------------------------
+
+// AzurermBackendConfig holds Azure Blob Storage backend configuration.
+type AzurermBackendConfig struct {
 	StorageAccountName string
 	ContainerName      string
 	ResourceGroupName  string
 }
 
-// Validate checks that the required fields are populated.
-func (b *BackendConfig) Validate() error {
-	if b.StorageAccountName == "" {
+func (c *AzurermBackendConfig) Type() BackendType { return BackendAzurerm }
+
+func (c *AzurermBackendConfig) Validate() error {
+	if c.StorageAccountName == "" {
 		return fmt.Errorf("storage_account_name is required but not set")
 	}
-	if b.ContainerName == "" {
+	if c.ContainerName == "" {
 		return fmt.Errorf("container_name is required but not set")
 	}
 	return nil
 }
 
-// BlobServiceURL returns the Azure Blob Storage service URL for the account.
-func (b *BackendConfig) BlobServiceURL() string {
-	return fmt.Sprintf("https://%s.blob.core.windows.net", b.StorageAccountName)
+func (c *AzurermBackendConfig) CacheKey() string {
+	return "azurerm|" + c.StorageAccountName + "|" + c.ContainerName
 }
 
-// DiscoverBackendConfig finds the azurerm backend configuration for a
-// Terraform layer by parsing .tf files in layerPath and merging with
-// values extracted from init args. Init args take precedence over inline values.
-func DiscoverBackendConfig(layerPath string, initArgs []string) (*BackendConfig, error) {
-	inline, err := ParseHCLBackend(layerPath)
+// BlobServiceURL returns the Azure Blob Storage service URL for the account.
+func (c *AzurermBackendConfig) BlobServiceURL() string {
+	return fmt.Sprintf("https://%s.blob.core.windows.net", c.StorageAccountName)
+}
+
+// ---------------------------------------------------------------------------
+// AWS S3 backend
+// ---------------------------------------------------------------------------
+
+// S3BackendConfig holds AWS S3 backend configuration.
+type S3BackendConfig struct {
+	Bucket   string
+	Region   string
+	Endpoint string // custom endpoint (e.g., MinIO)
+}
+
+func (c *S3BackendConfig) Type() BackendType { return BackendS3 }
+
+func (c *S3BackendConfig) Validate() error {
+	if c.Bucket == "" {
+		return fmt.Errorf("bucket is required but not set")
+	}
+	return nil
+}
+
+func (c *S3BackendConfig) CacheKey() string {
+	return "s3|" + c.Bucket + "|" + c.Region
+}
+
+// ---------------------------------------------------------------------------
+// Google Cloud Storage (gcs) backend
+// ---------------------------------------------------------------------------
+
+// GCSBackendConfig holds Google Cloud Storage backend configuration.
+type GCSBackendConfig struct {
+	Bucket string
+	Prefix string
+}
+
+func (c *GCSBackendConfig) Type() BackendType { return BackendGCS }
+
+func (c *GCSBackendConfig) Validate() error {
+	if c.Bucket == "" {
+		return fmt.Errorf("bucket is required but not set")
+	}
+	return nil
+}
+
+func (c *GCSBackendConfig) CacheKey() string {
+	return "gcs|" + c.Bucket
+}
+
+// ---------------------------------------------------------------------------
+// Local filesystem backend
+// ---------------------------------------------------------------------------
+
+// LocalBackendConfig holds local filesystem backend configuration.
+// Migration files are stored in a "migrations" subdirectory under Path.
+type LocalBackendConfig struct {
+	Path string
+}
+
+func (c *LocalBackendConfig) Type() BackendType { return BackendLocal }
+
+func (c *LocalBackendConfig) Validate() error {
+	if c.Path == "" {
+		return fmt.Errorf("path is required but not set")
+	}
+	return nil
+}
+
+func (c *LocalBackendConfig) CacheKey() string {
+	return "local|" + c.Path
+}
+
+// ---------------------------------------------------------------------------
+// Backend discovery
+// ---------------------------------------------------------------------------
+
+// DiscoverBackendConfig finds the backend configuration for a Terraform layer
+// by parsing .tf files in layerPath and merging with values extracted from
+// init args. Init args take precedence over inline HCL values.
+func DiscoverBackendConfig(layerPath string, initArgs []string) (BackendConfig, error) {
+	inline, backendType, err := ParseHCLBackend(layerPath)
 	if err != nil {
 		return nil, fmt.Errorf("parsing backend config in %q: %w", layerPath, err)
 	}
 
-	overrides := ParseInitArgs(layerPath, initArgs)
-	config := MergeBackendConfig(inline, overrides)
+	if backendType == "" {
+		return nil, fmt.Errorf("backend config for layer %q: no supported backend block found in .tf files", layerPath)
+	}
+
+	overrides := ParseInitArgs(layerPath, backendType, initArgs)
+	config := MergeBackendConfig(inline, backendType, overrides)
 
 	if err := config.Validate(); err != nil {
 		return nil, fmt.Errorf("backend config for layer %q: %w", layerPath, err)
@@ -58,15 +168,23 @@ func DiscoverBackendConfig(layerPath string, initArgs []string) (*BackendConfig,
 	return config, nil
 }
 
+// supportedBackends lists the backend types we can handle.
+var supportedBackends = map[string]bool{
+	"azurerm": true,
+	"s3":      true,
+	"gcs":     true,
+	"local":   true,
+}
+
 // ParseHCLBackend scans all .tf files in layerPath for a
-// terraform { backend "azurerm" { ... } } block and extracts
-// storage_account_name, container_name, and resource_group_name.
-// Returns a zero-value BackendConfig (not an error) if no azurerm
-// backend block is found.
-func ParseHCLBackend(layerPath string) (*BackendConfig, error) {
+// terraform { backend "<type>" { ... } } block and extracts the
+// configuration for the first supported backend found.
+// Returns the config, detected backend type, and any error.
+// Returns ("", nil) type if no supported backend block is found.
+func ParseHCLBackend(layerPath string) (BackendConfig, BackendType, error) {
 	tfFiles, err := filepath.Glob(filepath.Join(layerPath, "*.tf"))
 	if err != nil {
-		return &BackendConfig{}, fmt.Errorf("globbing .tf files in %s: %w", layerPath, err)
+		return nil, "", fmt.Errorf("globbing .tf files in %s: %w", layerPath, err)
 	}
 
 	parser := hclparse.NewParser()
@@ -100,25 +218,49 @@ func ParseHCLBackend(layerPath string) (*BackendConfig, error) {
 			}
 
 			for _, backendBlock := range innerContent.Blocks {
-				if len(backendBlock.Labels) > 0 && backendBlock.Labels[0] == "azurerm" {
-					return extractAzurermConfig(backendBlock)
+				if len(backendBlock.Labels) == 0 {
+					continue
 				}
+				backendLabel := backendBlock.Labels[0]
+				if !supportedBackends[backendLabel] {
+					continue
+				}
+				cfg, err := extractBackendConfig(BackendType(backendLabel), backendBlock)
+				if err != nil {
+					return nil, "", err
+				}
+				return cfg, BackendType(backendLabel), nil
 			}
 		}
 	}
 
-	return &BackendConfig{}, nil
+	return nil, "", nil
+}
+
+// extractBackendConfig dispatches to the per-backend config extractor.
+func extractBackendConfig(bt BackendType, block *hcl.Block) (BackendConfig, error) {
+	switch bt {
+	case BackendAzurerm:
+		return extractAzurermConfig(block)
+	case BackendS3:
+		return extractS3Config(block)
+	case BackendGCS:
+		return extractGCSConfig(block)
+	case BackendLocal:
+		return extractLocalConfig(block)
+	default:
+		return nil, fmt.Errorf("unsupported backend type %q", bt)
+	}
 }
 
 // extractAzurermConfig reads recognized attributes from an azurerm backend block.
-func extractAzurermConfig(block *hcl.Block) (*BackendConfig, error) {
+func extractAzurermConfig(block *hcl.Block) (*AzurermBackendConfig, error) {
 	attrs, diags := block.Body.JustAttributes()
 	if diags.HasErrors() {
 		return nil, fmt.Errorf("parsing azurerm backend attributes: %s", diags.Error())
 	}
 
-	config := &BackendConfig{}
-
+	config := &AzurermBackendConfig{}
 	if attr, ok := attrs["storage_account_name"]; ok {
 		val, diags := attr.Expr.Value(nil)
 		if !diags.HasErrors() {
@@ -137,25 +279,116 @@ func extractAzurermConfig(block *hcl.Block) (*BackendConfig, error) {
 			config.ResourceGroupName = val.AsString()
 		}
 	}
-
 	return config, nil
+}
+
+// extractS3Config reads recognized attributes from an s3 backend block.
+func extractS3Config(block *hcl.Block) (*S3BackendConfig, error) {
+	attrs, diags := block.Body.JustAttributes()
+	if diags.HasErrors() {
+		return nil, fmt.Errorf("parsing s3 backend attributes: %s", diags.Error())
+	}
+
+	config := &S3BackendConfig{}
+	if attr, ok := attrs["bucket"]; ok {
+		val, diags := attr.Expr.Value(nil)
+		if !diags.HasErrors() {
+			config.Bucket = val.AsString()
+		}
+	}
+	if attr, ok := attrs["region"]; ok {
+		val, diags := attr.Expr.Value(nil)
+		if !diags.HasErrors() {
+			config.Region = val.AsString()
+		}
+	}
+	for _, key := range []string{"endpoint", "endpoints"} {
+		if attr, ok := attrs[key]; ok {
+			val, diags := attr.Expr.Value(nil)
+			if !diags.HasErrors() {
+				config.Endpoint = val.AsString()
+			}
+		}
+	}
+	return config, nil
+}
+
+// extractGCSConfig reads recognized attributes from a gcs backend block.
+func extractGCSConfig(block *hcl.Block) (*GCSBackendConfig, error) {
+	attrs, diags := block.Body.JustAttributes()
+	if diags.HasErrors() {
+		return nil, fmt.Errorf("parsing gcs backend attributes: %s", diags.Error())
+	}
+
+	config := &GCSBackendConfig{}
+	if attr, ok := attrs["bucket"]; ok {
+		val, diags := attr.Expr.Value(nil)
+		if !diags.HasErrors() {
+			config.Bucket = val.AsString()
+		}
+	}
+	if attr, ok := attrs["prefix"]; ok {
+		val, diags := attr.Expr.Value(nil)
+		if !diags.HasErrors() {
+			config.Prefix = val.AsString()
+		}
+	}
+	return config, nil
+}
+
+// extractLocalConfig reads recognized attributes from a local backend block.
+func extractLocalConfig(block *hcl.Block) (*LocalBackendConfig, error) {
+	attrs, diags := block.Body.JustAttributes()
+	if diags.HasErrors() {
+		return nil, fmt.Errorf("parsing local backend attributes: %s", diags.Error())
+	}
+
+	config := &LocalBackendConfig{}
+	if attr, ok := attrs["path"]; ok {
+		val, diags := attr.Expr.Value(nil)
+		if !diags.HasErrors() {
+			config.Path = val.AsString()
+		}
+	}
+	return config, nil
+}
+
+// ---------------------------------------------------------------------------
+// Init args & merge
+// ---------------------------------------------------------------------------
+
+// recognizedFields maps backend types to the set of fields that are relevant
+// for migration file storage.
+var recognizedFields = map[BackendType]map[string]bool{
+	BackendAzurerm: {
+		"storage_account_name": true,
+		"container_name":       true,
+		"resource_group_name":  true,
+	},
+	BackendS3: {
+		"bucket":   true,
+		"region":   true,
+		"endpoint": true,
+	},
+	BackendGCS: {
+		"bucket": true,
+		"prefix": true,
+	},
+	BackendLocal: {
+		"path": true,
+	},
 }
 
 // ParseInitArgs extracts backend-config key=value pairs from init arguments.
 // It recognizes the format "-backend-config=key=value" for inline values and
 // "-backend-config=path/to/file" for file-based configuration. When the value
 // after -backend-config= does not contain "=" it is treated as a file path.
-// Relative file paths are resolved against layerPath so that backend config
-// files placed alongside .tf files in the layer directory are found correctly.
-// Backend config files follow the Terraform/OpenTofu format: HCL assignments
-// (key = "value") or plain key=value lines.
-// Only known azurerm backend fields are extracted (storage_account_name,
-// container_name, resource_group_name). Non-backend-config args are silently ignored.
-func ParseInitArgs(layerPath string, args []string) map[string]string {
-	recognized := map[string]bool{
-		"storage_account_name": true,
-		"container_name":       true,
-		"resource_group_name":  true,
+// Relative file paths are resolved against layerPath.
+// Only fields relevant to the given backendType are extracted.
+func ParseInitArgs(layerPath string, backendType BackendType, args []string) map[string]string {
+	recognized := recognizedFields[backendType]
+	if recognized == nil {
+		return nil
 	}
 	result := make(map[string]string)
 
@@ -194,6 +427,74 @@ func ParseInitArgs(layerPath string, args []string) map[string]string {
 	}
 
 	return result
+}
+
+// MergeBackendConfig applies overrides onto a base config, returning a new
+// BackendConfig. Non-empty override values replace the corresponding base values.
+func MergeBackendConfig(base BackendConfig, bt BackendType, overrides map[string]string) BackendConfig {
+	if len(overrides) == 0 && base != nil {
+		return base
+	}
+
+	switch bt {
+	case BackendAzurerm:
+		cfg := &AzurermBackendConfig{}
+		if az, ok := base.(*AzurermBackendConfig); ok && az != nil {
+			*cfg = *az
+		}
+		if v, ok := overrides["storage_account_name"]; ok && v != "" {
+			cfg.StorageAccountName = v
+		}
+		if v, ok := overrides["container_name"]; ok && v != "" {
+			cfg.ContainerName = v
+		}
+		if v, ok := overrides["resource_group_name"]; ok && v != "" {
+			cfg.ResourceGroupName = v
+		}
+		return cfg
+
+	case BackendS3:
+		cfg := &S3BackendConfig{}
+		if s3, ok := base.(*S3BackendConfig); ok && s3 != nil {
+			*cfg = *s3
+		}
+		if v, ok := overrides["bucket"]; ok && v != "" {
+			cfg.Bucket = v
+		}
+		if v, ok := overrides["region"]; ok && v != "" {
+			cfg.Region = v
+		}
+		if v, ok := overrides["endpoint"]; ok && v != "" {
+			cfg.Endpoint = v
+		}
+		return cfg
+
+	case BackendGCS:
+		cfg := &GCSBackendConfig{}
+		if gcs, ok := base.(*GCSBackendConfig); ok && gcs != nil {
+			*cfg = *gcs
+		}
+		if v, ok := overrides["bucket"]; ok && v != "" {
+			cfg.Bucket = v
+		}
+		if v, ok := overrides["prefix"]; ok && v != "" {
+			cfg.Prefix = v
+		}
+		return cfg
+
+	case BackendLocal:
+		cfg := &LocalBackendConfig{}
+		if l, ok := base.(*LocalBackendConfig); ok && l != nil {
+			*cfg = *l
+		}
+		if v, ok := overrides["path"]; ok && v != "" {
+			cfg.Path = v
+		}
+		return cfg
+	}
+
+	// Unknown backend: return base unchanged.
+	return base
 }
 
 // parseBackendConfigFile reads a Terraform/OpenTofu backend config file and
@@ -278,20 +579,4 @@ func parseBackendConfigPlainText(data []byte) map[string]string {
 	}
 
 	return result
-}
-
-// MergeBackendConfig applies overrides onto base. Non-empty override
-// values replace the corresponding base values.
-func MergeBackendConfig(base *BackendConfig, overrides map[string]string) *BackendConfig {
-	result := *base
-	if v, ok := overrides["storage_account_name"]; ok && v != "" {
-		result.StorageAccountName = v
-	}
-	if v, ok := overrides["container_name"]; ok && v != "" {
-		result.ContainerName = v
-	}
-	if v, ok := overrides["resource_group_name"]; ok && v != "" {
-		result.ResourceGroupName = v
-	}
-	return &result
 }

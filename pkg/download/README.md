@@ -1,6 +1,6 @@
 # pkg/download
 
-The download package handles downloading migration files from Azure Blob Storage with condition-based filtering.
+The download package handles downloading migration files from blob storage with condition-based filtering.
 
 ## Source Files
 

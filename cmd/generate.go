@@ -8,7 +8,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/redtenant/tfmigrate/pkg/auth"
 	"github.com/redtenant/tfmigrate/pkg/engine"
 	"github.com/redtenant/tfmigrate/pkg/state"
 	"github.com/redtenant/tfmigrate/pkg/upload"
@@ -49,7 +48,7 @@ Examples:
   # Dry run: preview generated HCL without writing files
   tfmigrate generate --dry-run migrations/
 
-  # Generate and upload to Azure Blob Storage
+  # Generate and upload to blob storage
   tfmigrate generate --upload migrations/`,
 	Args: cobra.MinimumNArgs(1),
 	RunE: runGenerate,
@@ -63,7 +62,7 @@ func init() {
 	generateCmd.Flags().StringVar(&flagTofuPath, "tofu-path", "",
 		"Override path to the tofu binary (default: auto-detect from PATH)")
 	generateCmd.Flags().BoolVar(&flagUpload, "upload", false,
-		"Upload generated files to Azure Blob Storage after generation")
+		"Upload generated files to blob storage after generation")
 	generateCmd.Flags().StringSliceVar(&flagGenerateBackendConfig, "backend-config", nil,
 		"Backend configuration passed to tofu init, as key=value or path to a file (repeatable)")
 	generateCmd.Flags().BoolVar(&flagGenerateForce, "force", false,
@@ -130,20 +129,13 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// runUploadAfterGenerate handles uploading generated files to Azure Blob Storage
+// runUploadAfterGenerate handles uploading generated files to blob storage
 // after the generate pipeline completes. It also auto-prunes stale blobs for
 // migration files that were retired or skipped due to missing layers.
 func runUploadAfterGenerate(ctx context.Context, eng *engine.Engine, tofuPath string, skippedFiles []engine.SkippedFile) error {
-	credCfg, err := auth.NewCredentialConfiguration(
-		auth.WithDefaultEnvironmentVariables(),
-	)
+	factory, err := createUploaderFactory()
 	if err != nil {
-		return fmt.Errorf("configuring Azure credentials: %w", err)
-	}
-
-	cred, err := credCfg.TokenCredential()
-	if err != nil {
-		return fmt.Errorf("creating Azure credential: %w", err)
+		return err
 	}
 
 	// Build init args from --backend-config flags
@@ -153,7 +145,7 @@ func runUploadAfterGenerate(ctx context.Context, eng *engine.Engine, tofuPath st
 	opts = append(opts, upload.WithForce(flagGenerateForce))
 	opts = append(opts, upload.WithTofuPath(tofuPath, initArgs))
 
-	mgr := upload.NewManager(cred, initArgs, opts...)
+	mgr := upload.NewManager(factory, initArgs, opts...)
 	rendered := eng.Writer().RenderAll()
 
 	if err := mgr.UploadRendered(ctx, rendered); err != nil {

@@ -227,7 +227,7 @@ fi
 | [Keyed Moves](docs/keyed-moves.md) | Moving `for_each` resources with key remapping, prefix patterns, and cross-operation splitting |
 | [Conditions](docs/conditions.md) | Auto-inferred and explicit conditions, `layer_exists`/`layer_not_exists`, address matching |
 | [Go Templates](docs/templates.md) | Template context variables and all available functions for key transformations and import IDs |
-| [Azure Blob Storage](docs/azure-storage.md) | Upload, download, pruning, backend discovery, upload guard, and authentication |
+| [Blob Storage](docs/storage.md) | Upload, download, pruning, backend discovery, upload guard, and per-backend authentication |
 | [CI Workflow](docs/ci-workflow.md) | Full CI integration guide, resilient processing, module consolidation, and strict mode |
 
 ## Architecture
@@ -241,7 +241,7 @@ pkg/
   engine/      - Pipeline orchestration, key matching, wildcard tracking
   conditions/  - Shared condition evaluation for upload guard and download
   auth/        - Azure credential management (azcore, azidentity)
-  upload/      - Azure Blob Storage upload with overwrite protection guard
+  upload/      - Blob storage upload (Azure, S3, GCS, local) with overwrite protection guard
   download/    - Download orchestration with condition evaluation
   tofu/        - OpenTofu command execution and migration target scanning
 ```

@@ -23,9 +23,9 @@ fi
 
 ### Step 1: Generate and Upload
 
-Run once from the repository root. This reads the migration YAML files, resolves import IDs from state, generates HCL files, and uploads them to each layer's blob storage container.
+Run once from the repository root. This reads the migration YAML files, resolves import IDs from state, generates HCL files, and uploads them to each layer's storage backend.
 
-The `--backend-config` flag is used both for auto-initializing layers during state reads and for discovering the upload target.
+The `--backend-config` flag is used both for auto-initializing layers during state reads and for discovering the upload target. The backend type (azurerm, s3, gcs, local) is auto-detected from each layer's HCL.
 
 ### Step 2: Download Per Layer
 
@@ -96,7 +96,7 @@ The upload guard protects against a common CI failure mode: a pipeline partially
 
 When existing blobs are still active, the upload is refused. Use `--force` to bypass this protection when intentional overwrite is needed.
 
-See [Azure Blob Storage](azure-storage.md) for full details on upload, download, and pruning.
+See [Blob Storage](storage.md) for full details on upload, download, and pruning.
 
 ## Pruning Completed Migrations
 

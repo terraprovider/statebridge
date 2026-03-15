@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	tfjson "github.com/hashicorp/terraform-json"
 
 	"github.com/redtenant/tfmigrate/pkg/generator"
@@ -106,9 +105,11 @@ func TestDownloadNoConditions(t *testing.T) {
 	// Write a backend.tf so DiscoverBackendConfig works
 	writeBackendTF(t, dir)
 
-	dl := NewDownloader(nil, nil, WithUploaderFactory(func(sa, cn string, _ azcore.TokenCredential) (upload.BlobUploader, error) {
+	mockFactory := func(config upload.BackendConfig) (upload.BlobUploader, error) {
 		return mock, nil
-	}))
+	}
+
+	dl := NewDownloader(mockFactory, nil)
 
 	files, err := dl.Download(context.Background(), dir)
 	if err != nil {
@@ -142,9 +143,9 @@ func TestDownloadConditionMet(t *testing.T) {
 	dir := t.TempDir()
 	writeBackendTF(t, dir)
 
-	dl := NewDownloader(nil, nil, WithUploaderFactory(func(sa, cn string, _ azcore.TokenCredential) (upload.BlobUploader, error) {
+	dl := NewDownloader(func(config upload.BackendConfig) (upload.BlobUploader, error) {
 		return mock, nil
-	}))
+	}, nil)
 
 	// Without tofu installed, Download will fail when trying to evaluate conditions.
 	files, err := dl.Download(context.Background(), dir)
@@ -313,9 +314,9 @@ func TestDownloadDryRun(t *testing.T) {
 	dir := t.TempDir()
 	writeBackendTF(t, dir)
 
-	dl := NewDownloader(nil, nil, WithDryRun(true), WithUploaderFactory(func(sa, cn string, _ azcore.TokenCredential) (upload.BlobUploader, error) {
+	dl := NewDownloader(func(config upload.BackendConfig) (upload.BlobUploader, error) {
 		return mock, nil
-	}))
+	}, nil, WithDryRun(true))
 
 	files, err := dl.Download(context.Background(), dir)
 	if err != nil {
@@ -339,9 +340,9 @@ func TestDownloadNoMigrations(t *testing.T) {
 	dir := t.TempDir()
 	writeBackendTF(t, dir)
 
-	dl := NewDownloader(nil, nil, WithUploaderFactory(func(sa, cn string, _ azcore.TokenCredential) (upload.BlobUploader, error) {
+	dl := NewDownloader(func(config upload.BackendConfig) (upload.BlobUploader, error) {
 		return mock, nil
-	}))
+	}, nil)
 
 	files, err := dl.Download(context.Background(), dir)
 	if err != nil {
@@ -374,9 +375,9 @@ func TestDownloadInvalidMetadataSkipped(t *testing.T) {
 	dir := t.TempDir()
 	writeBackendTF(t, dir)
 
-	dl := NewDownloader(nil, nil, WithUploaderFactory(func(sa, cn string, _ azcore.TokenCredential) (upload.BlobUploader, error) {
+	dl := NewDownloader(func(config upload.BackendConfig) (upload.BlobUploader, error) {
 		return mock, nil
-	}))
+	}, nil)
 
 	files, err := dl.Download(context.Background(), dir)
 	if err != nil {

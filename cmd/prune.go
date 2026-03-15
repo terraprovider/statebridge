@@ -7,10 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/spf13/cobra"
 
-	"github.com/redtenant/tfmigrate/pkg/auth"
 	"github.com/redtenant/tfmigrate/pkg/conditions"
 	"github.com/redtenant/tfmigrate/pkg/generator"
 	"github.com/redtenant/tfmigrate/pkg/state"
@@ -27,7 +25,7 @@ var (
 // pruneCmd represents the prune command.
 var pruneCmd = &cobra.Command{
 	Use:   "prune [layer-dirs...]",
-	Short: "Remove completed migration blobs from Azure Blob Storage",
+	Short: "Remove completed migration blobs from blob storage",
 	Long: `Prune migration blobs whose conditions indicate they are no longer active.
 
 For each layer directory, discovers the blob storage backend, lists all
@@ -63,16 +61,9 @@ func init() {
 }
 
 func runPrune(cmd *cobra.Command, args []string) error {
-	credCfg, err := auth.NewCredentialConfiguration(
-		auth.WithDefaultEnvironmentVariables(),
-	)
+	factory, err := createUploaderFactory()
 	if err != nil {
-		return fmt.Errorf("configuring Azure credentials: %w", err)
-	}
-
-	cred, err := credCfg.TokenCredential()
-	if err != nil {
-		return fmt.Errorf("creating Azure credential: %w", err)
+		return err
 	}
 
 	// Build init args from --backend-config flags
@@ -90,7 +81,7 @@ func runPrune(cmd *cobra.Command, args []string) error {
 	var totalPruned, totalKept int
 
 	for _, layerDir := range args {
-		pruned, kept, err := pruneLayer(ctx, layerDir, cred, stateReader, initArgs, flagPruneForce, flagPruneDryRun)
+		pruned, kept, err := pruneLayer(ctx, layerDir, factory, stateReader, initArgs, flagPruneForce, flagPruneDryRun)
 		if err != nil {
 			return fmt.Errorf("pruning %q: %w", layerDir, err)
 		}
@@ -105,7 +96,7 @@ func runPrune(cmd *cobra.Command, args []string) error {
 func pruneLayer(
 	ctx context.Context,
 	layerDir string,
-	cred azcore.TokenCredential,
+	factory upload.UploaderFactory,
 	stateReader state.StateReader,
 	initArgs []string,
 	force bool,
@@ -116,7 +107,7 @@ func pruneLayer(
 		return 0, 0, fmt.Errorf("discovering backend config: %w", err)
 	}
 
-	uploader, err := upload.DefaultUploaderFactory(config.StorageAccountName, config.ContainerName, cred)
+	uploader, err := factory(config)
 	if err != nil {
 		return 0, 0, fmt.Errorf("creating blob client: %w", err)
 	}

@@ -5,8 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-
-	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 )
 
 func TestManagerPruneStems(t *testing.T) {
@@ -37,10 +35,9 @@ terraform {
 			t.Fatal(err)
 		}
 
-		mgr := NewManager(nil, nil)
-		mgr.WithUploaderFactory(func(sa, cn string, _ azcore.TokenCredential) (BlobUploader, error) {
+		mgr := NewManager(func(config BackendConfig) (BlobUploader, error) {
 			return mock, nil
-		})
+		}, nil)
 
 		pruned, err := mgr.PruneStems(ctx, []string{"001_move", "002_rename"}, []string{layerPath})
 		if err != nil {
@@ -77,10 +74,9 @@ terraform {
 			t.Fatal(err)
 		}
 
-		mgr := NewManager(nil, nil)
-		mgr.WithUploaderFactory(func(sa, cn string, _ azcore.TokenCredential) (BlobUploader, error) {
+		mgr := NewManager(func(config BackendConfig) (BlobUploader, error) {
 			return mock, nil
-		})
+		}, nil)
 
 		pruned, err := mgr.PruneStems(ctx, []string{"001_move"}, []string{layerPath})
 		if err != nil {
@@ -110,10 +106,9 @@ terraform {
 			t.Fatal(err)
 		}
 
-		mgr := NewManager(nil, nil)
-		mgr.WithUploaderFactory(func(sa, cn string, _ azcore.TokenCredential) (BlobUploader, error) {
+		mgr := NewManager(func(config BackendConfig) (BlobUploader, error) {
 			return mock, nil
-		})
+		}, nil)
 
 		pruned, err := mgr.PruneStems(ctx, []string{"noexist"}, []string{layerPath})
 		if err != nil {
@@ -153,10 +148,9 @@ terraform {
 			}
 		}
 
-		mgr := NewManager(nil, nil)
-		mgr.WithUploaderFactory(func(sa, cn string, _ azcore.TokenCredential) (BlobUploader, error) {
+		mgr := NewManager(func(config BackendConfig) (BlobUploader, error) {
 			return mock, nil
-		})
+		}, nil)
 
 		pruned, err := mgr.PruneStems(ctx, []string{"001_move"}, []string{layer1, layer2})
 		if err != nil {

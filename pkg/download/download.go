@@ -1,4 +1,4 @@
-// Package download fetches migration files from Azure Blob Storage,
+// Package download fetches migration files from blob storage,
 // evaluates their conditions, and writes applicable ones to disk.
 package download
 
@@ -9,18 +9,15 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
-
 	"github.com/redtenant/tfmigrate/pkg/conditions"
 	"github.com/redtenant/tfmigrate/pkg/generator"
 	"github.com/redtenant/tfmigrate/pkg/state"
 	"github.com/redtenant/tfmigrate/pkg/upload"
 )
 
-// Downloader fetches migration files from Azure Blob Storage, evaluates
+// Downloader fetches migration files from blob storage, evaluates
 // conditions against the layer's state, and writes applicable ones to disk.
 type Downloader struct {
-	cred            azcore.TokenCredential
 	initArgs        []string
 	tofuPath        string
 	dryRun          bool
@@ -45,12 +42,11 @@ func WithUploaderFactory(f upload.UploaderFactory) DownloaderOption {
 	return func(d *Downloader) { d.uploaderFactory = f }
 }
 
-// NewDownloader creates a Downloader with the given credential and options.
-func NewDownloader(cred azcore.TokenCredential, initArgs []string, opts ...DownloaderOption) *Downloader {
+// NewDownloader creates a Downloader with the given factory and options.
+func NewDownloader(factory upload.UploaderFactory, initArgs []string, opts ...DownloaderOption) *Downloader {
 	d := &Downloader{
-		cred:            cred,
+		uploaderFactory: factory,
 		initArgs:        initArgs,
-		uploaderFactory: upload.DefaultUploaderFactory,
 	}
 	for _, opt := range opts {
 		opt(d)
@@ -67,7 +63,7 @@ func (d *Downloader) Download(ctx context.Context, targetDir string) ([]string, 
 		return nil, fmt.Errorf("discovering backend config: %w", err)
 	}
 
-	uploader, err := d.uploaderFactory(config.StorageAccountName, config.ContainerName, d.cred)
+	uploader, err := d.uploaderFactory(config)
 	if err != nil {
 		return nil, fmt.Errorf("creating blob client: %w", err)
 	}
@@ -87,7 +83,7 @@ func (d *Downloader) Download(ctx context.Context, targetDir string) ([]string, 
 	}
 
 	if len(migrationBlobs) == 0 {
-		fmt.Fprintf(os.Stderr, "No migration files found in container %q\n", config.ContainerName)
+		fmt.Fprintf(os.Stderr, "No migration files found in storage (%s)\n", config.CacheKey())
 		return nil, nil
 	}
 

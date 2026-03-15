@@ -9,8 +9,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-
-	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 )
 
 // mockBlobUploader records all operations for verification.
@@ -227,16 +225,19 @@ terraform {
 		t.Fatal(err)
 	}
 
-	mgr := NewManager(nil, nil)
-	mgr.WithUploaderFactory(func(sa, cn string, _ azcore.TokenCredential) (BlobUploader, error) {
-		if sa != "testacct" {
-			return nil, fmt.Errorf("unexpected storage account: %s", sa)
+	mgr := NewManager(func(config BackendConfig) (BlobUploader, error) {
+		az, ok := config.(*AzurermBackendConfig)
+		if !ok {
+			return nil, fmt.Errorf("unexpected config type: %T", config)
 		}
-		if cn != "testcontainer" {
-			return nil, fmt.Errorf("unexpected container: %s", cn)
+		if az.StorageAccountName != "testacct" {
+			return nil, fmt.Errorf("unexpected storage account: %s", az.StorageAccountName)
+		}
+		if az.ContainerName != "testcontainer" {
+			return nil, fmt.Errorf("unexpected container: %s", az.ContainerName)
 		}
 		return mock, nil
-	})
+	}, nil)
 
 	rendered := map[string]string{
 		filepath.Join(layerPath, "migration.001_move.a1b2c3d4.tf"): "# Generated content\n",
@@ -275,10 +276,9 @@ terraform {
 		t.Fatal(err)
 	}
 
-	mgr := NewManager(nil, nil)
-	mgr.WithUploaderFactory(func(sa, cn string, _ azcore.TokenCredential) (BlobUploader, error) {
+	mgr := NewManager(func(config BackendConfig) (BlobUploader, error) {
 		return mock, nil
-	})
+	}, nil)
 
 	if err := mgr.UploadFromDisk(ctx, []string{layerPath}); err != nil {
 		t.Fatalf("UploadFromDisk failed: %v", err)
@@ -318,11 +318,10 @@ terraform {
 	}
 
 	factoryCalls := 0
-	mgr := NewManager(nil, nil)
-	mgr.WithUploaderFactory(func(sa, cn string, _ azcore.TokenCredential) (BlobUploader, error) {
+	mgr := NewManager(func(config BackendConfig) (BlobUploader, error) {
 		factoryCalls++
 		return mock, nil
-	})
+	}, nil)
 
 	if err := mgr.UploadFromDisk(ctx, []string{layer1, layer2}); err != nil {
 		t.Fatalf("UploadFromDisk failed: %v", err)
@@ -362,10 +361,9 @@ terraform {
 		filepath.Join(layerPath, "migration.001_move.newnew99.tf"): "# new content\n",
 	}
 
-	mgr := NewManager(nil, nil)
-	mgr.WithUploaderFactory(func(sa, cn string, _ azcore.TokenCredential) (BlobUploader, error) {
+	mgr := NewManager(func(config BackendConfig) (BlobUploader, error) {
 		return mock, nil
-	})
+	}, nil)
 
 	if err := mgr.UploadRendered(ctx, rendered); err != nil {
 		t.Fatalf("UploadRendered failed: %v", err)

@@ -1,14 +1,16 @@
 # pkg/upload
 
-The upload package handles persisting generated migration `.tf` files to Azure Blob Storage and pruning stale blobs.
+The upload package handles persisting generated migration `.tf` files to blob storage (Azure, S3, GCS, local) and pruning stale blobs.
 
 ## Source Files
 
 | File | Purpose |
-|------|---------|
+|------|---------||
 | `upload.go` | `Manager` orchestration: version cleanup, upload, overwrite protection guard, prune |
-| `uploader.go` | `BlobUploader` interface and Azure Blob Storage implementation |
-| `backend.go` | Backend config discovery: parses HCL `backend "azurerm"` blocks and merges `--backend-config` flags |
+| `uploader.go` | `BlobUploader` interface |
+| `uploader_gcdk.go` | gocloud.dev adapter implementing `BlobUploader` for all backends |
+| `bucket.go` | Per-backend bucket openers (Azure, S3, GCS, local) using gocloud.dev |
+| `backend.go` | Backend config discovery: parses HCL `backend "<type>"` blocks and merges `--backend-config` flags |
 
 ## Test Files
 

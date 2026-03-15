@@ -8,12 +8,14 @@ import (
 
 func TestParseHCLBackend(t *testing.T) {
 	tests := []struct {
-		name    string
-		files   map[string]string
-		wantSA  string
-		wantCN  string
-		wantRG  string
-		wantErr bool
+		name       string
+		files      map[string]string
+		wantType   BackendType
+		wantSA     string // azurerm
+		wantCN     string // azurerm
+		wantRG     string // azurerm
+		wantBucket string // s3/gcs
+		wantErr    bool
 	}{
 		{
 			name: "standard azurerm backend",
@@ -29,9 +31,10 @@ terraform {
 }
 `,
 			},
-			wantSA: "mystorageacct",
-			wantCN: "tfstate",
-			wantRG: "myrg",
+			wantType: BackendAzurerm,
+			wantSA:   "mystorageacct",
+			wantCN:   "tfstate",
+			wantRG:   "myrg",
 		},
 		{
 			name: "backend in separate file among other tf files",
@@ -51,8 +54,9 @@ terraform {
 }
 `,
 			},
-			wantSA: "acct2",
-			wantCN: "state2",
+			wantType: BackendAzurerm,
+			wantSA:   "acct2",
+			wantCN:   "state2",
 		},
 		{
 			name: "no backend block returns zero value",
@@ -66,13 +70,43 @@ resource "azurerm_resource_group" "example" {
 			},
 		},
 		{
-			name: "non-azurerm backend ignored",
+			name: "s3 backend",
 			files: map[string]string{
 				"backend.tf": `
 terraform {
   backend "s3" {
     bucket = "my-bucket"
     key    = "terraform.tfstate"
+    region = "us-east-1"
+  }
+}
+`,
+			},
+			wantType:   BackendS3,
+			wantBucket: "my-bucket",
+		},
+		{
+			name: "gcs backend",
+			files: map[string]string{
+				"backend.tf": `
+terraform {
+  backend "gcs" {
+    bucket = "my-gcs-bucket"
+    prefix = "terraform/state"
+  }
+}
+`,
+			},
+			wantType:   BackendGCS,
+			wantBucket: "my-gcs-bucket",
+		},
+		{
+			name: "unsupported backend ignored",
+			files: map[string]string{
+				"backend.tf": `
+terraform {
+  backend "consul" {
+    address = "demo.consul.io"
   }
 }
 `,
@@ -91,8 +125,9 @@ terraform {
 }
 `,
 			},
-			wantSA: "goodacct",
-			wantCN: "goodcontainer",
+			wantType: BackendAzurerm,
+			wantSA:   "goodacct",
+			wantCN:   "goodcontainer",
 		},
 		{
 			name:  "empty directory",
@@ -109,7 +144,7 @@ terraform {
 				}
 			}
 
-			cfg, err := ParseHCLBackend(dir)
+			cfg, bt, err := ParseHCLBackend(dir)
 			if tt.wantErr {
 				if err == nil {
 					t.Fatal("expected error, got nil")
@@ -120,14 +155,45 @@ terraform {
 				t.Fatalf("unexpected error: %v", err)
 			}
 
-			if cfg.StorageAccountName != tt.wantSA {
-				t.Errorf("StorageAccountName = %q, want %q", cfg.StorageAccountName, tt.wantSA)
+			if bt != tt.wantType {
+				t.Errorf("BackendType = %q, want %q", bt, tt.wantType)
 			}
-			if cfg.ContainerName != tt.wantCN {
-				t.Errorf("ContainerName = %q, want %q", cfg.ContainerName, tt.wantCN)
-			}
-			if cfg.ResourceGroupName != tt.wantRG {
-				t.Errorf("ResourceGroupName = %q, want %q", cfg.ResourceGroupName, tt.wantRG)
+
+			switch tt.wantType {
+			case BackendAzurerm:
+				az, ok := cfg.(*AzurermBackendConfig)
+				if !ok {
+					t.Fatalf("expected *AzurermBackendConfig, got %T", cfg)
+				}
+				if az.StorageAccountName != tt.wantSA {
+					t.Errorf("StorageAccountName = %q, want %q", az.StorageAccountName, tt.wantSA)
+				}
+				if az.ContainerName != tt.wantCN {
+					t.Errorf("ContainerName = %q, want %q", az.ContainerName, tt.wantCN)
+				}
+				if az.ResourceGroupName != tt.wantRG {
+					t.Errorf("ResourceGroupName = %q, want %q", az.ResourceGroupName, tt.wantRG)
+				}
+			case BackendS3:
+				s3, ok := cfg.(*S3BackendConfig)
+				if !ok {
+					t.Fatalf("expected *S3BackendConfig, got %T", cfg)
+				}
+				if s3.Bucket != tt.wantBucket {
+					t.Errorf("Bucket = %q, want %q", s3.Bucket, tt.wantBucket)
+				}
+			case BackendGCS:
+				gcs, ok := cfg.(*GCSBackendConfig)
+				if !ok {
+					t.Fatalf("expected *GCSBackendConfig, got %T", cfg)
+				}
+				if gcs.Bucket != tt.wantBucket {
+					t.Errorf("Bucket = %q, want %q", gcs.Bucket, tt.wantBucket)
+				}
+			case "":
+				if cfg != nil {
+					t.Errorf("expected nil config for empty type, got %T", cfg)
+				}
 			}
 		})
 	}
@@ -135,12 +201,14 @@ terraform {
 
 func TestParseInitArgs(t *testing.T) {
 	tests := []struct {
-		name string
-		args []string
-		want map[string]string
+		name        string
+		backendType BackendType
+		args        []string
+		want        map[string]string
 	}{
 		{
-			name: "standard backend-config args",
+			name:        "standard backend-config args",
+			backendType: BackendAzurerm,
 			args: []string{
 				"-backend-config=storage_account_name=myacct",
 				"-backend-config=container_name=mycontainer",
@@ -152,7 +220,8 @@ func TestParseInitArgs(t *testing.T) {
 			},
 		},
 		{
-			name: "unrecognized keys ignored",
+			name:        "unrecognized keys ignored",
+			backendType: BackendAzurerm,
 			args: []string{
 				"-backend-config=storage_account_name=acct",
 				"-backend-config=key=terraform.tfstate",
@@ -163,7 +232,8 @@ func TestParseInitArgs(t *testing.T) {
 			},
 		},
 		{
-			name: "raw key=value without prefix",
+			name:        "raw key=value without prefix",
+			backendType: BackendAzurerm,
 			args: []string{
 				"storage_account_name=rawacct",
 				"container_name=rawcontainer",
@@ -174,20 +244,34 @@ func TestParseInitArgs(t *testing.T) {
 			},
 		},
 		{
-			name: "non-kv args skipped",
-			args: []string{"-reconfigure", "-upgrade"},
-			want: map[string]string{},
+			name:        "non-kv args skipped",
+			backendType: BackendAzurerm,
+			args:        []string{"-reconfigure", "-upgrade"},
+			want:        map[string]string{},
 		},
 		{
-			name: "empty args",
-			args: nil,
-			want: map[string]string{},
+			name:        "empty args",
+			backendType: BackendAzurerm,
+			args:        nil,
+			want:        map[string]string{},
+		},
+		{
+			name:        "s3 backend args",
+			backendType: BackendS3,
+			args: []string{
+				"-backend-config=bucket=my-bucket",
+				"-backend-config=region=us-east-1",
+			},
+			want: map[string]string{
+				"bucket": "my-bucket",
+				"region": "us-east-1",
+			},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := ParseInitArgs(".", tt.args)
+			got := ParseInitArgs(".", tt.backendType, tt.args)
 			if len(got) != len(tt.want) {
 				t.Fatalf("got %d entries, want %d: %v", len(got), len(tt.want), got)
 			}
@@ -220,7 +304,7 @@ key                  = "terraform.tfstate"
 		"-reconfigure",
 	}
 
-	got := ParseInitArgs(dir, args)
+	got := ParseInitArgs(dir, BackendAzurerm, args)
 
 	if got["storage_account_name"] != "fileacct" {
 		t.Errorf("storage_account_name = %q, want %q", got["storage_account_name"], "fileacct")
@@ -255,7 +339,7 @@ resource_group_name=plaintextrg
 		"-backend-config=" + plainFile,
 	}
 
-	got := ParseInitArgs(dir, args)
+	got := ParseInitArgs(dir, BackendAzurerm, args)
 
 	if got["storage_account_name"] != "plaintextacct" {
 		t.Errorf("storage_account_name = %q, want %q", got["storage_account_name"], "plaintextacct")
@@ -287,7 +371,7 @@ container_name       = "basecontainer"
 		"-backend-config=storage_account_name=overrideacct",
 	}
 
-	got := ParseInitArgs(dir, args)
+	got := ParseInitArgs(dir, BackendAzurerm, args)
 
 	// Inline should override file value (processed after)
 	if got["storage_account_name"] != "overrideacct" {
@@ -305,7 +389,7 @@ func TestParseInitArgsNonexistentFile(t *testing.T) {
 		"-backend-config=storage_account_name=fallback",
 	}
 
-	got := ParseInitArgs(".", args)
+	got := ParseInitArgs(".", BackendAzurerm, args)
 
 	// The inline arg should still work
 	if got["storage_account_name"] != "fallback" {
@@ -326,7 +410,7 @@ container_name='quotedcontainer'
 	}
 
 	args := []string{"-backend-config=" + plainFile}
-	got := ParseInitArgs(dir, args)
+	got := ParseInitArgs(dir, BackendAzurerm, args)
 
 	if got["storage_account_name"] != "quotedacct" {
 		t.Errorf("storage_account_name = %q, want %q", got["storage_account_name"], "quotedacct")
@@ -348,7 +432,7 @@ container_name = "relcontainer"
 
 	// Pass relative filename only — ParseInitArgs should resolve against layerPath (dir)
 	args := []string{"-backend-config=backend.hcl"}
-	got := ParseInitArgs(dir, args)
+	got := ParseInitArgs(dir, BackendAzurerm, args)
 
 	if got["storage_account_name"] != "relacct" {
 		t.Errorf("storage_account_name = %q, want %q", got["storage_account_name"], "relacct")
@@ -359,7 +443,7 @@ container_name = "relcontainer"
 }
 
 func TestMergeBackendConfig(t *testing.T) {
-	base := &BackendConfig{
+	base := &AzurermBackendConfig{
 		StorageAccountName: "inline_acct",
 		ContainerName:      "inline_container",
 		ResourceGroupName:  "inline_rg",
@@ -371,16 +455,21 @@ func TestMergeBackendConfig(t *testing.T) {
 		"resource_group_name": "override_rg",
 	}
 
-	result := MergeBackendConfig(base, overrides)
+	result := MergeBackendConfig(base, BackendAzurerm, overrides)
 
-	if result.StorageAccountName != "override_acct" {
-		t.Errorf("StorageAccountName = %q, want %q", result.StorageAccountName, "override_acct")
+	az, ok := result.(*AzurermBackendConfig)
+	if !ok {
+		t.Fatalf("expected *AzurermBackendConfig, got %T", result)
 	}
-	if result.ContainerName != "inline_container" {
-		t.Errorf("ContainerName = %q, want %q", result.ContainerName, "inline_container")
+
+	if az.StorageAccountName != "override_acct" {
+		t.Errorf("StorageAccountName = %q, want %q", az.StorageAccountName, "override_acct")
 	}
-	if result.ResourceGroupName != "override_rg" {
-		t.Errorf("ResourceGroupName = %q, want %q", result.ResourceGroupName, "override_rg")
+	if az.ContainerName != "inline_container" {
+		t.Errorf("ContainerName = %q, want %q", az.ContainerName, "inline_container")
+	}
+	if az.ResourceGroupName != "override_rg" {
+		t.Errorf("ResourceGroupName = %q, want %q", az.ResourceGroupName, "override_rg")
 	}
 
 	// Verify base was not modified
@@ -396,23 +485,53 @@ func TestBackendConfigValidate(t *testing.T) {
 		wantErr bool
 	}{
 		{
-			name:    "valid config",
-			config:  BackendConfig{StorageAccountName: "acct", ContainerName: "container"},
+			name:    "valid azurerm config",
+			config:  &AzurermBackendConfig{StorageAccountName: "acct", ContainerName: "container"},
 			wantErr: false,
 		},
 		{
 			name:    "missing storage account",
-			config:  BackendConfig{ContainerName: "container"},
+			config:  &AzurermBackendConfig{ContainerName: "container"},
 			wantErr: true,
 		},
 		{
 			name:    "missing container",
-			config:  BackendConfig{StorageAccountName: "acct"},
+			config:  &AzurermBackendConfig{StorageAccountName: "acct"},
 			wantErr: true,
 		},
 		{
 			name:    "both missing",
-			config:  BackendConfig{},
+			config:  &AzurermBackendConfig{},
+			wantErr: true,
+		},
+		{
+			name:    "valid s3 config",
+			config:  &S3BackendConfig{Bucket: "my-bucket"},
+			wantErr: false,
+		},
+		{
+			name:    "s3 missing bucket",
+			config:  &S3BackendConfig{},
+			wantErr: true,
+		},
+		{
+			name:    "valid gcs config",
+			config:  &GCSBackendConfig{Bucket: "gcs-bucket"},
+			wantErr: false,
+		},
+		{
+			name:    "gcs missing bucket",
+			config:  &GCSBackendConfig{},
+			wantErr: true,
+		},
+		{
+			name:    "valid local config",
+			config:  &LocalBackendConfig{Path: "/tmp/state"},
+			wantErr: false,
+		},
+		{
+			name:    "local missing path",
+			config:  &LocalBackendConfig{},
 			wantErr: true,
 		},
 	}
@@ -453,14 +572,19 @@ terraform {
 			t.Fatalf("unexpected error: %v", err)
 		}
 
-		if cfg.StorageAccountName != "overrideacct" {
-			t.Errorf("StorageAccountName = %q, want %q", cfg.StorageAccountName, "overrideacct")
+		az, ok := cfg.(*AzurermBackendConfig)
+		if !ok {
+			t.Fatalf("expected *AzurermBackendConfig, got %T", cfg)
 		}
-		if cfg.ContainerName != "hclcontainer" {
-			t.Errorf("ContainerName = %q, want %q", cfg.ContainerName, "hclcontainer")
+
+		if az.StorageAccountName != "overrideacct" {
+			t.Errorf("StorageAccountName = %q, want %q", az.StorageAccountName, "overrideacct")
 		}
-		if cfg.ResourceGroupName != "hclrg" {
-			t.Errorf("ResourceGroupName = %q, want %q", cfg.ResourceGroupName, "hclrg")
+		if az.ContainerName != "hclcontainer" {
+			t.Errorf("ContainerName = %q, want %q", az.ContainerName, "hclcontainer")
+		}
+		if az.ResourceGroupName != "hclrg" {
+			t.Errorf("ResourceGroupName = %q, want %q", az.ResourceGroupName, "hclrg")
 		}
 	})
 
@@ -474,6 +598,15 @@ terraform {
 
 	t.Run("init args only", func(t *testing.T) {
 		dir := t.TempDir()
+		// Write a backend block so the type is detected
+		err := os.WriteFile(filepath.Join(dir, "backend.tf"), []byte(`
+terraform {
+  backend "azurerm" {}
+}
+`), 0o644)
+		if err != nil {
+			t.Fatal(err)
+		}
 		initArgs := []string{
 			"-backend-config=storage_account_name=argacct",
 			"-backend-config=container_name=argcontainer",
@@ -484,11 +617,48 @@ terraform {
 			t.Fatalf("unexpected error: %v", err)
 		}
 
-		if cfg.StorageAccountName != "argacct" {
-			t.Errorf("StorageAccountName = %q, want %q", cfg.StorageAccountName, "argacct")
+		az, ok := cfg.(*AzurermBackendConfig)
+		if !ok {
+			t.Fatalf("expected *AzurermBackendConfig, got %T", cfg)
 		}
-		if cfg.ContainerName != "argcontainer" {
-			t.Errorf("ContainerName = %q, want %q", cfg.ContainerName, "argcontainer")
+
+		if az.StorageAccountName != "argacct" {
+			t.Errorf("StorageAccountName = %q, want %q", az.StorageAccountName, "argacct")
+		}
+		if az.ContainerName != "argcontainer" {
+			t.Errorf("ContainerName = %q, want %q", az.ContainerName, "argcontainer")
+		}
+	})
+
+	t.Run("s3 backend", func(t *testing.T) {
+		dir := t.TempDir()
+		err := os.WriteFile(filepath.Join(dir, "backend.tf"), []byte(`
+terraform {
+  backend "s3" {
+    bucket = "my-bucket"
+    region = "us-east-1"
+  }
+}
+`), 0o644)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		cfg, err := DiscoverBackendConfig(dir, nil)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		s3, ok := cfg.(*S3BackendConfig)
+		if !ok {
+			t.Fatalf("expected *S3BackendConfig, got %T", cfg)
+		}
+
+		if s3.Bucket != "my-bucket" {
+			t.Errorf("Bucket = %q, want %q", s3.Bucket, "my-bucket")
+		}
+		if s3.Region != "us-east-1" {
+			t.Errorf("Region = %q, want %q", s3.Region, "us-east-1")
 		}
 	})
 }

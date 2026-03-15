@@ -2,11 +2,9 @@ package cmd
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/spf13/cobra"
 
-	"github.com/redtenant/tfmigrate/pkg/auth"
 	"github.com/redtenant/tfmigrate/pkg/upload"
 )
 
@@ -19,16 +17,17 @@ var (
 // uploadCmd represents the standalone upload command.
 var uploadCmd = &cobra.Command{
 	Use:   "upload [layer-dirs...]",
-	Short: "Upload pre-generated migration files to Azure Blob Storage",
+	Short: "Upload pre-generated migration files to blob storage",
 	Long: `Upload previously generated migration .tf files from layer directories
-to Azure Blob Storage. Each layer directory is scanned for migration.*.tf files
-and uploaded to the storage container configured in the layer's backend.
+to blob storage. Each layer directory is scanned for migration.*.tf files
+and uploaded to the storage container/bucket configured in the layer's backend.
 
-Backend configuration is discovered from the layer's .tf files (backend "azurerm"
-block) and optionally supplemented with --backend-config flags.
+The backend type (azurerm, s3, gcs, local) is auto-detected from the layer's
+.tf files (backend block) and optionally supplemented with --backend-config flags.
 
-Authentication uses Azure SDK credentials configured via environment variables
-(ARM_CLIENT_ID, ARM_TENANT_ID, ARM_CLIENT_SECRET, ARM_USE_CLI, ARM_USE_MSI).
+Authentication uses the native credential chain for each backend (Azure SDK
+environment variables for azurerm, AWS SDK credential chain for s3, GCP
+Application Default Credentials for gcs, no auth for local).
 
 Examples:
   # Upload migration files from specific layer directories
@@ -52,16 +51,9 @@ func init() {
 }
 
 func runUpload(cmd *cobra.Command, args []string) error {
-	credCfg, err := auth.NewCredentialConfiguration(
-		auth.WithDefaultEnvironmentVariables(),
-	)
+	factory, err := createUploaderFactory()
 	if err != nil {
-		return fmt.Errorf("configuring Azure credentials: %w", err)
-	}
-
-	cred, err := credCfg.TokenCredential()
-	if err != nil {
-		return fmt.Errorf("creating Azure credential: %w", err)
+		return err
 	}
 
 	// Build init args from --backend-config flags
@@ -77,7 +69,7 @@ func runUpload(cmd *cobra.Command, args []string) error {
 	opts = append(opts, upload.WithForce(flagUploadForce))
 	opts = append(opts, upload.WithTofuPath(tofuPath, initArgs))
 
-	mgr := upload.NewManager(cred, initArgs, opts...)
+	mgr := upload.NewManager(factory, initArgs, opts...)
 	ctx := context.Background()
 
 	return mgr.UploadFromDisk(ctx, args)

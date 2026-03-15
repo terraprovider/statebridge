@@ -7,9 +7,12 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 )
+
+// noopFactory is a test factory that panics if called (for tests that don't reach getUploader).
+var noopFactory UploaderFactory = func(config BackendConfig) (BlobUploader, error) {
+	panic("noopFactory: unexpected call")
+}
 
 func TestCheckActiveBlobs_GuardTriggered(t *testing.T) {
 	ctx := context.Background()
@@ -25,7 +28,7 @@ func TestCheckActiveBlobs_GuardTriggered(t *testing.T) {
 		return true, nil
 	}
 
-	mgr := NewManager(nil, nil, WithGuardChecker(guardChecker))
+	mgr := NewManager(noopFactory, nil, WithGuardChecker(guardChecker))
 
 	err := mgr.checkActiveBlobs(ctx, mock, "migration.001_move.newnew99.tf", "/layers/compute")
 	if err == nil {
@@ -52,7 +55,7 @@ func TestCheckActiveBlobs_GuardNotTriggered(t *testing.T) {
 		return false, nil
 	}
 
-	mgr := NewManager(nil, nil, WithGuardChecker(guardChecker))
+	mgr := NewManager(noopFactory, nil, WithGuardChecker(guardChecker))
 
 	err := mgr.checkActiveBlobs(ctx, mock, "migration.001_move.newnew99.tf", "/layers/compute")
 	if err != nil {
@@ -74,7 +77,7 @@ func TestCheckActiveBlobs_ForceBypassesGuard(t *testing.T) {
 		return true, nil
 	}
 
-	mgr := NewManager(nil, nil, WithGuardChecker(guardChecker), WithForce(true))
+	mgr := NewManager(noopFactory, nil, WithGuardChecker(guardChecker), WithForce(true))
 
 	err := mgr.checkActiveBlobs(ctx, mock, "migration.001_move.newnew99.tf", "/layers/compute")
 	if err != nil {
@@ -91,7 +94,7 @@ func TestCheckActiveBlobs_NoExistingBlobs(t *testing.T) {
 		return true, nil
 	}
 
-	mgr := NewManager(nil, nil, WithGuardChecker(guardChecker))
+	mgr := NewManager(noopFactory, nil, WithGuardChecker(guardChecker))
 
 	err := mgr.checkActiveBlobs(ctx, mock, "migration.001_move.newnew99.tf", "/layers/compute")
 	if err != nil {
@@ -108,7 +111,7 @@ func TestCheckActiveBlobs_NoGuardChecker(t *testing.T) {
 	mock.setBlobData(existingBlob, []byte("# existing migration content"))
 
 	// No guard checker configured — should be a no-op
-	mgr := NewManager(nil, nil)
+	mgr := NewManager(noopFactory, nil)
 
 	err := mgr.checkActiveBlobs(ctx, mock, "migration.001_move.newnew99.tf", "/layers/compute")
 	if err != nil {
@@ -130,7 +133,7 @@ func TestCheckActiveBlobs_SameHashSkipped(t *testing.T) {
 		return true, nil
 	}
 
-	mgr := NewManager(nil, nil, WithGuardChecker(guardChecker))
+	mgr := NewManager(noopFactory, nil, WithGuardChecker(guardChecker))
 
 	err := mgr.checkActiveBlobs(ctx, mock, "migration.001_move.newnew99.tf", "/layers/compute")
 	if err != nil {
@@ -151,7 +154,7 @@ func TestCheckActiveBlobs_GuardEvalError(t *testing.T) {
 		return false, fmt.Errorf("state read failed")
 	}
 
-	mgr := NewManager(nil, nil, WithGuardChecker(guardChecker))
+	mgr := NewManager(noopFactory, nil, WithGuardChecker(guardChecker))
 
 	err := mgr.checkActiveBlobs(ctx, mock, "migration.001_move.newnew99.tf", "/layers/compute")
 	if err != nil {
@@ -187,10 +190,9 @@ terraform {
 		t.Fatal(err)
 	}
 
-	mgr := NewManager(nil, nil, WithGuardChecker(guardChecker))
-	mgr.WithUploaderFactory(func(_, _ string, _ azcore.TokenCredential) (BlobUploader, error) {
+	mgr := NewManager(func(config BackendConfig) (BlobUploader, error) {
 		return mock, nil
-	})
+	}, nil, WithGuardChecker(guardChecker))
 
 	rendered := map[string]string{
 		filepath.Join(layerPath, "migration.001_move.newnew99.tf"): "# new content\n",
