@@ -140,7 +140,8 @@ func (d *Downloader) Download(ctx context.Context, targetDir string) ([]string, 
 
 		meta, err := generator.ParseMetadataComment(string(content))
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: could not parse metadata in %q: %v\n", blobName, err)
+			fmt.Fprintf(os.Stderr, "Skipping %q: could not parse metadata: %v\n", blobName, err)
+			continue
 		}
 
 		filename := filepath.Base(blobName)
