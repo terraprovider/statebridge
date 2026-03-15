@@ -1,6 +1,7 @@
 package util
 
 import (
+	"fmt"
 	"os"
 	"strconv"
 
@@ -14,9 +15,11 @@ type SupportedEnvTypes interface {
 func Getenv[T SupportedEnvTypes](envVar string) *T {
 	if val, ok := os.LookupEnv(envVar); ok {
 		parsed, err := Parse[T](val)
-		if err == nil {
-			return &parsed
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: invalid value for %s=%q: %v\n", envVar, val, err)
+			return nil
 		}
+		return &parsed
 	}
 	return nil
 }
@@ -25,9 +28,11 @@ func GetMultienv[T SupportedEnvTypes](envVars ...string) *T {
 	for _, envVar := range envVars {
 		if val, ok := os.LookupEnv(envVar); ok {
 			parsed, err := Parse[T](val)
-			if err == nil {
-				return &parsed
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: invalid value for %s=%q: %v\n", envVar, val, err)
+				continue
 			}
+			return &parsed
 		}
 	}
 	return nil
@@ -86,6 +91,8 @@ func Parse[T SupportedEnvTypes](value string) (def T, err error) {
 		var temp uint64
 		temp, err = strconv.ParseUint(value, 10, 64)
 		result = uint64(temp)
+	default:
+		return def, fmt.Errorf("unsupported type %T", def)
 	}
 	return result.(T), err
 }
