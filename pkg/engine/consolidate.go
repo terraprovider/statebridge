@@ -79,36 +79,46 @@ func (e *Engine) consolidateModuleRemovals(ctx context.Context, blocks []generat
 		idx := state.NewStateIndex(s)
 		allManaged := idx.ManagedBaseAddresses()
 
-		// Sort module paths from deepest (longest) to shallowest
+		// Build a prefix index: for each module path, collect all managed
+		// addresses that fall under it. This avoids O(modules × resources)
+		// scanning by iterating allManaged once.
+		managedByModule := make(map[string][]string)
+		for _, addr := range allManaged {
+			for _, mp := range allModulePrefixes(addr) {
+				managedByModule[mp] = append(managedByModule[mp], addr)
+			}
+		}
+
+		// Sort module paths from deepest (longest) to shallowest.
+		// Pre-compute dot counts to avoid repeated strings.Count calls.
 		modulePaths := make([]string, 0, len(modulePathSet))
 		for mp := range modulePathSet {
 			modulePaths = append(modulePaths, mp)
 		}
-		sort.Slice(modulePaths, func(i, j int) bool {
-			// Deeper modules first (more dots = deeper)
-			di := strings.Count(modulePaths[i], ".")
-			dj := strings.Count(modulePaths[j], ".")
-			if di != dj {
-				return di > dj
+		type depthEntry struct {
+			path  string
+			depth int
+		}
+		depthEntries := make([]depthEntry, len(modulePaths))
+		for i, mp := range modulePaths {
+			depthEntries[i] = depthEntry{path: mp, depth: strings.Count(mp, ".")}
+		}
+		sort.Slice(depthEntries, func(i, j int) bool {
+			if depthEntries[i].depth != depthEntries[j].depth {
+				return depthEntries[i].depth > depthEntries[j].depth
 			}
-			return modulePaths[i] < modulePaths[j]
+			return depthEntries[i].path < depthEntries[j].path
 		})
 
 		// Track which addresses are covered by consolidated modules
 		coveredSet := make(map[string]bool)
 		consolidatedModules := make(map[string]bool)
 
-		for _, mp := range modulePaths {
-			prefix := mp + "."
+		for _, de := range depthEntries {
+			mp := de.path
 
 			// Get all managed resources in state under this module
-			var stateUnder []string
-			for _, addr := range allManaged {
-				if strings.HasPrefix(addr, prefix) {
-					stateUnder = append(stateUnder, addr)
-				}
-			}
-
+			stateUnder := managedByModule[mp]
 			if len(stateUnder) == 0 {
 				continue
 			}
