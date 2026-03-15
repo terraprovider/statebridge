@@ -123,18 +123,9 @@ func pruneLayer(
 		return 0, 0, fmt.Errorf("creating blob client: %w", err)
 	}
 
-	blobs, err := uploader.ListBlobs(ctx, "migrations/")
+	migrationBlobs, err := listMigrationBlobs(ctx, uploader)
 	if err != nil {
-		return 0, 0, fmt.Errorf("listing migration blobs: %w", err)
-	}
-
-	// Filter to migration.*.tf files
-	var migrationBlobs []string
-	for _, b := range blobs {
-		name := filepath.Base(b)
-		if strings.HasPrefix(name, "migration.") && strings.HasSuffix(name, ".tf") {
-			migrationBlobs = append(migrationBlobs, b)
-		}
+		return 0, 0, err
 	}
 
 	if len(migrationBlobs) == 0 {
@@ -145,69 +136,103 @@ func pruneLayer(
 	var pruned, kept int
 
 	for _, blobName := range migrationBlobs {
-		filename := filepath.Base(blobName)
-
-		if flagPruneForce {
-			if flagPruneDryRun {
-				fmt.Fprintf(os.Stdout, "Would prune: %s/%s\n", layerDir, filename)
-			} else {
-				if err := uploader.DeleteBlob(ctx, blobName); err != nil {
-					return pruned, kept, fmt.Errorf("deleting %q: %w", blobName, err)
-				}
-				fmt.Fprintf(os.Stdout, "Pruned: %s/%s\n", layerDir, filename)
-			}
+		action, err := pruneBlob(ctx, uploader, blobName, layerDir, stateReader)
+		if err != nil {
+			return pruned, kept, err
+		}
+		if action {
 			pruned++
-			continue
-		}
-
-		// Download and parse metadata for condition evaluation
-		content, err := uploader.DownloadBlob(ctx, blobName)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: could not download %q, keeping: %v\n", blobName, err)
-			kept++
-			continue
-		}
-
-		meta, err := generator.ParseMetadataComment(string(content))
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: could not parse metadata in %q, keeping: %v\n", filename, err)
-			kept++
-			continue
-		}
-
-		if meta == nil || meta.Conditions == nil {
-			fmt.Fprintf(os.Stderr, "%s: no conditions embedded, keeping\n", filename)
-			kept++
-			continue
-		}
-
-		// Evaluate conditions: if they FAIL, the migration is complete -> safe to prune.
-		// If they PASS, the migration is still active -> keep.
-		readState := conditions.NewStateReaderFunc(stateReader)
-		active, err := conditions.EvaluateMetadataConditions(ctx, meta, readState, layerDir)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: condition evaluation failed for %q, keeping: %v\n", filename, err)
-			kept++
-			continue
-		}
-
-		if active {
-			fmt.Fprintf(os.Stderr, "%s: conditions still met (active), keeping\n", filename)
-			kept++
-			continue
-		}
-
-		// Conditions failed -> migration is complete -> prune
-		if flagPruneDryRun {
-			fmt.Fprintf(os.Stdout, "Would prune: %s/%s\n", layerDir, filename)
 		} else {
-			if err := uploader.DeleteBlob(ctx, blobName); err != nil {
-				return pruned, kept, fmt.Errorf("deleting %q: %w", blobName, err)
-			}
-			fmt.Fprintf(os.Stdout, "Pruned: %s/%s\n", layerDir, filename)
+			kept++
 		}
-		pruned++
 	}
 
 	return pruned, kept, nil
+}
+
+// listMigrationBlobs returns the filtered list of migration.*.tf blobs.
+func listMigrationBlobs(ctx context.Context, uploader upload.BlobUploader) ([]string, error) {
+	blobs, err := uploader.ListBlobs(ctx, "migrations/")
+	if err != nil {
+		return nil, fmt.Errorf("listing migration blobs: %w", err)
+	}
+
+	var result []string
+	for _, b := range blobs {
+		name := filepath.Base(b)
+		if strings.HasPrefix(name, "migration.") && strings.HasSuffix(name, ".tf") {
+			result = append(result, b)
+		}
+	}
+	return result, nil
+}
+
+// pruneBlob evaluates a single blob and either prunes or keeps it.
+// Returns true if the blob was pruned, false if kept.
+func pruneBlob(
+	ctx context.Context,
+	uploader upload.BlobUploader,
+	blobName string,
+	layerDir string,
+	stateReader state.StateReader,
+) (bool, error) {
+	filename := filepath.Base(blobName)
+
+	if flagPruneForce {
+		return deleteOrDryRun(ctx, uploader, blobName, layerDir, filename)
+	}
+
+	// Download and parse metadata for condition evaluation
+	content, err := uploader.DownloadBlob(ctx, blobName)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not download %q, keeping: %v\n", blobName, err)
+		return false, nil
+	}
+
+	meta, err := generator.ParseMetadataComment(string(content))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not parse metadata in %q, keeping: %v\n", filename, err)
+		return false, nil
+	}
+
+	if meta == nil || meta.Conditions == nil {
+		fmt.Fprintf(os.Stderr, "%s: no conditions embedded, keeping\n", filename)
+		return false, nil
+	}
+
+	// Evaluate conditions: if they FAIL, the migration is complete -> safe to prune.
+	// If they PASS, the migration is still active -> keep.
+	readState := conditions.NewStateReaderFunc(stateReader)
+	active, err := conditions.EvaluateMetadataConditions(ctx, meta, readState, layerDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: condition evaluation failed for %q, keeping: %v\n", filename, err)
+		return false, nil
+	}
+
+	if active {
+		fmt.Fprintf(os.Stderr, "%s: conditions still met (active), keeping\n", filename)
+		return false, nil
+	}
+
+	return deleteOrDryRun(ctx, uploader, blobName, layerDir, filename)
+}
+
+// deleteOrDryRun deletes a blob or prints a dry-run message.
+// Returns true (pruned) on success.
+func deleteOrDryRun(
+	ctx context.Context,
+	uploader upload.BlobUploader,
+	blobName string,
+	layerDir string,
+	filename string,
+) (bool, error) {
+	if flagPruneDryRun {
+		fmt.Fprintf(os.Stdout, "Would prune: %s/%s\n", layerDir, filename)
+		return true, nil
+	}
+	if err := uploader.DeleteBlob(ctx, blobName); err != nil {
+		return false, fmt.Errorf("deleting %q: %w", blobName, err)
+	}
+	fmt.Fprintf(os.Stdout, "Pruned: %s/%s\n", layerDir, filename)
+	return true, nil
 }
