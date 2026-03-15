@@ -160,7 +160,10 @@ func (e *Engine) ProcessFiles(ctx context.Context, paths []string) (*ProcessResu
 	// Consolidate module-level removals: when all managed resources within
 	// a module are being removed, replace individual removed blocks with
 	// a single module-level removed block.
-	allBlocks = e.consolidateModuleRemovals(ctx, allBlocks)
+	allBlocks, err = e.consolidateModuleRemovals(ctx, allBlocks)
+	if err != nil {
+		return nil, err
+	}
 
 	e.writer.AddBlocks(allBlocks)
 
