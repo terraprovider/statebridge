@@ -111,7 +111,11 @@ func (e *Engine) ProcessFiles(ctx context.Context, paths []string) (*ProcessResu
 		}
 
 		// F2: Auto-skip when referenced layers don't exist on disk.
-		if missing := checkLayerPaths(collectLayerPaths(mf)); missing != "" {
+		missing, checkErr := checkLayerPaths(collectLayerPaths(mf))
+		if checkErr != nil {
+			return nil, fmt.Errorf("checking layers for %q: %w", mf.FilePath, checkErr)
+		}
+		if missing != "" {
 			if e.config.Strict {
 				return nil, fmt.Errorf("layer %q does not exist (referenced by %q)", missing, mf.FilePath)
 			}

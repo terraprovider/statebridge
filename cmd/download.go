@@ -91,8 +91,6 @@ func runDownload(cmd *cobra.Command, args []string) error {
 	dlOpts = append(dlOpts, download.WithDryRun(flagDownloadDryRun))
 
 	dl := download.NewDownloader(cred, initArgs, dlOpts...)
-		download.WithDryRun(flagDownloadDryRun),
-	)
 	ctx := context.Background()
 
 	files, err := dl.Download(ctx, cwd)
