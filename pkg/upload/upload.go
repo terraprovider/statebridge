@@ -199,18 +199,22 @@ func (m *Manager) getUploader(layerPath string) (BlobUploader, error) {
 func (m *Manager) uploadFile(ctx context.Context, uploader BlobUploader, filename string, content []byte, layerPath string) error {
 	blobName := "migrations/" + filename
 
-	// Track this blob as uploaded in current session BEFORE cleanup
+	// Track this blob as uploaded in current session BEFORE cleanup,
+	// so cleanupOldVersions won't delete a file we're about to upload.
 	m.uploadedInSession[blobName] = true
 
 	if err := m.checkActiveBlobs(ctx, uploader, filename, layerPath); err != nil {
+		delete(m.uploadedInSession, blobName)
 		return err
 	}
 
 	if err := m.cleanupOldVersions(ctx, uploader, filename); err != nil {
+		delete(m.uploadedInSession, blobName)
 		return err
 	}
 
 	if err := uploader.Upload(ctx, blobName, content); err != nil {
+		delete(m.uploadedInSession, blobName)
 		return err
 	}
 
