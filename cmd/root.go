@@ -49,3 +49,12 @@ func Execute() {
 		os.Exit(1)
 	}
 }
+
+// buildInitArgs converts --backend-config flag values into tofu init arguments.
+func buildInitArgs(backendConfigs []string) []string {
+	var args []string
+	for _, bc := range backendConfigs {
+		args = append(args, "-backend-config="+bc)
+	}
+	return args
+}

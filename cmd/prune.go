@@ -77,10 +77,7 @@ func runPrune(cmd *cobra.Command, args []string) error {
 	}
 
 	// Build init args from --backend-config flags
-	var initArgs []string
-	for _, bc := range flagPruneBackendConfig {
-		initArgs = append(initArgs, "-backend-config="+bc)
-	}
+	initArgs := buildInitArgs(flagPruneBackendConfig)
 
 	// Resolve tofu path for condition evaluation (not needed with --force)
 	var stateReader state.StateReader
@@ -119,11 +116,7 @@ func pruneLayer(
 	cred azcore.TokenCredential,
 	stateReader state.StateReader,
 ) (int, int, error) {
-	// Build init args from --backend-config flags (same as runPrune)
-	var initArgs []string
-	for _, bc := range flagPruneBackendConfig {
-		initArgs = append(initArgs, "-backend-config="+bc)
-	}
+	initArgs := buildInitArgs(flagPruneBackendConfig)
 
 	config, err := upload.DiscoverBackendConfig(layerDir, initArgs)
 	if err != nil {

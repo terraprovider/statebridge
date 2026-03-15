@@ -67,10 +67,7 @@ func runUpload(cmd *cobra.Command, args []string) error {
 	}
 
 	// Build init args from --backend-config flags
-	var initArgs []string
-	for _, bc := range flagUploadBackendConfig {
-		initArgs = append(initArgs, "-backend-config="+bc)
-	}
+	initArgs := buildInitArgs(flagUploadBackendConfig)
 
 	var opts []upload.ManagerOption
 	opts = append(opts, upload.WithForce(flagUploadForce))

@@ -79,10 +79,7 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 	}
 
 	// Build init args from --backend-config flags
-	var initArgs []string
-	for _, bc := range flagGenerateBackendConfig {
-		initArgs = append(initArgs, "-backend-config="+bc)
-	}
+	initArgs := buildInitArgs(flagGenerateBackendConfig)
 
 	// Resolve the tofu binary and create the state reader
 	var stateReader state.StateReader
@@ -165,10 +162,7 @@ func runUploadAfterGenerate(ctx context.Context, eng *engine.Engine, tofuPath st
 	}
 
 	// Build init args from --backend-config flags
-	var initArgs []string
-	for _, bc := range flagGenerateBackendConfig {
-		initArgs = append(initArgs, "-backend-config="+bc)
-	}
+	initArgs := buildInitArgs(flagGenerateBackendConfig)
 
 	var opts []upload.ManagerOption
 	opts = append(opts, upload.WithForce(flagGenerateForce))

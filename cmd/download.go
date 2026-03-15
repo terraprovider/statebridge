@@ -74,10 +74,7 @@ func runDownload(cmd *cobra.Command, args []string) error {
 	}
 
 	// Build init args from --backend-config flags
-	var initArgs []string
-	for _, bc := range flagDownloadBackendConfig {
-		initArgs = append(initArgs, "-backend-config="+bc)
-	}
+	initArgs := buildInitArgs(flagDownloadBackendConfig)
 
 	dl := download.NewDownloader(cred, initArgs, flagDownloadTofuPath, flagDownloadDryRun)
 	ctx := context.Background()
