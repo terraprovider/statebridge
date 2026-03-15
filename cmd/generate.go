@@ -119,6 +119,18 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 		resolvedTofuPath = lazy.tofuPath()
 	}
 
+	// When --upload is set without --force, the upload guard needs tofu to
+	// evaluate whether existing blobs are still active. Resolve it now if
+	// generation itself didn't trigger a state read (and thus didn't discover
+	// the tofu binary via the lazy reader).
+	if flagUpload && !flagGenerateForce && resolvedTofuPath == "" {
+		if reader, err := state.NewTofuStateReaderFromPath(initArgs); err == nil {
+			resolvedTofuPath = reader.TofuPath()
+		}
+		// If tofu still can't be found, the upload guard will be silently
+		// disabled — same behavior as when tofu is unavailable at upload time.
+	}
+
 	if flagDryRun {
 		// In dry-run mode, print the rendered content for each output file
 		w := eng.Writer()
