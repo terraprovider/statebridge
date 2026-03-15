@@ -70,6 +70,7 @@ func runUpload(cmd *cobra.Command, args []string) error {
 	opts = append(opts, upload.WithTofuPath(tofuPath, initArgs))
 
 	mgr := upload.NewManager(factory, initArgs, opts...)
+	defer func() { _ = mgr.Close() }()
 	ctx := context.Background()
 
 	return mgr.UploadFromDisk(ctx, args)

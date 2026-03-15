@@ -51,6 +51,8 @@ func (m *mockUploader) DownloadBlob(_ context.Context, blobName string) ([]byte,
 	return append([]byte{}, data...), nil
 }
 
+func (m *mockUploader) Close() error { return nil }
+
 // mockStateReader implements state.StateReader for testing.
 type mockStateReader struct {
 	states map[string]*tfjson.State

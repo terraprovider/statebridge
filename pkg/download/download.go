@@ -67,6 +67,7 @@ func (d *Downloader) Download(ctx context.Context, targetDir string) ([]string, 
 	if err != nil {
 		return nil, fmt.Errorf("creating blob client: %w", err)
 	}
+	defer func() { _ = uploader.Close() }()
 
 	blobs, err := uploader.ListBlobs(ctx, "migrations/")
 	if err != nil {

@@ -111,6 +111,7 @@ func pruneLayer(
 	if err != nil {
 		return 0, 0, fmt.Errorf("creating blob client: %w", err)
 	}
+	defer func() { _ = uploader.Close() }()
 
 	migrationBlobs, err := listMigrationBlobs(ctx, uploader)
 	if err != nil {

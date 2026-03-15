@@ -80,6 +80,7 @@ type S3BackendConfig struct {
 	Bucket   string
 	Region   string
 	Endpoint string // custom endpoint (e.g., MinIO)
+	Key      string // state key path — used for cache key disambiguation
 }
 
 func (c *S3BackendConfig) Type() BackendType { return BackendS3 }
@@ -92,7 +93,7 @@ func (c *S3BackendConfig) Validate() error {
 }
 
 func (c *S3BackendConfig) CacheKey() string {
-	return "s3|" + c.Bucket + "|" + c.Region
+	return "s3|" + c.Bucket + "|" + c.Region + "|" + c.Key
 }
 
 // ---------------------------------------------------------------------------
@@ -115,7 +116,7 @@ func (c *GCSBackendConfig) Validate() error {
 }
 
 func (c *GCSBackendConfig) CacheKey() string {
-	return "gcs|" + c.Bucket
+	return "gcs|" + c.Bucket + "|" + c.Prefix
 }
 
 // ---------------------------------------------------------------------------
@@ -123,7 +124,8 @@ func (c *GCSBackendConfig) CacheKey() string {
 // ---------------------------------------------------------------------------
 
 // LocalBackendConfig holds local filesystem backend configuration.
-// Migration files are stored in a "migrations" subdirectory under Path.
+// Path is the bucket root directory. Callers store migration files under
+// the "migrations/" key prefix within this directory.
 type LocalBackendConfig struct {
 	Path string
 }
@@ -155,7 +157,11 @@ func DiscoverBackendConfig(layerPath string, initArgs []string) (BackendConfig, 
 	}
 
 	if backendType == "" {
-		return nil, fmt.Errorf("backend config for layer %q: no supported backend block found in .tf files", layerPath)
+		// No backend block in HCL — try to infer the backend type from init args.
+		backendType = inferBackendTypeFromArgs(initArgs)
+		if backendType == "" {
+			return nil, fmt.Errorf("backend config for layer %q: no supported backend block found in .tf files and could not infer type from --backend-config args", layerPath)
+		}
 	}
 
 	overrides := ParseInitArgs(layerPath, backendType, initArgs)
@@ -174,6 +180,37 @@ var supportedBackends = map[string]bool{
 	"s3":      true,
 	"gcs":     true,
 	"local":   true,
+}
+
+// backendTypeHints maps init arg keys that are unique to a specific backend.
+// Used to infer backend type when no HCL backend block is present.
+var backendTypeHints = map[string]BackendType{
+	"storage_account_name": BackendAzurerm,
+	"container_name":       BackendAzurerm,
+	"resource_group_name":  BackendAzurerm,
+}
+
+// inferBackendTypeFromArgs attempts to determine the backend type from
+// --backend-config init args by looking for backend-specific key names.
+// Returns empty string if the type cannot be determined.
+func inferBackendTypeFromArgs(initArgs []string) BackendType {
+	for _, arg := range initArgs {
+		val := strings.TrimPrefix(arg, "-backend-config=")
+		if val == arg {
+			continue
+		}
+		if !strings.Contains(val, "=") {
+			continue // file path, can't infer from this
+		}
+		parts := strings.SplitN(val, "=", 2)
+		if len(parts) < 2 {
+			continue
+		}
+		if bt, ok := backendTypeHints[parts[0]]; ok {
+			return bt
+		}
+	}
+	return ""
 }
 
 // ParseHCLBackend scans all .tf files in layerPath for a
@@ -310,6 +347,12 @@ func extractS3Config(block *hcl.Block) (*S3BackendConfig, error) {
 			}
 		}
 	}
+	if attr, ok := attrs["key"]; ok {
+		val, diags := attr.Expr.Value(nil)
+		if !diags.HasErrors() {
+			config.Key = val.AsString()
+		}
+	}
 	return config, nil
 }
 
@@ -369,6 +412,7 @@ var recognizedFields = map[BackendType]map[string]bool{
 		"bucket":   true,
 		"region":   true,
 		"endpoint": true,
+		"key":      true,
 	},
 	BackendGCS: {
 		"bucket": true,
@@ -466,6 +510,9 @@ func MergeBackendConfig(base BackendConfig, bt BackendType, overrides map[string
 		}
 		if v, ok := overrides["endpoint"]; ok && v != "" {
 			cfg.Endpoint = v
+		}
+		if v, ok := overrides["key"]; ok && v != "" {
+			cfg.Key = v
 		}
 		return cfg
 

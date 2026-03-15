@@ -5,7 +5,7 @@ The upload package handles persisting generated migration `.tf` files to blob st
 ## Source Files
 
 | File | Purpose |
-|------|---------||
+|------|---------|
 | `upload.go` | `Manager` orchestration: version cleanup, upload, overwrite protection guard, prune |
 | `uploader.go` | `BlobUploader` interface |
 | `uploader_gcdk.go` | gocloud.dev adapter implementing `BlobUploader` for all backends |

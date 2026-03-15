@@ -2,10 +2,13 @@ package upload
 
 import (
 	"context"
+	"io"
 )
 
 // BlobUploader abstracts blob storage operations for testability.
 type BlobUploader interface {
+	io.Closer
+
 	// Upload creates or overwrites a blob with the given content.
 	Upload(ctx context.Context, blobName string, content []byte) error
 

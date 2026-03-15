@@ -661,4 +661,98 @@ terraform {
 			t.Errorf("Region = %q, want %q", s3.Region, "us-east-1")
 		}
 	})
+
+	t.Run("infer azurerm from init args when no HCL backend block", func(t *testing.T) {
+		dir := t.TempDir()
+		// Write a main.tf without a backend block
+		err := os.WriteFile(filepath.Join(dir, "main.tf"), []byte(`
+terraform {
+  required_providers {
+    random = { source = "hashicorp/random" }
+  }
+}
+`), 0o644)
+		if err != nil {
+			t.Fatal(err)
+		}
+		initArgs := []string{
+			"-backend-config=storage_account_name=inferredacct",
+			"-backend-config=container_name=inferredcontainer",
+		}
+
+		cfg, err := DiscoverBackendConfig(dir, initArgs)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		az, ok := cfg.(*AzurermBackendConfig)
+		if !ok {
+			t.Fatalf("expected *AzurermBackendConfig, got %T", cfg)
+		}
+		if az.StorageAccountName != "inferredacct" {
+			t.Errorf("StorageAccountName = %q, want %q", az.StorageAccountName, "inferredacct")
+		}
+		if az.ContainerName != "inferredcontainer" {
+			t.Errorf("ContainerName = %q, want %q", az.ContainerName, "inferredcontainer")
+		}
+	})
+
+	t.Run("fails when no HCL and no recognizable init args", func(t *testing.T) {
+		dir := t.TempDir()
+		_, err := DiscoverBackendConfig(dir, []string{"-backend-config=unknown_key=val"})
+		if err == nil {
+			t.Fatal("expected error when backend cannot be inferred")
+		}
+	})
+}
+
+func TestInferBackendTypeFromArgs(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want BackendType
+	}{
+		{
+			name: "storage_account_name implies azurerm",
+			args: []string{"-backend-config=storage_account_name=myacct"},
+			want: BackendAzurerm,
+		},
+		{
+			name: "container_name implies azurerm",
+			args: []string{"-backend-config=container_name=tfstate"},
+			want: BackendAzurerm,
+		},
+		{
+			name: "no recognizable keys returns empty",
+			args: []string{"-backend-config=bucket=mybucket"},
+			want: "",
+		},
+		{
+			name: "empty args returns empty",
+			args: nil,
+			want: "",
+		},
+		{
+			name: "file path args are skipped",
+			args: []string{"-backend-config=backend.hcl"},
+			want: "",
+		},
+		{
+			name: "mixed args with azurerm hint",
+			args: []string{
+				"-reconfigure",
+				"-backend-config=storage_account_name=myacct",
+				"-backend-config=bucket=ignored",
+			},
+			want: BackendAzurerm,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := inferBackendTypeFromArgs(tt.args)
+			if got != tt.want {
+				t.Errorf("inferBackendTypeFromArgs() = %q, want %q", got, tt.want)
+			}
+		})
+	}
 }

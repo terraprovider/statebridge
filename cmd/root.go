@@ -76,9 +76,10 @@ func resolveTofuPath(flagPath string) (string, error) {
 }
 
 // createUploaderFactory builds a UploaderFactory that handles all backends.
-// Azure credentials are resolved lazily: only when an azurerm backend is
-// encountered. S3/GCS use their native SDK credential chains; local needs
-// no credentials.
+// Azure credentials are resolved eagerly from ARM_* environment variables.
+// If Azure credential resolution fails, the factory still works for non-Azure
+// backends (S3/GCS use their native SDK credential chains, local needs no
+// credentials) but returns a clear error for azurerm backends.
 func createUploaderFactory() (upload.UploaderFactory, error) {
 	credCfg, err := auth.NewCredentialConfiguration(
 		auth.WithDefaultEnvironmentVariables(),

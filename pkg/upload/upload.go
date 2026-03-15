@@ -261,6 +261,18 @@ func (m *Manager) getUploader(layerPath string) (BlobUploader, error) {
 	return uploader, nil
 }
 
+// Close releases resources held by cached uploaders.
+func (m *Manager) Close() error {
+	var firstErr error
+	for key, uploader := range m.uploaderCache {
+		if err := uploader.Close(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+		delete(m.uploaderCache, key)
+	}
+	return firstErr
+}
+
 // uploadFile handles guard check, cleanup of old versions, and upload of a single file.
 func (m *Manager) uploadFile(ctx context.Context, uploader BlobUploader, filename string, content []byte, layerPath string) error {
 	blobName := "migrations/" + filename

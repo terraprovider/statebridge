@@ -146,6 +146,7 @@ func runUploadAfterGenerate(ctx context.Context, eng *engine.Engine, tofuPath st
 	opts = append(opts, upload.WithTofuPath(tofuPath, initArgs))
 
 	mgr := upload.NewManager(factory, initArgs, opts...)
+	defer func() { _ = mgr.Close() }()
 	rendered := eng.Writer().RenderAll()
 
 	if err := mgr.UploadRendered(ctx, rendered); err != nil {

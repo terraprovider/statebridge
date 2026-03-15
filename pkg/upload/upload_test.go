@@ -82,6 +82,8 @@ func (m *mockBlobUploader) DownloadBlob(_ context.Context, blobName string) ([]b
 	return append([]byte{}, data...), nil
 }
 
+func (m *mockBlobUploader) Close() error { return nil }
+
 // setBlobData configures the mock to return specific content for a blob download.
 func (m *mockBlobUploader) setBlobData(blobName string, content []byte) {
 	m.mu.Lock()
