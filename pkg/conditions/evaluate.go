@@ -80,13 +80,13 @@ func EvaluateMetadataConditions(
 		}
 	}
 
-	var s *tfjson.State
+	var idx *state.StateIndex
 	if needsState {
-		var err error
-		s, err = readState(ctx, layerDir)
+		s, err := readState(ctx, layerDir)
 		if err != nil {
 			return false, fmt.Errorf("reading state for %q: %w", layerDir, err)
 		}
+		idx = state.NewStateIndex(s)
 	}
 
 	for _, check := range cond.ResourcesExist {
@@ -96,7 +96,7 @@ func EvaluateMetadataConditions(
 		}
 
 		for _, addr := range check.Addresses {
-			if !state.ResourceExists(s, addr) {
+			if !idx.ResourceExists(addr) {
 				return false, nil
 			}
 		}
@@ -109,7 +109,7 @@ func EvaluateMetadataConditions(
 		}
 
 		for _, addr := range check.Addresses {
-			if state.ResourceExists(s, addr) {
+			if idx.ResourceExists(addr) {
 				return false, nil
 			}
 		}

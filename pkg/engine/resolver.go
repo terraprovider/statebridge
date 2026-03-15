@@ -46,7 +46,8 @@ func (r *Resolver) LookupResources(
 		return nil, fmt.Errorf("reading state for layer %q: %w", layerPath, err)
 	}
 
-	resources, err := state.LookupResourcesByPrefix(s, baseAddr)
+	idx := state.NewStateIndex(s)
+	resources, err := idx.LookupResourcesByPrefix(baseAddr)
 	if err != nil {
 		return nil, fmt.Errorf("looking up resources for %q: %w", baseAddr, err)
 	}
@@ -71,7 +72,8 @@ func (r *Resolver) LookupResource(
 		return nil, fmt.Errorf("reading state for layer %q: %w", layerPath, err)
 	}
 
-	resource, err := state.LookupResource(s, address)
+	idx := state.NewStateIndex(s)
+	resource, err := idx.LookupResource(address)
 	if err != nil {
 		return nil, fmt.Errorf("looking up resource %q: %w", address, err)
 	}
