@@ -8,6 +8,62 @@ tfmigrate is a CLI tool that generates OpenTofu/Terraform HCL migration code (`i
 
 A **layer** is a Terraform/OpenTofu root module identified by its filesystem path (e.g., `./layers/networking`).
 
+## Development Guide
+
+### Build & Test Commands
+
+```bash
+# Build (static, stripped binary)
+just build
+# or: GOFLAGS="-trimpath" go build -ldflags "-s -w -extldflags '-static'"
+
+# Lint
+golangci-lint run ./...
+
+# Unit tests (no external deps needed)
+go test ./...
+
+# E2E fast tests (requires Azure auth + storage account)
+go test -tags=e2e_fast -timeout=10m -count=1 ./e2e/...
+
+# E2E full tests (requires Azure auth + OpenTofu + real resources)
+go test -tags=e2e -timeout=60m -count=1 ./e2e/...
+```
+
+E2E environment: `ARM_CLIENT_ID`, `ARM_TENANT_ID`, `ARM_SUBSCRIPTION_ID`, `ARM_USE_OIDC=true`, optionally `E2E_STORAGE_ACCOUNT_NAME` and `E2E_LOCATION`.
+
+### Code Conventions
+
+- **Go 1.26**, module `github.com/redtenant/tfmigrate`
+- **Error handling:** Always wrap with context — `fmt.Errorf("context: %w", err)`
+- **Validation:** Collect all errors before returning, don't fast-fail (see `pkg/migration/validation.go`)
+- **Tests:** Table-driven with `t.Run()` subtests. Use helpers from `internal/testutil/` (no external test frameworks)
+- **Interfaces:** Define at consumer site — `StateReader`, `Block`, `BlobUploader`. Keep them small
+- **Imports:** 3-group style — stdlib, external, internal
+- **Build tags:** `e2e` (full Azure tests), `e2e_fast` (isolated feature tests), none (unit tests)
+
+### Architecture
+
+```
+cmd/           → CLI layer (cobra). Calls pkg/engine.ProcessFiles()
+pkg/engine/    → Orchestration core. Coordinates parsing → state → template → generation
+pkg/migration/ → YAML schema types + validation (no external pkg/ deps)
+pkg/state/     → OpenTofu state reading (terraform-exec, caching, auto-init)
+pkg/generator/ → HCL block rendering + metadata embedding
+pkg/template/  → Go template evaluation + custom functions
+pkg/upload/    → Azure Blob Storage operations + overwrite guard
+pkg/download/  → Download orchestration with condition evaluation
+pkg/conditions/→ Shared condition evaluation (upload guard + download)
+pkg/auth/      → Azure credential management (HashiCorp SDK → azcore bridge)
+pkg/tofu/      → OpenTofu plan execution + migration target scanning
+internal/testutil/ → Test helpers (layer setup, mock state, assertions)
+e2e/           → End-to-end tests with real Azure resources
+```
+
+Key entry point: `pkg/engine.ProcessFiles()` runs the full pipeline.
+
+---
+
 ## How to Generate Migration Files
 
 When a user asks you to create a migration, produce a YAML file following the schema below. Place it in the project's migrations directory with a numeric prefix for ordering (e.g., `migrations/001_description.yaml`).
