@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"sync"
 
+	tfjson "github.com/hashicorp/terraform-json"
 	"github.com/spf13/cobra"
 
 	"github.com/redtenant/tfmigrate/pkg/auth"
@@ -80,7 +82,11 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 	// Build init args from --backend-config flags
 	initArgs := buildInitArgs(flagGenerateBackendConfig)
 
-	// Resolve the tofu binary and create the state reader
+	// Resolve the tofu binary and create the state reader.
+	// When --tofu-path is explicit, resolve eagerly.
+	// Otherwise, defer discovery until state is actually needed so that
+	// migrations that never read state (rename, remove, import with explicit
+	// IDs) work even when tofu is not installed.
 	var stateReader state.StateReader
 	var resolvedTofuPath string
 
@@ -88,12 +94,12 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 		resolvedTofuPath = flagTofuPath
 		stateReader = state.NewTofuStateReader(flagTofuPath, initArgs)
 	} else {
-		reader, lookupErr := state.NewTofuStateReaderFromPath(initArgs)
-		if lookupErr != nil {
-			return fmt.Errorf("%w (required for state resolution; use --tofu-path to specify location)", lookupErr)
-		}
-		resolvedTofuPath = reader.TofuPath()
-		stateReader = reader
+		lazy := newLazyStateReader(initArgs)
+		stateReader = lazy
+		// resolvedTofuPath will be populated after ProcessFiles if lazy resolved.
+		defer func() {
+			resolvedTofuPath = lazy.tofuPath()
+		}()
 	}
 
 	cfg := engine.Config{
@@ -193,4 +199,37 @@ func runUploadAfterGenerate(ctx context.Context, eng *engine.Engine, tofuPath st
 	}
 
 	return nil
+}
+
+// lazyStateReader defers tofu binary discovery until ReadState is first called.
+// This allows migrations that never read state to succeed without tofu installed.
+type lazyStateReader struct {
+	initArgs []string
+	once     sync.Once
+	reader   *state.TofuStateReader
+	err      error
+}
+
+func newLazyStateReader(initArgs []string) *lazyStateReader {
+	return &lazyStateReader{initArgs: initArgs}
+}
+
+func (l *lazyStateReader) ReadState(ctx context.Context, layerPath string) (*tfjson.State, error) {
+	l.once.Do(func() {
+		l.reader, l.err = state.NewTofuStateReaderFromPath(l.initArgs)
+		if l.err != nil {
+			l.err = fmt.Errorf("%w (required for state resolution; use --tofu-path to specify location)", l.err)
+		}
+	})
+	if l.err != nil {
+		return nil, l.err
+	}
+	return l.reader.ReadState(ctx, layerPath)
+}
+
+func (l *lazyStateReader) tofuPath() string {
+	if l.reader != nil {
+		return l.reader.TofuPath()
+	}
+	return ""
 }
