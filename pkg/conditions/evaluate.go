@@ -6,6 +6,7 @@ package conditions
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 
@@ -48,13 +49,17 @@ func EvaluateMetadataConditions(
 
 	// Layer existence conditions — cheap checks, no state reading needed.
 	for _, path := range cond.LayerExists {
-		if _, err := os.Stat(path); os.IsNotExist(err) {
+		if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
 			return false, nil
+		} else if err != nil {
+			return false, fmt.Errorf("checking layer %q: %w", path, err)
 		}
 	}
 	for _, path := range cond.LayerNotExists {
 		if _, err := os.Stat(path); err == nil {
 			return false, nil
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return false, fmt.Errorf("checking layer %q: %w", path, err)
 		}
 	}
 

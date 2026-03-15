@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -74,7 +75,7 @@ func (r *TofuStateReader) ReadState(ctx context.Context, layerPath string) (*tfj
 	}
 
 	// Check that the layer directory actually exists before attempting tofu operations.
-	if _, err := os.Stat(absPath); os.IsNotExist(err) {
+	if _, err := os.Stat(absPath); errors.Is(err, os.ErrNotExist) {
 		return nil, fmt.Errorf("layer directory %q does not exist", absPath)
 	}
 

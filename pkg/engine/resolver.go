@@ -219,16 +219,3 @@ func buildExpandedTemplateContext(res *state.ResourceInfo, item interface{}, ite
 		ItemIndex:  itemIndex,
 	}
 }
-
-// ExpandedInstance represents a single resource instance produced by expanding
-// a keyed resource against state.
-type ExpandedInstance struct {
-	// SourceResource is the resource info from the source state.
-	SourceResource *state.ResourceInfo
-
-	// DestAddress is the rendered destination address for this instance.
-	DestAddress string
-
-	// ImportID is the resolved import ID for this instance.
-	ImportID string
-}

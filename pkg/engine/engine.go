@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -1016,9 +1017,11 @@ func (e *Engine) evaluateCondition(ctx context.Context, mf *migration.MigrationF
 
 	// F3: Layer existence conditions — cheap checks, no state reading.
 	for _, path := range mf.Condition.LayerExists {
-		if _, err := os.Stat(path); os.IsNotExist(err) {
+		if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
 			fmt.Fprintf(os.Stderr, "Skipping %q: layer %q does not exist (layer_exists condition)\n", mf.FilePath, path)
 			return false, nil
+		} else if err != nil {
+			return false, fmt.Errorf("checking layer %q: %w", path, err)
 		}
 	}
 
@@ -1026,6 +1029,8 @@ func (e *Engine) evaluateCondition(ctx context.Context, mf *migration.MigrationF
 		if _, err := os.Stat(path); err == nil {
 			fmt.Fprintf(os.Stderr, "Skipping %q: layer %q exists (layer_not_exists condition)\n", mf.FilePath, path)
 			return false, nil
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return false, fmt.Errorf("checking layer %q: %w", path, err)
 		}
 	}
 
@@ -1173,7 +1178,7 @@ func collectLayerPaths(mf *migration.MigrationFile) []string {
 // Returns the first missing path, or "" if all exist.
 func checkLayerPaths(paths []string) string {
 	for _, path := range paths {
-		if _, err := os.Stat(path); os.IsNotExist(err) {
+		if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
 			return path
 		}
 	}
