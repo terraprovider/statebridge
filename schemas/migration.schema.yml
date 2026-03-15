@@ -1,0 +1,375 @@
+$schema: "http://json-schema.org/draft-07/schema#"
+$id: "schemas/migration.schema.yml"
+title: "tfmigrate Migration File"
+description: "Schema for tfmigrate YAML migration files that declare resource moves, renames, removals, and imports across OpenTofu/Terraform layers"
+x-config:
+  type: migration
+  displayName: Migration File
+  description: Declarative YAML files describing resource migrations (move, rename, remove, import) across OpenTofu/Terraform layers
+  filePatterns:
+    - "migrations/*.yaml"
+    - "migrations/*.yml"
+    - "migrations/**/*.yaml"
+    - "migrations/**/*.yml"
+
+type: object
+required:
+  - description
+  - operations
+additionalProperties: false
+
+properties:
+  description:
+    type: string
+    minLength: 1
+    description: "Human-readable summary of what this migration does"
+
+  schema_version:
+    type: string
+    description: "Schema version for forward compatibility (currently '2')"
+    examples:
+      - "2"
+
+  status:
+    type: string
+    enum:
+      - retired
+    description: "Lifecycle state. Omit for active files. Set to 'retired' to skip entirely (no validation, no state reads, no processing)"
+
+  condition:
+    $ref: "#/definitions/condition"
+
+  operations:
+    type: array
+    minItems: 1
+    description: "Ordered list of migration operations to perform"
+    items:
+      $ref: "#/definitions/operation"
+
+definitions:
+  condition:
+    type: object
+    additionalProperties: false
+    description: "Preconditions that must all be met (ANDed) for the migration file to be processed"
+    properties:
+      resources_exist:
+        type: array
+        description: "ALL listed addresses must exist in their layer's state"
+        items:
+          $ref: "#/definitions/resource_check"
+      resources_not_exist:
+        type: array
+        description: "NONE of the listed addresses may exist in their layer's state"
+        items:
+          $ref: "#/definitions/resource_check"
+      layer_exists:
+        type: array
+        description: "ALL listed layer paths must exist on disk (no state reading)"
+        items:
+          type: string
+          minLength: 1
+      layer_not_exists:
+        type: array
+        description: "NONE of the listed layer paths may exist on disk"
+        items:
+          type: string
+          minLength: 1
+
+  resource_check:
+    type: object
+    required:
+      - layer
+      - addresses
+    additionalProperties: false
+    description: "A layer path and resource addresses to check against that layer's state"
+    properties:
+      layer:
+        type: string
+        minLength: 1
+        description: "Filesystem path to the Terraform root module whose state will be queried"
+      addresses:
+        type: array
+        minItems: 1
+        description: "Resource addresses to check. Base addresses match any for_each instance; fully-qualified addresses match only that instance"
+        items:
+          type: string
+          minLength: 1
+
+  operation:
+    type: object
+    required:
+      - type
+    description: "A single migration operation. The 'type' field determines which other fields are relevant"
+    properties:
+      type:
+        type: string
+        enum:
+          - move
+          - rename
+          - remove
+          - import
+        description: "The kind of migration operation"
+      description:
+        type: string
+        description: "Optional human-readable description of this operation"
+      address_prefix:
+        type: string
+        description: "Prefix prepended (with dot separator) to all resource addresses. For move, acts as shorthand for both source_prefix and destination_prefix. Cannot be combined with source_prefix/destination_prefix or all_resources"
+      source_prefix:
+        type: string
+        description: "Prefix prepended to source resource addresses (move only). Cannot be combined with address_prefix"
+      destination_prefix:
+        type: string
+        description: "Prefix prepended to destination resource addresses (move only). Cannot be combined with address_prefix"
+      source_layer:
+        type: string
+        description: "Filesystem path to the source Terraform root module (move only)"
+      destination_layer:
+        type: string
+        description: "Filesystem path to the destination Terraform root module (move only)"
+      resources:
+        type: array
+        description: "Resources to move between layers (move only, when all_resources is false)"
+        items:
+          $ref: "#/definitions/resource_move"
+      all_resources:
+        type: boolean
+        description: "When true, discovers and moves all managed resources from the source layer's state (move only)"
+        default: false
+      overrides:
+        type: array
+        description: "Per-resource customization during all_resources move. Each entry requires 'to' or 'import_id' (or both)"
+        items:
+          $ref: "#/definitions/resource_move_override"
+      omit:
+        type: array
+        description: "Resources to exclude from import during all_resources move. Removed blocks are still generated in source layer"
+        items:
+          $ref: "#/definitions/omit_entry"
+      use_moved_blocks:
+        type: boolean
+        description: "For same-layer moves: true (default) generates moved blocks, false forces removed+import. Per-resource override available on resource_move entries"
+      layer:
+        type: string
+        description: "Filesystem path to the Terraform root module (rename, remove, import operations)"
+      renames:
+        type: array
+        description: "Address renames to perform (rename only)"
+        items:
+          $ref: "#/definitions/rename_entry"
+      entries:
+        type: array
+        description: "Resources to remove from state (remove only)"
+        items:
+          $ref: "#/definitions/remove_entry"
+      destroy:
+        type: boolean
+        description: "Default destroy behavior for remove operations. false = remove from state only (default), true = also destroy infrastructure"
+        default: false
+      imports:
+        type: array
+        description: "Resources to import into state (import only)"
+        items:
+          $ref: "#/definitions/import_entry"
+      provider:
+        type: string
+        description: "Default provider alias for import operations. Per-entry provider overrides this"
+    allOf:
+      - if:
+          properties:
+            type:
+              const: move
+        then:
+          required:
+            - source_layer
+            - destination_layer
+          anyOf:
+            - required:
+                - resources
+              properties:
+                resources:
+                  minItems: 1
+            - required:
+                - all_resources
+              properties:
+                all_resources:
+                  const: true
+      - if:
+          properties:
+            type:
+              const: rename
+        then:
+          required:
+            - layer
+            - renames
+          properties:
+            renames:
+              minItems: 1
+      - if:
+          properties:
+            type:
+              const: remove
+        then:
+          required:
+            - layer
+            - entries
+          properties:
+            entries:
+              minItems: 1
+      - if:
+          properties:
+            type:
+              const: import
+        then:
+          required:
+            - layer
+            - imports
+          properties:
+            imports:
+              minItems: 1
+
+  resource_move:
+    type: object
+    required:
+      - from
+    additionalProperties: false
+    description: "A resource to move between layers, optionally with per-key routing for for_each resources"
+    properties:
+      from:
+        type: string
+        minLength: 1
+        description: "Resource address in the source layer"
+      to:
+        type: string
+        description: "Override destination address when it differs from source. Defaults to 'from' if omitted"
+      keys:
+        type: object
+        description: "Maps source for_each keys (or patterns) to destination keys (or templates). Patterns: 'exact_key', 'prefix_*' (prefix match), '*' (catch-all). Values can be Go template expressions"
+        additionalProperties:
+          type: string
+      import_id:
+        type: string
+        description: "Provider-specific import identifier. Can be a literal or Go template expression. If omitted, auto-resolved from source state"
+      merge_duplicates:
+        type: boolean
+        description: "Enable destination-side deduplication when multiple sources produce the same destination address. Only valid with keys"
+        default: false
+      use_moved_blocks:
+        type: boolean
+        description: "Per-resource override for same-layer move block generation. true = moved blocks, false = removed+import blocks"
+
+  resource_move_override:
+    type: object
+    required:
+      - from
+    additionalProperties: false
+    description: "Per-resource override for all_resources moves. Requires 'to' or 'import_id' (or both)"
+    properties:
+      from:
+        type: string
+        minLength: 1
+        description: "Resource address to customize"
+      to:
+        type: string
+        description: "Override destination address (rename during bulk move)"
+      import_id:
+        type: string
+        description: "Override automatic import ID resolution"
+    anyOf:
+      - required:
+          - to
+      - required:
+          - import_id
+
+  omit_entry:
+    type: object
+    required:
+      - address
+    additionalProperties: false
+    description: "Resource to exclude from import during all_resources move"
+    properties:
+      address:
+        type: string
+        minLength: 1
+        description: "Base resource address to omit from import"
+      destroy:
+        type: boolean
+        description: "Whether the removed block uses destroy = true. Defaults to false"
+        default: false
+
+  rename_entry:
+    type: object
+    required:
+      - from
+      - to
+    additionalProperties: false
+    description: "A single address rename within a layer"
+    properties:
+      from:
+        type: string
+        minLength: 1
+        description: "Original resource address"
+      to:
+        type: string
+        minLength: 1
+        description: "New resource address"
+
+  remove_entry:
+    type: object
+    required:
+      - address
+    additionalProperties: false
+    description: "A resource to remove from state"
+    properties:
+      address:
+        type: string
+        minLength: 1
+        description: "Terraform resource address to remove"
+      destroy:
+        type: boolean
+        description: "Per-entry override: true = destroy infrastructure, false = remove from state only"
+
+  import_entry:
+    type: object
+    required:
+      - address
+      - id
+    additionalProperties: false
+    description: "A resource to import into Terraform state"
+    properties:
+      address:
+        type: string
+        minLength: 1
+        description: "Terraform resource address to import to"
+      id:
+        type: string
+        minLength: 1
+        description: "Provider-specific resource identifier. When source is set, can be a Go template expression"
+      provider:
+        type: string
+        description: "Provider alias override for this entry"
+      source:
+        $ref: "#/definitions/import_source"
+      key:
+        type: string
+        description: "Go template for destination for_each key. Only valid when source is set. Required when source.expand is set"
+
+  import_source:
+    type: object
+    required:
+      - layer
+      - address
+    additionalProperties: false
+    description: "References a resource in state whose attributes are used to resolve template expressions in import ID and key fields"
+    properties:
+      layer:
+        type: string
+        minLength: 1
+        description: "Filesystem path of the layer containing the source resource"
+      address:
+        type: string
+        minLength: 1
+        description: "Base resource address to look up in state"
+      expand:
+        type: string
+        description: "Attribute name containing a list to expand. Each element produces a separate import with .Item and .ItemIndex available in templates"
