@@ -113,7 +113,9 @@ func (e *Engine) ProcessFiles(ctx context.Context, paths []string) (*ProcessResu
 		// F2: Auto-skip when referenced layers don't exist on disk.
 		missing, checkErr := checkLayerPaths(collectLayerPaths(mf))
 		if checkErr != nil {
-			return nil, fmt.Errorf("checking layers for %q: %w", mf.FilePath, checkErr)
+			fmt.Fprintf(os.Stderr, "Skipping %q: checking layers: %v\n", mf.FilePath, checkErr)
+			skippedFiles = append(skippedFiles, SkippedFile{mf.FilePath, migration.YamlStem(mf.FilePath), SkipError})
+			continue
 		}
 		if missing != "" {
 			if e.config.Strict {
