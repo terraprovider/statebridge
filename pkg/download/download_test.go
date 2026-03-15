@@ -2,6 +2,7 @@ package download
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -121,7 +122,7 @@ func TestDownloadNoConditions(t *testing.T) {
 
 	// Verify file was written
 	outPath := filepath.Join(dir, "migration.001_test.abcd1234.tf")
-	if _, err := os.Stat(outPath); os.IsNotExist(err) {
+	if _, err := os.Stat(outPath); errors.Is(err, os.ErrNotExist) {
 		t.Errorf("expected file %q to exist", outPath)
 	}
 }
@@ -352,7 +353,7 @@ func TestDownloadDryRun(t *testing.T) {
 
 	// File should NOT be written in dry-run mode
 	outPath := filepath.Join(dir, "migration.001_test.abcd1234.tf")
-	if _, err := os.Stat(outPath); !os.IsNotExist(err) {
+	if _, err := os.Stat(outPath); !errors.Is(err, os.ErrNotExist) {
 		t.Error("file should not exist in dry-run mode")
 	}
 }
