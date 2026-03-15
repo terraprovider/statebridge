@@ -28,20 +28,34 @@ type Downloader struct {
 	uploaderFactory upload.UploaderFactory
 }
 
-// NewDownloader creates a Downloader with the given credential and options.
-func NewDownloader(cred azcore.TokenCredential, initArgs []string, tofuPath string, dryRun bool) *Downloader {
-	return &Downloader{
-		cred:            cred,
-		initArgs:        initArgs,
-		tofuPath:        tofuPath,
-		dryRun:          dryRun,
-		uploaderFactory: upload.DefaultUploaderFactory,
-	}
+// DownloaderOption configures optional Downloader behaviour.
+type DownloaderOption func(*Downloader)
+
+// WithTofuPath sets the path to the tofu binary.
+func WithTofuPath(p string) DownloaderOption {
+	return func(d *Downloader) { d.tofuPath = p }
 }
 
-// WithUploaderFactory replaces the default uploader factory for testing.
-func (d *Downloader) WithUploaderFactory(f upload.UploaderFactory) *Downloader {
-	d.uploaderFactory = f
+// WithDryRun enables dry-run mode (no files written).
+func WithDryRun(v bool) DownloaderOption {
+	return func(d *Downloader) { d.dryRun = v }
+}
+
+// WithUploaderFactory replaces the default uploader factory (for testing).
+func WithUploaderFactory(f upload.UploaderFactory) DownloaderOption {
+	return func(d *Downloader) { d.uploaderFactory = f }
+}
+
+// NewDownloader creates a Downloader with the given credential and options.
+func NewDownloader(cred azcore.TokenCredential, initArgs []string, opts ...DownloaderOption) *Downloader {
+	d := &Downloader{
+		cred:            cred,
+		initArgs:        initArgs,
+		uploaderFactory: upload.DefaultUploaderFactory,
+	}
+	for _, opt := range opts {
+		opt(d)
+	}
 	return d
 }
 
