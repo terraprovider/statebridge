@@ -51,11 +51,10 @@ type Config struct {
 // Engine orchestrates the full migration pipeline: parse YAML, read state,
 // resolve imports, expand wildcards, generate HCL, and write output files.
 type Engine struct {
-	config            Config
-	writer            *generator.Writer
-	resolver          *Resolver
-	parser            *migration.Parser
-	currentSourceFile string
+	config   Config
+	writer   *generator.Writer
+	resolver *Resolver
+	parser   *migration.Parser
 }
 
 // New creates a new Engine with the given configuration.
@@ -161,7 +160,10 @@ func (e *Engine) ProcessFiles(ctx context.Context, paths []string) (*ProcessResu
 	// Consolidate module-level removals: when all managed resources within
 	// a module are being removed, replace individual removed blocks with
 	// a single module-level removed block.
-	allBlocks = e.consolidateModuleRemovals(ctx, allBlocks)
+	allBlocks, err = e.consolidateModuleRemovals(ctx, allBlocks)
+	if err != nil {
+		return nil, err
+	}
 
 	e.writer.AddBlocks(allBlocks)
 
@@ -178,12 +180,12 @@ func (e *Engine) ProcessFiles(ctx context.Context, paths []string) (*ProcessResu
 // Returns the collected blocks; the caller decides when to commit them
 // to the Writer.
 func (e *Engine) processMigration(ctx context.Context, mf *migration.MigrationFile) ([]generator.Block, error) {
-	e.currentSourceFile = mf.FilePath
+	sourceFile := mf.FilePath
 	tracker := newWildcardTracker()
 
 	var allBlocks []generator.Block
 	for i, op := range mf.Operations {
-		blocks, err := e.processOperation(ctx, &op, i, tracker)
+		blocks, err := e.processOperation(ctx, &op, i, tracker, sourceFile)
 		if err != nil {
 			return nil, fmt.Errorf("operation[%d] (%s): %w", i, op.Type, err)
 		}
@@ -198,16 +200,16 @@ func (e *Engine) processMigration(ctx context.Context, mf *migration.MigrationFi
 }
 
 // processOperation dispatches a single operation to the appropriate handler.
-func (e *Engine) processOperation(ctx context.Context, op *migration.Operation, opIndex int, tracker *wildcardTracker) ([]generator.Block, error) {
+func (e *Engine) processOperation(ctx context.Context, op *migration.Operation, opIndex int, tracker *wildcardTracker, sourceFile string) ([]generator.Block, error) {
 	switch op.Type {
 	case migration.OpMove:
-		return e.processMove(ctx, op, opIndex, tracker)
+		return e.processMove(ctx, op, opIndex, tracker, sourceFile)
 	case migration.OpRename:
-		return e.processRename(op)
+		return e.processRename(op, sourceFile)
 	case migration.OpRemove:
-		return e.processRemove(op)
+		return e.processRemove(op, sourceFile)
 	case migration.OpImport:
-		return e.processImport(ctx, op)
+		return e.processImport(ctx, op, sourceFile)
 	default:
 		return nil, fmt.Errorf("unknown operation type %q", op.Type)
 	}
@@ -218,7 +220,7 @@ func (e *Engine) processOperation(ctx context.Context, op *migration.Operation, 
 // source layer and import blocks in the destination layer. For same-layer moves
 // (source_layer == destination_layer), generates moved blocks instead.
 // Supports keyed moves with key matching and cross-operation completeness tracking.
-func (e *Engine) processMove(ctx context.Context, op *migration.Operation, opIndex int, tracker *wildcardTracker) ([]generator.Block, error) {
+func (e *Engine) processMove(ctx context.Context, op *migration.Operation, opIndex int, tracker *wildcardTracker, sourceFile string) ([]generator.Block, error) {
 	srcLayer := op.SourceLayer
 	dstLayer := op.DestinationLayer
 	sameLayer := srcLayer == dstLayer
@@ -227,7 +229,7 @@ func (e *Engine) processMove(ctx context.Context, op *migration.Operation, opInd
 		// For all_resources, use operation-level UseMovedBlocks (no per-resource override)
 		useMovedBlocks := boolPtrDefault(op.UseMovedBlocks, true)
 		effectiveSameLayer := sameLayer && useMovedBlocks
-		return e.processMoveAllResources(ctx, srcLayer, dstLayer, effectiveSameLayer, op.Overrides, op.Omit, op.Description)
+		return e.processMoveAllResources(ctx, srcLayer, dstLayer, effectiveSameLayer, op.Overrides, op.Omit, op.Description, sourceFile)
 	}
 
 	srcPrefix := op.EffectiveSourcePrefix()
@@ -247,7 +249,7 @@ func (e *Engine) processMove(ctx context.Context, op *migration.Operation, opInd
 		useMovedBlocks := res.UseMovedBlocksValue(op.UseMovedBlocks)
 		effectiveSameLayer := sameLayer && useMovedBlocks
 
-		resBlocks, err := e.processMoveResource(ctx, srcLayer, dstLayer, effectiveSameLayer, srcAddr, dstAddr, &res, opIndex, i, tracker, op.Description)
+		resBlocks, err := e.processMoveResource(ctx, srcLayer, dstLayer, effectiveSameLayer, srcAddr, dstAddr, &res, opIndex, i, tracker, op.Description, sourceFile)
 		if err != nil {
 			return nil, fmt.Errorf("resource %q: %w", res.From, err)
 		}
@@ -271,17 +273,18 @@ func (e *Engine) processMoveResource(
 	opIndex, resIndex int,
 	tracker *wildcardTracker,
 	description string,
+	sourceFile string,
 ) ([]generator.Block, error) {
 	// Module-level move: discover all resources under the module prefix
 	if migration.IsModuleAddress(srcAddr) {
-		return e.processMoveModule(ctx, srcLayer, dstLayer, sameLayer, srcAddr, dstAddr, description)
+		return e.processMoveModule(ctx, srcLayer, dstLayer, sameLayer, srcAddr, dstAddr, description, sourceFile)
 	}
 
 	if len(res.Keys) > 0 {
-		return e.processMoveKeyed(ctx, srcLayer, dstLayer, sameLayer, srcAddr, dstAddr, res, opIndex, tracker, description)
+		return e.processMoveKeyed(ctx, srcLayer, dstLayer, sameLayer, srcAddr, dstAddr, res, opIndex, tracker, description, sourceFile)
 	}
 
-	return e.processMoveSimple(ctx, srcLayer, dstLayer, sameLayer, srcAddr, dstAddr, res, tracker, description)
+	return e.processMoveSimple(ctx, srcLayer, dstLayer, sameLayer, srcAddr, dstAddr, res, tracker, description, sourceFile)
 }
 
 // processMoveModule handles a module-level move by discovering all managed
@@ -298,6 +301,7 @@ func (e *Engine) processMoveModule(
 	sameLayer bool,
 	srcAddr, dstAddr string,
 	description string,
+	sourceFile string,
 ) ([]generator.Block, error) {
 	// Same-layer module move with no rename is a no-op
 	if sameLayer && srcAddr == dstAddr {
@@ -313,7 +317,7 @@ func (e *Engine) processMoveModule(
 				To:          dstAddr,
 				Layer:       srcLayer,
 				Description: description,
-				Source:      e.currentSourceFile,
+				Source:      sourceFile,
 			},
 		}, nil
 	}
@@ -356,7 +360,7 @@ func (e *Engine) processMoveModule(
 			Destroy:     false,
 			Layer:       srcLayer,
 			Description: description,
-			Source:      e.currentSourceFile,
+			Source:      sourceFile,
 		})
 
 		// Emit import blocks for each instance
@@ -376,7 +380,7 @@ func (e *Engine) processMoveModule(
 				ID:          importID,
 				Layer:       dstLayer,
 				Description: description,
-				Source:      e.currentSourceFile,
+				Source:      sourceFile,
 			})
 		}
 	}
@@ -406,6 +410,7 @@ func (e *Engine) processMoveAllResources(
 	overrides []migration.ResourceMove,
 	omitEntries []migration.OmitEntry,
 	description string,
+	sourceFile string,
 ) ([]generator.Block, error) {
 	resources, err := e.resolver.LookupAllManagedResources(ctx, srcLayer)
 	if err != nil {
@@ -466,7 +471,7 @@ func (e *Engine) processMoveAllResources(
 				Destroy:     cfg.destroy,
 				Layer:       srcLayer,
 				Description: description,
-				Source:      e.currentSourceFile,
+				Source:      sourceFile,
 			})
 			continue
 		}
@@ -495,7 +500,7 @@ func (e *Engine) processMoveAllResources(
 					To:          destAddr,
 					Layer:       srcLayer,
 					Description: description,
-					Source:      e.currentSourceFile,
+					Source:      sourceFile,
 				})
 			}
 		} else {
@@ -505,7 +510,7 @@ func (e *Engine) processMoveAllResources(
 				Destroy:     false,
 				Layer:       srcLayer,
 				Description: description,
-				Source:      e.currentSourceFile,
+				Source:      sourceFile,
 			})
 
 			for _, r := range g.resources {
@@ -528,7 +533,7 @@ func (e *Engine) processMoveAllResources(
 					ID:          importID,
 					Layer:       dstLayer,
 					Description: description,
-					Source:      e.currentSourceFile,
+					Source:      sourceFile,
 				})
 			}
 		}
@@ -549,6 +554,7 @@ func (e *Engine) processMoveSimple(
 	res *migration.ResourceMove,
 	tracker *wildcardTracker,
 	description string,
+	sourceFile string,
 ) ([]generator.Block, error) {
 	// Look up all instances of this resource from state
 	resources, err := e.resolver.LookupResources(ctx, srcLayer, srcAddr)
@@ -582,7 +588,7 @@ func (e *Engine) processMoveSimple(
 					To:          destFullAddr,
 					Layer:       srcLayer,
 					Description: description,
-					Source:      e.currentSourceFile,
+					Source:      sourceFile,
 				})
 			}
 		} else {
@@ -593,7 +599,7 @@ func (e *Engine) processMoveSimple(
 					To:          dstAddr,
 					Layer:       srcLayer,
 					Description: description,
-					Source:      e.currentSourceFile,
+					Source:      sourceFile,
 				})
 			}
 		}
@@ -613,7 +619,7 @@ func (e *Engine) processMoveSimple(
 				Destroy:     false,
 				Layer:       srcLayer,
 				Description: description,
-				Source:      e.currentSourceFile,
+				Source:      sourceFile,
 			})
 		}
 
@@ -628,7 +634,7 @@ func (e *Engine) processMoveSimple(
 				ID:          importID,
 				Layer:       dstLayer,
 				Description: description,
-				Source:      e.currentSourceFile,
+				Source:      sourceFile,
 			})
 		}
 	} else {
@@ -645,14 +651,14 @@ func (e *Engine) processMoveSimple(
 				Destroy:     false,
 				Layer:       srcLayer,
 				Description: description,
-				Source:      e.currentSourceFile,
+				Source:      sourceFile,
 			},
 			&generator.ImportBlock{
 				To:          dstAddr,
 				ID:          importID,
 				Layer:       dstLayer,
 				Description: description,
-				Source:      e.currentSourceFile,
+				Source:      sourceFile,
 			},
 		)
 	}
@@ -675,6 +681,7 @@ func (e *Engine) processMoveKeyed(
 	opIndex int,
 	tracker *wildcardTracker,
 	description string,
+	sourceFile string,
 ) ([]generator.Block, error) {
 	srcKey := wildcardSourceKey{layer: srcLayer, baseAddr: srcAddr}
 
@@ -742,7 +749,7 @@ func (e *Engine) processMoveKeyed(
 					To:          destFullAddr,
 					Layer:       srcLayer,
 					Description: description,
-					Source:      e.currentSourceFile,
+					Source:      sourceFile,
 				})
 			}
 		} else {
@@ -766,7 +773,7 @@ func (e *Engine) processMoveKeyed(
 				ID:          importID,
 				Layer:       dstLayer,
 				Description: description,
-				Source:      e.currentSourceFile,
+				Source:      sourceFile,
 			})
 		}
 	}
@@ -784,7 +791,7 @@ func (e *Engine) processMoveKeyed(
 			Destroy:     false,
 			Layer:       srcLayer,
 			Description: description,
-			Source:      e.currentSourceFile,
+			Source:      sourceFile,
 		}
 		blocks = append([]generator.Block{removedBlock}, blocks...)
 	}
@@ -794,7 +801,7 @@ func (e *Engine) processMoveKeyed(
 
 // processRename handles rename operations, generating moved blocks for each
 // rename entry within the operation.
-func (e *Engine) processRename(op *migration.Operation) ([]generator.Block, error) {
+func (e *Engine) processRename(op *migration.Operation, sourceFile string) ([]generator.Block, error) {
 	var blocks []generator.Block
 	for _, entry := range op.Renames {
 		blocks = append(blocks, &generator.MovedBlock{
@@ -802,7 +809,7 @@ func (e *Engine) processRename(op *migration.Operation) ([]generator.Block, erro
 			To:          migration.FullAddress(op.AddressPrefix, entry.To),
 			Layer:       op.Layer,
 			Description: op.Description,
-			Source:      e.currentSourceFile,
+			Source:      sourceFile,
 		})
 	}
 	return blocks, nil
@@ -810,7 +817,7 @@ func (e *Engine) processRename(op *migration.Operation) ([]generator.Block, erro
 
 // processRemove handles remove operations, generating removed blocks for each
 // entry in the operation.
-func (e *Engine) processRemove(op *migration.Operation) ([]generator.Block, error) {
+func (e *Engine) processRemove(op *migration.Operation, sourceFile string) ([]generator.Block, error) {
 	opDestroy := op.DestroyValue()
 	var blocks []generator.Block
 	for _, entry := range op.Entries {
@@ -823,7 +830,7 @@ func (e *Engine) processRemove(op *migration.Operation) ([]generator.Block, erro
 			Destroy:     destroy,
 			Layer:       op.Layer,
 			Description: op.Description,
-			Source:      e.currentSourceFile,
+			Source:      sourceFile,
 		})
 	}
 	return blocks, nil
@@ -832,7 +839,7 @@ func (e *Engine) processRemove(op *migration.Operation) ([]generator.Block, erro
 // processImport handles import operations, generating import blocks for each
 // import entry in the operation. Supports optional source-based state lookups
 // with attribute expansion for deriving import IDs from other resources.
-func (e *Engine) processImport(ctx context.Context, op *migration.Operation) ([]generator.Block, error) {
+func (e *Engine) processImport(ctx context.Context, op *migration.Operation, sourceFile string) ([]generator.Block, error) {
 	var blocks []generator.Block
 	for i, entry := range op.Imports {
 		provider := entry.Provider
@@ -841,7 +848,7 @@ func (e *Engine) processImport(ctx context.Context, op *migration.Operation) ([]
 		}
 
 		if entry.Source != nil {
-			sourceBlocks, err := e.processImportFromSource(ctx, op, &entry, i, provider)
+			sourceBlocks, err := e.processImportFromSource(ctx, op, &entry, i, provider, sourceFile)
 			if err != nil {
 				return nil, err
 			}
@@ -853,7 +860,7 @@ func (e *Engine) processImport(ctx context.Context, op *migration.Operation) ([]
 				Provider:    provider,
 				Layer:       op.Layer,
 				Description: op.Description,
-				Source:      e.currentSourceFile,
+				Source:      sourceFile,
 			})
 		}
 	}
@@ -871,6 +878,7 @@ func (e *Engine) processImportFromSource(
 	entry *migration.ImportEntry,
 	entryIndex int,
 	provider string,
+	sourceFile string,
 ) ([]generator.Block, error) {
 	src := entry.Source
 
@@ -885,14 +893,14 @@ func (e *Engine) processImportFromSource(
 
 	for _, res := range resources {
 		if src.Expand != "" {
-			expandBlocks, err := e.expandImportAttribute(op, entry, res, provider, entryIndex)
+			expandBlocks, err := e.expandImportAttribute(op, entry, res, provider, entryIndex, sourceFile)
 			if err != nil {
 				return nil, err
 			}
 			blocks = append(blocks, expandBlocks...)
 		} else {
 			// No expansion — one import per source instance.
-			block, err := e.buildSourcedImportBlock(op, entry, res, nil, 0, provider)
+			block, err := e.buildSourcedImportBlock(op, entry, res, nil, 0, provider, sourceFile)
 			if err != nil {
 				return nil, fmt.Errorf("imports[%d]: source %q key %q: %w",
 					entryIndex, src.Address, res.Key, err)
@@ -912,6 +920,7 @@ func (e *Engine) expandImportAttribute(
 	res *state.ResourceInfo,
 	provider string,
 	entryIndex int,
+	sourceFile string,
 ) ([]generator.Block, error) {
 	src := entry.Source
 
@@ -935,7 +944,7 @@ func (e *Engine) expandImportAttribute(
 	// Empty list produces zero imports (like for_each over empty set).
 	var blocks []generator.Block
 	for itemIdx, item := range list {
-		block, err := e.buildSourcedImportBlock(op, entry, res, item, itemIdx, provider)
+		block, err := e.buildSourcedImportBlock(op, entry, res, item, itemIdx, provider, sourceFile)
 		if err != nil {
 			return nil, fmt.Errorf("imports[%d]: source %q key %q expand %q item[%d]: %w",
 				entryIndex, src.Address, res.Key, src.Expand, itemIdx, err)
@@ -956,6 +965,7 @@ func (e *Engine) buildSourcedImportBlock(
 	item interface{},
 	itemIndex int,
 	provider string,
+	sourceFile string,
 ) (*generator.ImportBlock, error) {
 	var tmplCtx *tmpl.TemplateContext
 	if item != nil {
@@ -991,7 +1001,7 @@ func (e *Engine) buildSourcedImportBlock(
 		Provider:    provider,
 		Layer:       op.Layer,
 		Description: op.Description,
-		Source:      e.currentSourceFile,
+		Source:      sourceFile,
 	}, nil
 }
 

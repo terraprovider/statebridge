@@ -6,8 +6,20 @@ import (
 	"bytes"
 	"fmt"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"text/template"
 )
+
+// templateCache caches parsed templates keyed by template string.
+// Bounded to maxTemplateCacheSize entries to prevent unbounded memory growth.
+var templateCache sync.Map
+
+var templateCacheLen atomic.Int64
+
+const maxTemplateCacheSize = 1000
+
+// funcMap is re-exported from funcs.go where it is defined as a package-level var.
 
 // TemplateContext is the data made available to Go templates when evaluating
 // address and import_id expressions. It contains the full state context
@@ -48,12 +60,22 @@ type TemplateContext struct {
 // the rendered result. Returns an error if the template is syntactically invalid
 // or if evaluation fails (e.g., accessing a missing attribute).
 func Evaluate(tmplStr string, ctx *TemplateContext) (string, error) {
-	tmpl, err := template.New("migration").
-		Funcs(FuncMap()).
-		Option("missingkey=error").
-		Parse(tmplStr)
-	if err != nil {
-		return "", fmt.Errorf("parsing template %q: %w", tmplStr, err)
+	var tmpl *template.Template
+	if cached, ok := templateCache.Load(tmplStr); ok {
+		tmpl = cached.(*template.Template)
+	} else {
+		var err error
+		tmpl, err = template.New("migration").
+			Funcs(funcMap).
+			Option("missingkey=error").
+			Parse(tmplStr)
+		if err != nil {
+			return "", fmt.Errorf("parsing template %q: %w", tmplStr, err)
+		}
+		if templateCacheLen.Load() < maxTemplateCacheSize {
+			templateCache.Store(tmplStr, tmpl)
+			templateCacheLen.Add(1)
+		}
 	}
 
 	var buf bytes.Buffer

@@ -58,15 +58,36 @@ func EvaluateMetadataConditions(
 		}
 	}
 
+	// Check whether any resource conditions reference the local layer.
+	needsState := false
+	for _, check := range cond.ResourcesExist {
+		if check.Layer == "." {
+			needsState = true
+			break
+		}
+	}
+	if !needsState {
+		for _, check := range cond.ResourcesNotExist {
+			if check.Layer == "." {
+				needsState = true
+				break
+			}
+		}
+	}
+
+	var s *tfjson.State
+	if needsState {
+		var err error
+		s, err = readState(ctx, layerDir)
+		if err != nil {
+			return false, fmt.Errorf("reading state for %q: %w", layerDir, err)
+		}
+	}
+
 	for _, check := range cond.ResourcesExist {
 		if check.Layer != "." {
 			fmt.Fprintf(os.Stderr, "Warning: cross-layer condition (layer=%q) cannot be evaluated, treating as met\n", check.Layer)
 			continue
-		}
-
-		s, err := readState(ctx, layerDir)
-		if err != nil {
-			return false, fmt.Errorf("reading state for %q: %w", layerDir, err)
 		}
 
 		for _, addr := range check.Addresses {
@@ -80,11 +101,6 @@ func EvaluateMetadataConditions(
 		if check.Layer != "." {
 			fmt.Fprintf(os.Stderr, "Warning: cross-layer condition (layer=%q) cannot be evaluated, treating as met\n", check.Layer)
 			continue
-		}
-
-		s, err := readState(ctx, layerDir)
-		if err != nil {
-			return false, fmt.Errorf("reading state for %q: %w", layerDir, err)
 		}
 
 		for _, addr := range check.Addresses {

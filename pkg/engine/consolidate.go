@@ -24,7 +24,7 @@ import (
 // and both resources have removed blocks, they are replaced with a single:
 //
 //	removed { from = module.foo ... }
-func (e *Engine) consolidateModuleRemovals(ctx context.Context, blocks []generator.Block) []generator.Block {
+func (e *Engine) consolidateModuleRemovals(ctx context.Context, blocks []generator.Block) ([]generator.Block, error) {
 	// Separate removed blocks from other blocks, grouped by layer
 	type layerRemovals struct {
 		blocks  []*generator.RemovedBlock
@@ -45,12 +45,12 @@ func (e *Engine) consolidateModuleRemovals(ctx context.Context, blocks []generat
 	}
 
 	if len(removedByLayer) == 0 {
-		return blocks
+		return blocks, nil
 	}
 
 	// For each layer, check if any modules can be consolidated
 	consolidated := make(map[int]bool) // indices of blocks to remove
-	var newBlocks []generator.Block     // consolidated module-level blocks to add
+	var newBlocks []generator.Block    // consolidated module-level blocks to add
 
 	for layerPath, lr := range removedByLayer {
 		// Build set of removed base addresses
@@ -74,42 +74,51 @@ func (e *Engine) consolidateModuleRemovals(ctx context.Context, blocks []generat
 		// Read state for this layer to get all managed resources
 		s, err := e.resolver.ReadState(ctx, layerPath)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: could not read state for module consolidation in %q: %v\n", layerPath, err)
-			continue
+			return nil, fmt.Errorf("reading state for module consolidation in %q: %w", layerPath, err)
 		}
 		idx := state.NewStateIndex(s)
 		allManaged := idx.ManagedBaseAddresses()
 
-		// Sort module paths from deepest (longest) to shallowest
+		// Build a prefix index: for each module path, collect all managed
+		// addresses that fall under it. This avoids O(modules × resources)
+		// scanning by iterating allManaged once.
+		managedByModule := make(map[string][]string)
+		for _, addr := range allManaged {
+			for _, mp := range allModulePrefixes(addr) {
+				managedByModule[mp] = append(managedByModule[mp], addr)
+			}
+		}
+
+		// Sort module paths from deepest (longest) to shallowest.
+		// Pre-compute dot counts to avoid repeated strings.Count calls.
 		modulePaths := make([]string, 0, len(modulePathSet))
 		for mp := range modulePathSet {
 			modulePaths = append(modulePaths, mp)
 		}
-		sort.Slice(modulePaths, func(i, j int) bool {
-			// Deeper modules first (more dots = deeper)
-			di := strings.Count(modulePaths[i], ".")
-			dj := strings.Count(modulePaths[j], ".")
-			if di != dj {
-				return di > dj
+		type depthEntry struct {
+			path  string
+			depth int
+		}
+		depthEntries := make([]depthEntry, len(modulePaths))
+		for i, mp := range modulePaths {
+			depthEntries[i] = depthEntry{path: mp, depth: strings.Count(mp, ".")}
+		}
+		sort.Slice(depthEntries, func(i, j int) bool {
+			if depthEntries[i].depth != depthEntries[j].depth {
+				return depthEntries[i].depth > depthEntries[j].depth
 			}
-			return modulePaths[i] < modulePaths[j]
+			return depthEntries[i].path < depthEntries[j].path
 		})
 
 		// Track which addresses are covered by consolidated modules
 		coveredSet := make(map[string]bool)
 		consolidatedModules := make(map[string]bool)
 
-		for _, mp := range modulePaths {
-			prefix := mp + "."
+		for _, de := range depthEntries {
+			mp := de.path
 
 			// Get all managed resources in state under this module
-			var stateUnder []string
-			for _, addr := range allManaged {
-				if strings.HasPrefix(addr, prefix) {
-					stateUnder = append(stateUnder, addr)
-				}
-			}
-
+			stateUnder := managedByModule[mp]
 			if len(stateUnder) == 0 {
 				continue
 			}
@@ -158,23 +167,48 @@ func (e *Engine) consolidateModuleRemovals(ctx context.Context, blocks []generat
 			}
 		}
 
-		// Create module-level removed blocks
-		// Inherit properties from the first removed block in this layer
-		template := lr.blocks[0]
+		// Create module-level removed blocks.
+		// For each consolidated module, find the first covered block whose
+		// address falls under that module to inherit its Source (and other
+		// properties). This ensures the consolidated block is attributed to
+		// the correct source migration file.
 		for mp := range finalModules {
+			prefix := mp + "."
+			var source string
+			var destroy bool
+			var layer string
+			for _, rb := range lr.blocks {
+				if coveredSet[rb.From] && strings.HasPrefix(rb.From, prefix) {
+					source = rb.Source
+					destroy = rb.Destroy
+					layer = rb.Layer
+					break
+				}
+			}
+			if source == "" {
+				// Fallback: use first covered block in the layer
+				for _, rb := range lr.blocks {
+					if coveredSet[rb.From] {
+						source = rb.Source
+						destroy = rb.Destroy
+						layer = rb.Layer
+						break
+					}
+				}
+			}
 			newBlocks = append(newBlocks, &generator.RemovedBlock{
 				From:        mp,
-				Destroy:     template.Destroy,
-				Layer:       template.Layer,
+				Destroy:     destroy,
+				Layer:       layer,
 				Description: fmt.Sprintf("Remove entire module %s from state", mp),
-				Source:      template.Source,
+				Source:      source,
 			})
-			fmt.Fprintf(os.Stderr, "Consolidated removed blocks: %s (all managed resources moved)\n", mp)
+			fmt.Fprintf(os.Stderr, "Consolidated removed blocks: %s (all managed resources in module removed)\n", mp)
 		}
 	}
 
 	if len(consolidated) == 0 {
-		return blocks
+		return blocks, nil
 	}
 
 	// Build final block list: non-consolidated originals + new module-level blocks
@@ -186,7 +220,7 @@ func (e *Engine) consolidateModuleRemovals(ctx context.Context, blocks []generat
 	}
 	result = append(result, newBlocks...)
 
-	return result
+	return result, nil
 }
 
 // extractModulePath returns the innermost module path from a resource address.

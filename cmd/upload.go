@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 
 	"github.com/spf13/cobra"
 
@@ -67,22 +66,15 @@ func runUpload(cmd *cobra.Command, args []string) error {
 	}
 
 	// Build init args from --backend-config flags
-	var initArgs []string
-	for _, bc := range flagUploadBackendConfig {
-		initArgs = append(initArgs, "-backend-config="+bc)
-	}
+	initArgs := buildInitArgs(flagUploadBackendConfig)
 
 	var opts []upload.ManagerOption
 	opts = append(opts, upload.WithForce(flagUploadForce))
 
 	// Resolve tofu path for the upload guard
-	tofuPath := flagUploadTofuPath
-	if tofuPath == "" {
-		if resolved, err := exec.LookPath("tofu"); err == nil {
-			tofuPath = resolved
-		} else {
-			fmt.Fprintf(os.Stderr, "Warning: tofu binary not found; upload guard (overwrite protection) will be disabled\n")
-		}
+	tofuPath, err := resolveTofuPath(flagUploadTofuPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: %v; upload guard (overwrite protection) will be disabled\n", err)
 	}
 	if tofuPath != "" {
 		opts = append(opts, upload.WithTofuPath(tofuPath, initArgs))

@@ -98,7 +98,10 @@ func TestConsolidateModuleRemovals_AllResourcesInModule(t *testing.T) {
 		makeImportBlock("module.bar.aws_instance.web", "/layers/app", "001.yaml"),
 	}
 
-	result := engine.consolidateModuleRemovals(context.Background(), blocks)
+	result, err := engine.consolidateModuleRemovals(context.Background(), blocks)
+	if err != nil {
+		t.Fatalf("consolidateModuleRemovals returned unexpected error: %v", err)
+	}
 
 	var removedBlocks []*generator.RemovedBlock
 	var otherBlocks []generator.Block
@@ -141,7 +144,10 @@ func TestConsolidateModuleRemovals_PartialModule(t *testing.T) {
 		// aws_s3_bucket.data NOT removed
 	}
 
-	result := engine.consolidateModuleRemovals(context.Background(), blocks)
+	result, err := engine.consolidateModuleRemovals(context.Background(), blocks)
+	if err != nil {
+		t.Fatalf("consolidateModuleRemovals returned unexpected error: %v", err)
+	}
 
 	if len(result) != 1 {
 		t.Fatalf("expected 1 block (no consolidation), got %d", len(result))
@@ -176,7 +182,10 @@ func TestConsolidateModuleRemovals_NestedModulePartial(t *testing.T) {
 		makeRemovedBlock("module.foo.module.bar.aws_s3_bucket.logs", srcLayer, "001.yaml"),
 	}
 
-	result := engine.consolidateModuleRemovals(context.Background(), blocks)
+	result, err := engine.consolidateModuleRemovals(context.Background(), blocks)
+	if err != nil {
+		t.Fatalf("consolidateModuleRemovals returned unexpected error: %v", err)
+	}
 
 	var removedBlocks []*generator.RemovedBlock
 	for _, b := range result {
@@ -214,7 +223,10 @@ func TestConsolidateModuleRemovals_FullNestedConsolidation(t *testing.T) {
 		makeRemovedBlock("module.foo.module.bar.aws_instance.api", srcLayer, "001.yaml"),
 	}
 
-	result := engine.consolidateModuleRemovals(context.Background(), blocks)
+	result, err := engine.consolidateModuleRemovals(context.Background(), blocks)
+	if err != nil {
+		t.Fatalf("consolidateModuleRemovals returned unexpected error: %v", err)
+	}
 
 	var removedBlocks []*generator.RemovedBlock
 	for _, b := range result {
@@ -251,7 +263,10 @@ func TestConsolidateModuleRemovals_MixModuleAndRoot(t *testing.T) {
 		makeRemovedBlock("module.foo.aws_instance.web", srcLayer, "001.yaml"),
 	}
 
-	result := engine.consolidateModuleRemovals(context.Background(), blocks)
+	result, err := engine.consolidateModuleRemovals(context.Background(), blocks)
+	if err != nil {
+		t.Fatalf("consolidateModuleRemovals returned unexpected error: %v", err)
+	}
 
 	var removedBlocks []*generator.RemovedBlock
 	for _, b := range result {
@@ -293,7 +308,10 @@ func TestConsolidateModuleRemovals_NoModules(t *testing.T) {
 		makeRemovedBlock("aws_instance.web", srcLayer, "001.yaml"),
 	}
 
-	result := engine.consolidateModuleRemovals(context.Background(), blocks)
+	result, err := engine.consolidateModuleRemovals(context.Background(), blocks)
+	if err != nil {
+		t.Fatalf("consolidateModuleRemovals returned unexpected error: %v", err)
+	}
 
 	if len(result) != 1 {
 		t.Fatalf("expected 1 block unchanged, got %d", len(result))
@@ -303,12 +321,18 @@ func TestConsolidateModuleRemovals_NoModules(t *testing.T) {
 func TestConsolidateModuleRemovals_EmptyBlocks(t *testing.T) {
 	engine := New(Config{StateReader: testutil.NewMockStateReader(nil)})
 
-	result := engine.consolidateModuleRemovals(context.Background(), nil)
+	result, err := engine.consolidateModuleRemovals(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("consolidateModuleRemovals returned unexpected error: %v", err)
+	}
 	if len(result) != 0 {
 		t.Errorf("expected empty result, got %d blocks", len(result))
 	}
 
-	result = engine.consolidateModuleRemovals(context.Background(), []generator.Block{})
+	result, err = engine.consolidateModuleRemovals(context.Background(), []generator.Block{})
+	if err != nil {
+		t.Fatalf("consolidateModuleRemovals returned unexpected error: %v", err)
+	}
 	if len(result) != 0 {
 		t.Errorf("expected empty result, got %d blocks", len(result))
 	}
@@ -334,7 +358,10 @@ func TestConsolidateModuleRemovals_MultipleIndependentModules(t *testing.T) {
 		makeRemovedBlock("module.bar.aws_s3_bucket.data", srcLayer, "002.yaml"),
 	}
 
-	result := engine.consolidateModuleRemovals(context.Background(), blocks)
+	result, err := engine.consolidateModuleRemovals(context.Background(), blocks)
+	if err != nil {
+		t.Fatalf("consolidateModuleRemovals returned unexpected error: %v", err)
+	}
 
 	var removedBlocks []*generator.RemovedBlock
 	for _, b := range result {
@@ -403,7 +430,10 @@ func TestConsolidateModuleRemovals_DataSourcesIgnored(t *testing.T) {
 		makeRemovedBlock("module.foo.aws_instance.web", srcLayer, "001.yaml"),
 	}
 
-	result := engine.consolidateModuleRemovals(context.Background(), blocks)
+	result, err := engine.consolidateModuleRemovals(context.Background(), blocks)
+	if err != nil {
+		t.Fatalf("consolidateModuleRemovals returned unexpected error: %v", err)
+	}
 
 	var removedBlocks []*generator.RemovedBlock
 	for _, b := range result {
@@ -443,7 +473,10 @@ func TestConsolidateModuleRemovals_ThreeLevelNesting(t *testing.T) {
 		makeRemovedBlock("module.a.module.b.module.c.aws_s3_bucket.deep", srcLayer, "001.yaml"),
 	}
 
-	result := engine.consolidateModuleRemovals(context.Background(), blocks)
+	result, err := engine.consolidateModuleRemovals(context.Background(), blocks)
+	if err != nil {
+		t.Fatalf("consolidateModuleRemovals returned unexpected error: %v", err)
+	}
 
 	var removedBlocks []*generator.RemovedBlock
 	for _, b := range result {
@@ -484,7 +517,10 @@ func TestConsolidateModuleRemovals_ThreeLevelPartial(t *testing.T) {
 		makeRemovedBlock("module.a.module.b.module.c.aws_s3_bucket.deep2", srcLayer, "001.yaml"),
 	}
 
-	result := engine.consolidateModuleRemovals(context.Background(), blocks)
+	result, err := engine.consolidateModuleRemovals(context.Background(), blocks)
+	if err != nil {
+		t.Fatalf("consolidateModuleRemovals returned unexpected error: %v", err)
+	}
 
 	var removedBlocks []*generator.RemovedBlock
 	for _, b := range result {
@@ -526,7 +562,10 @@ func TestConsolidateModuleRemovals_MixedSiblingConsolidation(t *testing.T) {
 		makeRemovedBlock("module.a.module.c.aws_instance.api", srcLayer, "001.yaml"),
 	}
 
-	result := engine.consolidateModuleRemovals(context.Background(), blocks)
+	result, err := engine.consolidateModuleRemovals(context.Background(), blocks)
+	if err != nil {
+		t.Fatalf("consolidateModuleRemovals returned unexpected error: %v", err)
+	}
 
 	var removedBlocks []*generator.RemovedBlock
 	for _, b := range result {

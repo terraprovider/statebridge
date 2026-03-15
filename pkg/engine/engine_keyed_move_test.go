@@ -107,7 +107,6 @@ operations:
 	}
 }
 
-
 func TestEngine_ProcessFiles_KeyedMoveSplitAcrossOps(t *testing.T) {
 	_, layers := testutil.SetupLayers(t, "old", "engineering", "finance")
 	srcLayer := layers["old"]
@@ -161,7 +160,6 @@ operations:
 	finContent := readLayerFile(t, result.OutputFiles, finLayer)
 	testutil.AssertBlockCount(t, finContent, "import {", 2)
 }
-
 
 func TestEngine_ProcessFiles_IncompleteCoverage(t *testing.T) {
 	_, layers := testutil.SetupLayers(t, "old", "new")

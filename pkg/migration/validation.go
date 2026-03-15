@@ -576,15 +576,19 @@ func validateCondition(cond *Condition) []ValidationError {
 	}
 
 	// Check for contradictory conditions: same (layer, address) in both exist and not_exist.
-	existAddrs := make(map[string]bool)
+	type layerAddr struct {
+		layer string
+		addr  string
+	}
+	existAddrs := make(map[layerAddr]bool)
 	for _, rc := range cond.ResourcesExist {
 		for _, addr := range rc.Addresses {
-			existAddrs[rc.Layer+"\x00"+addr] = true
+			existAddrs[layerAddr{rc.Layer, addr}] = true
 		}
 	}
 	for _, rc := range cond.ResourcesNotExist {
 		for _, addr := range rc.Addresses {
-			if existAddrs[rc.Layer+"\x00"+addr] {
+			if existAddrs[layerAddr{rc.Layer, addr}] {
 				errs = append(errs, ValidationError{
 					OperationIndex: -1,
 					Field:          "condition",

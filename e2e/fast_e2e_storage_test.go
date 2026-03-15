@@ -62,7 +62,7 @@ operations:
 	cleanupMigrationFiles(t, env.sharedDir)
 
 	// Download into app layer
-	dl := download.NewDownloader(env.cred, env.initArgs, tofuExecPath(t), false)
+	dl := download.NewDownloader(env.cred, env.initArgs, download.WithTofuPath(tofuExecPath(t)))
 	downloaded, err := dl.Download(env.ctx, env.appDir)
 	if err != nil {
 		t.Fatalf("download: %v", err)
@@ -211,7 +211,7 @@ operations:
 	cleanupMigrationFiles(t, env.appDir)
 
 	// Download: auto-inferred conditions should detect migration is done
-	dl := download.NewDownloader(env.cred, env.initArgs, tofuExecPath(t), false)
+	dl := download.NewDownloader(env.cred, env.initArgs, download.WithTofuPath(tofuExecPath(t)))
 	downloaded, err := dl.Download(env.ctx, env.appDir)
 	if err != nil {
 		t.Fatalf("download: %v", err)

@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"strings"
 	"sync"
@@ -48,7 +49,7 @@ func (h *hashicorpCredential) GetToken(ctx context.Context, opts policy.TokenReq
 		authorizer, err = auth.NewAuthorizerFromCredentials(ctx, h.creds, api)
 		if err != nil {
 			h.mu.Unlock()
-			return azcore.AccessToken{}, err
+			return azcore.AccessToken{}, fmt.Errorf("creating authorizer for scopes %v: %w", opts.Scopes, err)
 		}
 		h.authorizerCache[scopeKey] = authorizer
 	}
@@ -56,7 +57,7 @@ func (h *hashicorpCredential) GetToken(ctx context.Context, opts policy.TokenReq
 
 	token, err := authorizer.Token(ctx, &http.Request{})
 	if err != nil {
-		return azcore.AccessToken{}, err
+		return azcore.AccessToken{}, fmt.Errorf("obtaining token for scopes %v: %w", opts.Scopes, err)
 	}
 	return azcore.AccessToken{
 		Token:     token.AccessToken,

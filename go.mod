@@ -11,7 +11,6 @@ require (
 	github.com/hashicorp/terraform-json v0.27.2
 	github.com/spf13/cobra v1.10.2
 	golang.org/x/crypto v0.49.0
-	golang.org/x/exp v0.0.0-20260312153236-7ab1446f8b90
 	gopkg.in/yaml.v3 v3.0.1
 	software.sslmate.com/src/go-pkcs12 v0.7.0
 )

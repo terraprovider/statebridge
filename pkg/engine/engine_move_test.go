@@ -11,14 +11,14 @@ import (
 
 func TestEngine_ProcessFiles_Move(t *testing.T) {
 	tests := []struct {
-		name                string
-		yaml                string
-		stateResources      []*tfjson.StateResource
-		srcContains         []string
-		dstContains         []string
-		dstNotContains      []string
-		srcRemovedCount     int
-		dstImportCount      int
+		name            string
+		yaml            string
+		stateResources  []*tfjson.StateResource
+		srcContains     []string
+		dstContains     []string
+		dstNotContains  []string
+		srcRemovedCount int
+		dstImportCount  int
 	}{
 		{
 			name: "simple move",
@@ -82,8 +82,8 @@ operations:
 				testutil.NewResource(`module.old.resource.all["key1"]`, "resource", "all", "key1",
 					map[string]interface{}{"id": "id-key1"}),
 			},
-			srcContains:    []string{"module.old"},
-			dstContains:    []string{`module.new.resource.all["key1"]`},
+			srcContains:     []string{"module.old"},
+			dstContains:     []string{`module.new.resource.all["key1"]`},
 			srcRemovedCount: 1,
 			dstImportCount:  1,
 		},
@@ -123,7 +123,6 @@ operations:
 		})
 	}
 }
-
 
 func TestEngine_ProcessFiles_MultipleOperationsSameLayer(t *testing.T) {
 	_, layers := testutil.SetupLayers(t, "net")

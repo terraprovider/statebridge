@@ -106,10 +106,9 @@ func TestDownloadNoConditions(t *testing.T) {
 	// Write a backend.tf so DiscoverBackendConfig works
 	writeBackendTF(t, dir)
 
-	dl := NewDownloader(nil, nil, "", false)
-	dl.WithUploaderFactory(func(sa, cn string, _ azcore.TokenCredential) (upload.BlobUploader, error) {
+	dl := NewDownloader(nil, nil, WithUploaderFactory(func(sa, cn string, _ azcore.TokenCredential) (upload.BlobUploader, error) {
 		return mock, nil
-	})
+	}))
 
 	files, err := dl.Download(context.Background(), dir)
 	if err != nil {
@@ -149,10 +148,9 @@ func TestDownloadConditionMet(t *testing.T) {
 	// ensure tofu is available or bypass the real state reader.
 	// For unit testing, we test evaluateConditions directly below.
 
-	dl := NewDownloader(nil, nil, "", false)
-	dl.WithUploaderFactory(func(sa, cn string, _ azcore.TokenCredential) (upload.BlobUploader, error) {
+	dl := NewDownloader(nil, nil, WithUploaderFactory(func(sa, cn string, _ azcore.TokenCredential) (upload.BlobUploader, error) {
 		return mock, nil
-	})
+	}))
 
 	// For this test, we test that the file is not written when tofu isn't available
 	// (conditions can't be evaluated). The more detailed condition tests are below.
@@ -339,10 +337,9 @@ func TestDownloadDryRun(t *testing.T) {
 	dir := t.TempDir()
 	writeBackendTF(t, dir)
 
-	dl := NewDownloader(nil, nil, "", true) // dry-run
-	dl.WithUploaderFactory(func(sa, cn string, _ azcore.TokenCredential) (upload.BlobUploader, error) {
+	dl := NewDownloader(nil, nil, WithDryRun(true), WithUploaderFactory(func(sa, cn string, _ azcore.TokenCredential) (upload.BlobUploader, error) {
 		return mock, nil
-	})
+	}))
 
 	files, err := dl.Download(context.Background(), dir)
 	if err != nil {
@@ -366,10 +363,9 @@ func TestDownloadNoMigrations(t *testing.T) {
 	dir := t.TempDir()
 	writeBackendTF(t, dir)
 
-	dl := NewDownloader(nil, nil, "", false)
-	dl.WithUploaderFactory(func(sa, cn string, _ azcore.TokenCredential) (upload.BlobUploader, error) {
+	dl := NewDownloader(nil, nil, WithUploaderFactory(func(sa, cn string, _ azcore.TokenCredential) (upload.BlobUploader, error) {
 		return mock, nil
-	})
+	}))
 
 	files, err := dl.Download(context.Background(), dir)
 	if err != nil {

@@ -1156,7 +1156,7 @@ resource "azurerm_resource_group" "test" {
 	}
 
 	// Download from blob storage back to networking layer
-	dl := download.NewDownloader(cred, initArgs, tofuExecPath(t), false)
+	dl := download.NewDownloader(cred, initArgs, download.WithTofuPath(tofuExecPath(t)))
 	downloaded, err := dl.Download(ctx, networkingDir)
 	if err != nil {
 		t.Fatalf("downloading migration files: %v", err)
