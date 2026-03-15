@@ -3,7 +3,6 @@ package cmd
 import (
 	"context"
 	"fmt"
-	"os"
 
 	"github.com/spf13/cobra"
 
@@ -71,12 +70,12 @@ func runUpload(cmd *cobra.Command, args []string) error {
 	var opts []upload.ManagerOption
 	opts = append(opts, upload.WithForce(flagUploadForce))
 
-	// Resolve tofu path for the upload guard
-	tofuPath, err := resolveTofuPath(flagUploadTofuPath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: %v; upload guard (overwrite protection) will be disabled\n", err)
-	}
-	if tofuPath != "" {
+	// Resolve tofu path for the upload guard (not needed with --force)
+	if !flagUploadForce {
+		tofuPath, err := resolveTofuPath(flagUploadTofuPath)
+		if err != nil {
+			return fmt.Errorf("%w (required for upload guard; use --force to skip)", err)
+		}
 		opts = append(opts, upload.WithTofuPath(tofuPath, initArgs))
 	}
 
