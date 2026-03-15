@@ -5,9 +5,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
-	"sync"
 
-	tfjson "github.com/hashicorp/terraform-json"
 	"github.com/spf13/cobra"
 
 	"github.com/redtenant/tfmigrate/pkg/auth"
@@ -82,22 +80,12 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 	// Build init args from --backend-config flags
 	initArgs := buildInitArgs(flagGenerateBackendConfig)
 
-	// Resolve the tofu binary and create the state reader.
-	// When --tofu-path is explicit, resolve eagerly.
-	// Otherwise, defer discovery until state is actually needed so that
-	// migrations that never read state (rename, remove, import with explicit
-	// IDs) work even when tofu is not installed.
-	var stateReader state.StateReader
-	var resolvedTofuPath string
-
-	var lazy *lazyStateReader
-	if flagTofuPath != "" {
-		resolvedTofuPath = flagTofuPath
-		stateReader = state.NewTofuStateReader(flagTofuPath, initArgs)
-	} else {
-		lazy = newLazyStateReader(initArgs)
-		stateReader = lazy
+	// Resolve the tofu binary eagerly — required for state reads.
+	resolvedTofuPath, err := resolveTofuPath(flagTofuPath)
+	if err != nil {
+		return err
 	}
+	stateReader := state.NewTofuStateReader(resolvedTofuPath, initArgs)
 
 	cfg := engine.Config{
 		StateReader: stateReader,
@@ -111,24 +99,6 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 	result, err := eng.ProcessFiles(ctx, args)
 	if err != nil {
 		return err
-	}
-
-	// Populate resolvedTofuPath from lazy reader after ProcessFiles,
-	// so it's available for the upload guard below.
-	if lazy != nil {
-		resolvedTofuPath = lazy.tofuPath()
-	}
-
-	// When --upload is set without --force, the upload guard needs tofu to
-	// evaluate whether existing blobs are still active. Resolve it now if
-	// generation itself didn't trigger a state read (and thus didn't discover
-	// the tofu binary via the lazy reader).
-	if flagUpload && !flagGenerateForce && resolvedTofuPath == "" {
-		if reader, err := state.NewTofuStateReaderFromPath(initArgs); err == nil {
-			resolvedTofuPath = reader.TofuPath()
-		}
-		// If tofu still can't be found, the upload guard will be silently
-		// disabled — same behavior as when tofu is unavailable at upload time.
 	}
 
 	if flagDryRun {
@@ -181,9 +151,7 @@ func runUploadAfterGenerate(ctx context.Context, eng *engine.Engine, tofuPath st
 
 	var opts []upload.ManagerOption
 	opts = append(opts, upload.WithForce(flagGenerateForce))
-	if tofuPath != "" {
-		opts = append(opts, upload.WithTofuPath(tofuPath, initArgs))
-	}
+	opts = append(opts, upload.WithTofuPath(tofuPath, initArgs))
 
 	mgr := upload.NewManager(cred, initArgs, opts...)
 	rendered := eng.Writer().RenderAll()
@@ -214,37 +182,4 @@ func runUploadAfterGenerate(ctx context.Context, eng *engine.Engine, tofuPath st
 	}
 
 	return nil
-}
-
-// lazyStateReader defers tofu binary discovery until ReadState is first called.
-// This allows migrations that never read state to succeed without tofu installed.
-type lazyStateReader struct {
-	initArgs []string
-	once     sync.Once
-	reader   *state.TofuStateReader
-	err      error
-}
-
-func newLazyStateReader(initArgs []string) *lazyStateReader {
-	return &lazyStateReader{initArgs: initArgs}
-}
-
-func (l *lazyStateReader) ReadState(ctx context.Context, layerPath string) (*tfjson.State, error) {
-	l.once.Do(func() {
-		l.reader, l.err = state.NewTofuStateReaderFromPath(l.initArgs)
-		if l.err != nil {
-			l.err = fmt.Errorf("%w (required for state resolution; use --tofu-path to specify location)", l.err)
-		}
-	})
-	if l.err != nil {
-		return nil, l.err
-	}
-	return l.reader.ReadState(ctx, layerPath)
-}
-
-func (l *lazyStateReader) tofuPath() string {
-	if l.reader != nil {
-		return l.reader.TofuPath()
-	}
-	return ""
 }

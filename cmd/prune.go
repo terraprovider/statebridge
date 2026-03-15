@@ -78,15 +78,12 @@ func runPrune(cmd *cobra.Command, args []string) error {
 	// Build init args from --backend-config flags
 	initArgs := buildInitArgs(flagPruneBackendConfig)
 
-	// Resolve tofu path for condition evaluation (not needed with --force)
-	var stateReader state.StateReader
-	if !flagPruneForce {
-		tofuPath, err := resolveTofuPath(flagPruneTofuPath)
-		if err != nil {
-			return fmt.Errorf("%w (required for condition evaluation; use --force to skip)", err)
-		}
-		stateReader = state.NewTofuStateReader(tofuPath, initArgs)
+	// Resolve the tofu binary eagerly — required for condition evaluation.
+	tofuPath, err := resolveTofuPath(flagPruneTofuPath)
+	if err != nil {
+		return err
 	}
+	stateReader := state.NewTofuStateReader(tofuPath, initArgs)
 
 	ctx := context.Background()
 

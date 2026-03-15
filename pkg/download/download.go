@@ -10,7 +10,6 @@ import (
 	"strings"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
-	tfjson "github.com/hashicorp/terraform-json"
 
 	"github.com/redtenant/tfmigrate/pkg/conditions"
 	"github.com/redtenant/tfmigrate/pkg/generator"
@@ -92,25 +91,8 @@ func (d *Downloader) Download(ctx context.Context, targetDir string) ([]string, 
 		return nil, nil
 	}
 
-	// Set up state reader for condition evaluation (lazy — only created if needed)
-	var stateReader state.StateReader
-	var stateReaderErr error
-	getStateReader := func() (state.StateReader, error) {
-		if stateReader != nil || stateReaderErr != nil {
-			return stateReader, stateReaderErr
-		}
-		if d.tofuPath != "" {
-			stateReader = state.NewTofuStateReader(d.tofuPath, d.initArgs)
-		} else {
-			r, err := state.NewTofuStateReaderFromPath(d.initArgs)
-			if err != nil {
-				stateReaderErr = fmt.Errorf("tofu binary not found: %w", err)
-				return nil, stateReaderErr
-			}
-			stateReader = r
-		}
-		return stateReader, nil
-	}
+	// Create state reader eagerly for condition evaluation.
+	stateReader := state.NewTofuStateReader(d.tofuPath, d.initArgs)
 
 	// Clean up all existing migration.*.tf files in the target directory.
 	// Blob storage is the source of truth, so stale local files must be
@@ -148,7 +130,7 @@ func (d *Downloader) Download(ctx context.Context, targetDir string) ([]string, 
 
 		// Evaluate conditions if metadata is present
 		if meta != nil && meta.Conditions != nil {
-			applicable, err := d.evaluateConditions(ctx, meta, getStateReader, targetDir)
+			applicable, err := d.evaluateConditions(ctx, meta, stateReader, targetDir)
 			if err != nil {
 				return written, fmt.Errorf("evaluating conditions for %q: %w", filename, err)
 			}
@@ -175,24 +157,14 @@ func (d *Downloader) Download(ctx context.Context, targetDir string) ([]string, 
 	return written, nil
 }
 
-// stateReaderGetter is a lazy factory for state readers.
-type stateReaderGetter func() (state.StateReader, error)
-
 // evaluateConditions checks whether a migration's conditions are met.
 // Delegates to the shared conditions package.
 func (d *Downloader) evaluateConditions(
 	ctx context.Context,
 	meta *generator.MigrationMetadata,
-	getReader stateReaderGetter,
+	reader state.StateReader,
 	targetDir string,
 ) (bool, error) {
-	// Adapt the lazy stateReaderGetter to a conditions.StateReaderFunc.
-	readState := func(ctx context.Context, layerDir string) (*tfjson.State, error) {
-		reader, err := getReader()
-		if err != nil {
-			return nil, err
-		}
-		return reader.ReadState(ctx, layerDir)
-	}
+	readState := conditions.NewStateReaderFunc(reader)
 	return conditions.EvaluateMetadataConditions(ctx, meta, readState, targetDir)
 }

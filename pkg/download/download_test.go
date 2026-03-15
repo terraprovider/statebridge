@@ -12,7 +12,6 @@ import (
 	tfjson "github.com/hashicorp/terraform-json"
 
 	"github.com/redtenant/tfmigrate/pkg/generator"
-	"github.com/redtenant/tfmigrate/pkg/state"
 	"github.com/redtenant/tfmigrate/pkg/upload"
 )
 
@@ -143,21 +142,13 @@ func TestDownloadConditionMet(t *testing.T) {
 	dir := t.TempDir()
 	writeBackendTF(t, dir)
 
-	// The downloader needs a state reader that returns the resource
-	// We'll test this by overriding the condition evaluation through the full path
-	// Since evaluateConditions uses a lazy state reader getter, we need to
-	// ensure tofu is available or bypass the real state reader.
-	// For unit testing, we test evaluateConditions directly below.
-
 	dl := NewDownloader(nil, nil, WithUploaderFactory(func(sa, cn string, _ azcore.TokenCredential) (upload.BlobUploader, error) {
 		return mock, nil
 	}))
 
-	// For this test, we test that the file is not written when tofu isn't available
-	// (conditions can't be evaluated). The more detailed condition tests are below.
-	_, err := dl.Download(context.Background(), dir)
-	// This may fail because tofu isn't available in test env; that's expected.
+	// Without tofu installed, Download will fail when trying to evaluate conditions.
 	// The important thing is it doesn't panic.
+	_, err := dl.Download(context.Background(), dir)
 	_ = err
 }
 
@@ -170,10 +161,6 @@ func TestEvaluateConditionsResourcesExist(t *testing.T) {
 		"/test/layer": stateWithResource,
 	})
 
-	getReader := func() (state.StateReader, error) {
-		return reader, nil
-	}
-
 	meta := &generator.MigrationMetadata{
 		Conditions: &generator.MetadataCondition{
 			ResourcesExist: []generator.MetadataResourceCheck{
@@ -182,7 +169,7 @@ func TestEvaluateConditionsResourcesExist(t *testing.T) {
 		},
 	}
 
-	result, err := dl.evaluateConditions(ctx, meta, getReader, "/test/layer")
+	result, err := dl.evaluateConditions(ctx, meta, reader, "/test/layer")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -200,10 +187,6 @@ func TestEvaluateConditionsResourcesExistFails(t *testing.T) {
 		"/test/layer": emptyState,
 	})
 
-	getReader := func() (state.StateReader, error) {
-		return reader, nil
-	}
-
 	meta := &generator.MigrationMetadata{
 		Conditions: &generator.MetadataCondition{
 			ResourcesExist: []generator.MetadataResourceCheck{
@@ -212,7 +195,7 @@ func TestEvaluateConditionsResourcesExistFails(t *testing.T) {
 		},
 	}
 
-	result, err := dl.evaluateConditions(ctx, meta, getReader, "/test/layer")
+	result, err := dl.evaluateConditions(ctx, meta, reader, "/test/layer")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -230,10 +213,6 @@ func TestEvaluateConditionsResourcesNotExist(t *testing.T) {
 		"/test/layer": emptyState,
 	})
 
-	getReader := func() (state.StateReader, error) {
-		return reader, nil
-	}
-
 	meta := &generator.MigrationMetadata{
 		Conditions: &generator.MetadataCondition{
 			ResourcesNotExist: []generator.MetadataResourceCheck{
@@ -242,7 +221,7 @@ func TestEvaluateConditionsResourcesNotExist(t *testing.T) {
 		},
 	}
 
-	result, err := dl.evaluateConditions(ctx, meta, getReader, "/test/layer")
+	result, err := dl.evaluateConditions(ctx, meta, reader, "/test/layer")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -260,10 +239,6 @@ func TestEvaluateConditionsResourcesNotExistFails(t *testing.T) {
 		"/test/layer": stateWithResource,
 	})
 
-	getReader := func() (state.StateReader, error) {
-		return reader, nil
-	}
-
 	meta := &generator.MigrationMetadata{
 		Conditions: &generator.MetadataCondition{
 			ResourcesNotExist: []generator.MetadataResourceCheck{
@@ -272,7 +247,7 @@ func TestEvaluateConditionsResourcesNotExistFails(t *testing.T) {
 		},
 	}
 
-	result, err := dl.evaluateConditions(ctx, meta, getReader, "/test/layer")
+	result, err := dl.evaluateConditions(ctx, meta, reader, "/test/layer")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -285,9 +260,7 @@ func TestEvaluateConditionsCrossLayerWarning(t *testing.T) {
 	dl := &Downloader{}
 	ctx := context.Background()
 
-	getReader := func() (state.StateReader, error) {
-		return newMockStateReader(nil), nil
-	}
+	reader := newMockStateReader(nil)
 
 	meta := &generator.MigrationMetadata{
 		Conditions: &generator.MetadataCondition{
@@ -298,7 +271,7 @@ func TestEvaluateConditionsCrossLayerWarning(t *testing.T) {
 	}
 
 	// Cross-layer conditions should be treated as met (with warning)
-	result, err := dl.evaluateConditions(ctx, meta, getReader, "/test/layer")
+	result, err := dl.evaluateConditions(ctx, meta, reader, "/test/layer")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -311,15 +284,11 @@ func TestEvaluateConditionsNil(t *testing.T) {
 	dl := &Downloader{}
 	ctx := context.Background()
 
-	getReader := func() (state.StateReader, error) {
-		return nil, nil
-	}
-
 	meta := &generator.MigrationMetadata{
 		Conditions: nil,
 	}
 
-	result, err := dl.evaluateConditions(ctx, meta, getReader, "/test/layer")
+	result, err := dl.evaluateConditions(ctx, meta, nil, "/test/layer")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
