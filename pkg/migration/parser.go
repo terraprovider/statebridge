@@ -43,29 +43,10 @@ func (p *Parser) ParseFile(path string) (*MigrationFile, error) {
 // ParseDir reads all .yaml and .yml files in a directory, sorted by filename.
 // Returns the parsed migration files in sorted order.
 func (p *Parser) ParseDir(dir string) ([]*MigrationFile, error) {
-	absDir, err := filepath.Abs(dir)
+	paths, err := p.collectDirFiles(dir)
 	if err != nil {
-		return nil, fmt.Errorf("resolving directory %q: %w", dir, err)
+		return nil, err
 	}
-
-	entries, err := os.ReadDir(absDir)
-	if err != nil {
-		return nil, fmt.Errorf("reading directory %q: %w", absDir, err)
-	}
-
-	var paths []string
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-		name := entry.Name()
-		ext := strings.ToLower(filepath.Ext(name))
-		if ext == ".yaml" || ext == ".yml" {
-			paths = append(paths, filepath.Join(absDir, name))
-		}
-	}
-
-	sort.Strings(paths)
 	return p.parsePaths(paths)
 }
 

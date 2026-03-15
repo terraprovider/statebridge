@@ -11,14 +11,13 @@ import (
 // regexCache caches compiled regular expressions keyed by pattern string.
 var regexCache sync.Map
 
-// FuncMap returns custom template functions available in migration templates.
+// funcMap is the shared, immutable function map for all template evaluations.
 // These supplement Go's built-in template functions with string manipulation
 // helpers commonly needed for key transformations.
 //
 // All string transformation functions accept the input string as the last parameter
 // so they work naturally with Go template pipes (e.g., {{ .Key | replace "-" "_" }}).
-func FuncMap() template.FuncMap {
-	return template.FuncMap{
+var funcMap = template.FuncMap{
 		// String replacement.
 		// Usage: {{ .Key | replace "old" "new" }}
 		"replace": func(old, new, s string) string {
@@ -103,7 +102,6 @@ func FuncMap() template.FuncMap {
 		// non-alphanumeric chars with underscore).
 		// Usage: {{ formatKey "%s_%s" .Attributes.access_package_key .Attributes.role }}
 		"formatKey": formatKeyFunc,
-	}
 }
 
 // attrLookup navigates nested maps to retrieve a value.

@@ -13,8 +13,7 @@ import (
 // templateCache caches parsed templates keyed by template string.
 var templateCache sync.Map
 
-// funcMap is the shared, immutable function map for all template evaluations.
-var funcMap = FuncMap()
+// funcMap is re-exported from funcs.go where it is defined as a package-level var.
 
 // TemplateContext is the data made available to Go templates when evaluating
 // address and import_id expressions. It contains the full state context
