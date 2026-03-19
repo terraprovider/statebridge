@@ -1,13 +1,13 @@
 # Azure Blob Storage
 
-tfmigrate can persist generated migration files to Azure Blob Storage and download them per-layer during CI runs. This enables a workflow where migrations are generated centrally and applied per-layer in separate pipeline steps.
+statebridge can persist generated migration files to Azure Blob Storage and download them per-layer during CI runs. This enables a workflow where migrations are generated centrally and applied per-layer in separate pipeline steps.
 
 ## Upload
 
 ### Generate and Upload in One Step
 
 ```bash
-tfmigrate generate --upload --backend-config=storage_account_name=myacct migrations/
+statebridge generate --upload --backend-config=storage_account_name=myacct migrations/
 ```
 
 This runs the full generation pipeline, writes files to disk, then uploads each generated `.tf` file to `migrations/<filename>` in the Azure Blob Storage container configured in that layer's backend. Cannot be combined with `--dry-run`.
@@ -17,7 +17,7 @@ This runs the full generation pipeline, writes files to disk, then uploads each 
 Upload pre-generated `migration.*.tf` files from layer directories:
 
 ```bash
-tfmigrate upload ./layers/compute ./layers/networking
+statebridge upload ./layers/compute ./layers/networking
 ```
 
 | Flag | Description |
@@ -28,10 +28,10 @@ tfmigrate upload ./layers/compute ./layers/networking
 
 ```bash
 # Override backend config values
-tfmigrate upload --backend-config=storage_account_name=myacct ./layers/compute
+statebridge upload --backend-config=storage_account_name=myacct ./layers/compute
 
 # Use a backend config file
-tfmigrate upload --backend-config=backend.hcl ./layers/compute
+statebridge upload --backend-config=backend.hcl ./layers/compute
 ```
 
 ## Backend Configuration Discovery
@@ -57,7 +57,7 @@ The storage account is expected to have blob versioning enabled, so deleted vers
 
 ## Upload Guard (Overwrite Protection)
 
-When uploading, tfmigrate checks whether existing migration blobs are still "active" (their metadata conditions still pass against the layer's state). If an existing blob is still needed — for example, because a cross-layer migration was only partially applied — the upload is refused:
+When uploading, statebridge checks whether existing migration blobs are still "active" (their metadata conditions still pass against the layer's state). If an existing blob is still needed — for example, because a cross-layer migration was only partially applied — the upload is refused:
 
 ```
 Error: refusing to overwrite "migrations/migration.001_move.a1b2c3d4.tf": migration is still active in layer "./layers/app" (conditions pass); use --force to override
@@ -79,7 +79,7 @@ Auto-pruning only applies to layers that active migrations are uploading to. For
 Download applicable migration files from the layer's blob storage container:
 
 ```bash
-cd layers/compute && tfmigrate download
+cd layers/compute && statebridge download
 ```
 
 Must be run from within a layer directory containing backend configuration.
@@ -105,13 +105,13 @@ Remove completed migration blobs from Azure Blob Storage:
 
 ```bash
 # Dry run: see what would be pruned
-tfmigrate prune --dry-run ./layers/compute ./layers/networking
+statebridge prune --dry-run ./layers/compute ./layers/networking
 
 # Prune completed migrations (evaluates embedded conditions)
-tfmigrate prune ./layers/compute ./layers/networking
+statebridge prune ./layers/compute ./layers/networking
 
 # Force delete all migration blobs
-tfmigrate prune --force ./layers/compute
+statebridge prune --force ./layers/compute
 ```
 
 | Flag | Description |

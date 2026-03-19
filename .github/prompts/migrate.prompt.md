@@ -1,10 +1,10 @@
 ---
-description: "Generate a tfmigrate YAML migration file from a natural language description of resource moves, renames, imports, or removals"
+description: "Generate a statebridge YAML migration file from a natural language description of resource moves, renames, imports, or removals"
 agent: "agent"
 argument-hint: "Describe the migration (e.g., Move azurerm_resource_group.main from ./layers/shared to ./layers/app)"
 ---
 
-Generate a tfmigrate migration YAML file based on the user's description.
+Generate a statebridge migration YAML file based on the user's description.
 
 Follow the YAML schema and translation patterns documented in [AGENTS.md](../../AGENTS.md).
 

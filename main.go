@@ -1,9 +1,6 @@
-/*
-Copyright © 2026 NAME HERE <EMAIL ADDRESS>
-*/
 package main
 
-import "github.com/redtenant/tfmigrate/cmd"
+import "github.com/terraprovider/statebridge/cmd"
 
 func main() {
 	cmd.Execute()

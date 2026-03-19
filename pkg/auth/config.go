@@ -7,7 +7,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/redtenant/tfmigrate/pkg/util"
+	"github.com/terraprovider/statebridge/pkg/util"
 	"golang.org/x/crypto/pkcs12"
 )
 

@@ -12,8 +12,8 @@ import (
 
 	tfjson "github.com/hashicorp/terraform-json"
 
-	"github.com/redtenant/tfmigrate/pkg/generator"
-	"github.com/redtenant/tfmigrate/pkg/state"
+	"github.com/terraprovider/statebridge/pkg/generator"
+	"github.com/terraprovider/statebridge/pkg/state"
 )
 
 // StateReaderFunc is a lazy factory for reading state for a given layer

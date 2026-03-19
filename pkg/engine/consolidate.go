@@ -7,8 +7,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/redtenant/tfmigrate/pkg/generator"
-	"github.com/redtenant/tfmigrate/pkg/state"
+	"github.com/terraprovider/statebridge/pkg/generator"
+	"github.com/terraprovider/statebridge/pkg/state"
 )
 
 // consolidateModuleRemovals replaces individual removed blocks with a single

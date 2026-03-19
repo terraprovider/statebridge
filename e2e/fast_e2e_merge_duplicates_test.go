@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/redtenant/tfmigrate/pkg/engine"
-	"github.com/redtenant/tfmigrate/pkg/state"
+	"github.com/terraprovider/statebridge/pkg/engine"
+	"github.com/terraprovider/statebridge/pkg/state"
 )
 
 // TestE2EFast_MergeDuplicates tests the merge_duplicates feature: two source

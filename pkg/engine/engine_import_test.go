@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/redtenant/tfmigrate/internal/testutil"
+	"github.com/terraprovider/statebridge/internal/testutil"
 )
 
 func TestEngine_ProcessFiles_Import(t *testing.T) {

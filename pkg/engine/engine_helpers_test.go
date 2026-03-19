@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/redtenant/tfmigrate/internal/testutil"
+	"github.com/terraprovider/statebridge/internal/testutil"
 )
 
 // readLayerFile delegates to testutil.ReadLayerFile.

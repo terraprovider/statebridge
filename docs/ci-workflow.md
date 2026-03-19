@@ -1,6 +1,6 @@
 # CI Workflow
 
-Guide for integrating tfmigrate into continuous integration pipelines.
+Guide for integrating statebridge into continuous integration pipelines.
 
 ## Full Workflow
 
@@ -8,14 +8,14 @@ The typical CI workflow for applying migrations:
 
 ```bash
 # 1. Generate and upload (from repo root, once)
-tfmigrate generate --upload --backend-config=storage_account_name=myacct migrations/
+statebridge generate --upload --backend-config=storage_account_name=myacct migrations/
 
 # 2. Per layer: download applicable migrations
 cd layers/compute
-tfmigrate download --backend-config=storage_account_name=myacct
+statebridge download --backend-config=storage_account_name=myacct
 
 # 3. Plan and apply
-tfmigrate plan --out=tfplan --detailed-exitcode
+statebridge plan --out=tfplan --detailed-exitcode
 if [ $? -eq 2 ]; then
   tofu apply tfplan
 fi
@@ -33,7 +33,7 @@ Each layer downloads only the migrations that apply to it. Conditions embedded i
 
 ### Step 3: Plan and Apply
 
-`tfmigrate plan` runs a targeted `tofu plan` scoped to only the resources touched by the downloaded migrations. The `--detailed-exitcode` flag returns exit code 2 when changes are detected, allowing conditional apply.
+`statebridge plan` runs a targeted `tofu plan` scoped to only the resources touched by the downloaded migrations. The `--detailed-exitcode` flag returns exit code 2 when changes are detected, allowing conditional apply.
 
 ## Backend Configuration
 
@@ -41,10 +41,10 @@ In CI environments where backends aren't pre-initialized, use `--backend-config`
 
 ```bash
 # Key=value pairs
-tfmigrate generate --backend-config=storage_account_name=myacct --backend-config=key=terraform.tfstate migrations/
+statebridge generate --backend-config=storage_account_name=myacct --backend-config=key=terraform.tfstate migrations/
 
 # Or point to a backend config file
-tfmigrate generate --backend-config=backend.hcl migrations/
+statebridge generate --backend-config=backend.hcl migrations/
 ```
 
 This mirrors the `tofu init -backend-config=...` syntax. Layers are auto-initialized on first state read if needed.
@@ -54,14 +54,14 @@ This mirrors the `tofu init -backend-config=...` syntax. Layers are auto-initial
 Use `--strict` to treat missing layer directories as hard errors instead of auto-skipping:
 
 ```bash
-tfmigrate generate --strict migrations/
+statebridge generate --strict migrations/
 ```
 
 By default, missing layers are silently skipped — useful when a migration references a layer that was deleted after being applied. Strict mode is recommended for CI to catch configuration errors early.
 
 ## Resilient Multi-File Processing
 
-When processing multiple migration YAML files, tfmigrate is resilient to individual file failures. If one YAML file fails — for example, because its source resource no longer exists in state after a partial pipeline run — it is skipped with an informational message:
+When processing multiple migration YAML files, statebridge is resilient to individual file failures. If one YAML file fails — for example, because its source resource no longer exists in state after a partial pipeline run — it is skipped with an informational message:
 
 ```
 Skipping "migrations/001_move.yaml": operation[0] (move): no resources matching "aws_instance.gone" found in state
@@ -75,7 +75,7 @@ Data sources (`data.*` resources) are automatically excluded from all migration 
 
 ## Module-Level Consolidation
 
-When all managed resources within a module are being moved out, tfmigrate automatically consolidates the individual `removed` blocks into a single module-level removal:
+When all managed resources within a module are being moved out, statebridge automatically consolidates the individual `removed` blocks into a single module-level removal:
 
 ```hcl
 # Instead of individual removed blocks for each resource:
@@ -104,10 +104,10 @@ After migrations have been fully applied across all layers, clean up the blob st
 
 ```bash
 # Dry run first
-tfmigrate prune --dry-run ./layers/compute ./layers/networking
+statebridge prune --dry-run ./layers/compute ./layers/networking
 
 # Then prune
-tfmigrate prune ./layers/compute ./layers/networking
+statebridge prune ./layers/compute ./layers/networking
 ```
 
 Auto-pruning also happens during `generate --upload` for retired files and missing source layers.

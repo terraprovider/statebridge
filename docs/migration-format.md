@@ -90,7 +90,7 @@ Moves resources between OpenTofu layers, or renames them within the same layer. 
     - from: "aws_instance.api"
 ```
 
-When `import_id` is omitted, tfmigrate reads the source layer's state and extracts the resource's `id` attribute automatically.
+When `import_id` is omitted, statebridge reads the source layer's state and extracts the resource's `id` attribute automatically.
 
 #### `to` — Address Remapping
 
@@ -115,7 +115,7 @@ resources:
     to: "module.bar"   # optional: remap module prefix
 ```
 
-When a module address is specified (e.g., `module.foo`), tfmigrate discovers all managed resources under that module from the source layer's state and generates import + removed blocks for each. The removed blocks are automatically consolidated into a single `removed { from = module.foo }`.
+When a module address is specified (e.g., `module.foo`), statebridge discovers all managed resources under that module from the source layer's state and generates import + removed blocks for each. The removed blocks are automatically consolidated into a single `removed { from = module.foo }`.
 
 Module moves:
 - Do not support `keys` or `import_id` (import IDs are auto-resolved from state)
@@ -185,7 +185,7 @@ Omitted resources get `removed` blocks in the source layer (with `destroy = fals
 
 #### Same-Layer Moves
 
-When `source_layer` and `destination_layer` point to the same layer, tfmigrate generates `moved` blocks by default instead of `removed` + `import` blocks. This is useful when you want to rename resources or change module paths within a single layer using the move operation's features (keyed moves, prefix remapping, etc.).
+When `source_layer` and `destination_layer` point to the same layer, statebridge generates `moved` blocks by default instead of `removed` + `import` blocks. This is useful when you want to rename resources or change module paths within a single layer using the move operation's features (keyed moves, prefix remapping, etc.).
 
 **Simple rename via move:**
 
@@ -413,7 +413,7 @@ When writing YAML, ensure:
 12. `import` requires `layer` and non-empty `imports` list; each entry requires `address` and `id`
 13. Import entries may have an optional `source` block: requires `source.layer` (non-empty) and `source.address` (non-empty). When `source.expand` is set, `key` is required. `key` without `source` is invalid.
 14. Template expressions (`{{ }}`) are valid in `keys` map values, `import_id` fields (move), and `id`/`key` fields (import — especially with `source`)
-15. Layer paths are relative to where `tfmigrate generate` is run
+15. Layer paths are relative to where `statebridge generate` is run
 16. `status` is optional; if present, must be `"retired"` (unknown values are errors). Retired files skip all validation.
 17. `source_prefix` and `destination_prefix` are only valid on `move` operations; `rename`, `remove`, and `import` reject them
 18. `address_prefix` cannot be used together with `source_prefix` or `destination_prefix` on the same operation

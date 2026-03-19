@@ -1,6 +1,6 @@
 # pkg/engine
 
-The engine package is the orchestration core of tfmigrate. It reads migration YAML files, resolves resource addresses against OpenTofu state, and delegates HCL block generation to the `generator` package.
+The engine package is the orchestration core of statebridge. It reads migration YAML files, resolves resource addresses against OpenTofu state, and delegates HCL block generation to the `generator` package.
 
 ## Source Files
 

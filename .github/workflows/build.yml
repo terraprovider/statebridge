@@ -32,9 +32,9 @@ jobs:
         run: |
           ext=""
           if [ "$GOOS" = "windows" ]; then ext=".exe"; fi
-          go build -trimpath -ldflags "-s -w" -o "tfmigrate-${GOOS}-${GOARCH}${ext}"
+          go build -trimpath -ldflags "-s -w" -o "statebridge-${GOOS}-${GOARCH}${ext}"
 
       - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
-          name: tfmigrate-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: tfmigrate-*
+          name: statebridge-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: statebridge-*

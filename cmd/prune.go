@@ -10,11 +10,11 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/spf13/cobra"
 
-	"github.com/redtenant/tfmigrate/pkg/auth"
-	"github.com/redtenant/tfmigrate/pkg/conditions"
-	"github.com/redtenant/tfmigrate/pkg/generator"
-	"github.com/redtenant/tfmigrate/pkg/state"
-	"github.com/redtenant/tfmigrate/pkg/upload"
+	"github.com/terraprovider/statebridge/pkg/auth"
+	"github.com/terraprovider/statebridge/pkg/conditions"
+	"github.com/terraprovider/statebridge/pkg/generator"
+	"github.com/terraprovider/statebridge/pkg/state"
+	"github.com/terraprovider/statebridge/pkg/upload"
 )
 
 var (
@@ -38,13 +38,13 @@ Blobs without embedded conditions are kept (cannot determine safety).
 
 Examples:
   # Dry run: list what would be pruned
-  tfmigrate prune --dry-run ./layers/compute ./layers/networking
+  statebridge prune --dry-run ./layers/compute ./layers/networking
 
   # Prune completed migrations
-  tfmigrate prune ./layers/compute ./layers/networking
+  statebridge prune ./layers/compute ./layers/networking
 
   # Force delete all migration blobs (no condition evaluation)
-  tfmigrate prune --force ./layers/compute`,
+  statebridge prune --force ./layers/compute`,
 	Args: cobra.MinimumNArgs(1),
 	RunE: runPrune,
 }

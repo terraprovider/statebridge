@@ -14,7 +14,7 @@ var versionCmd = &cobra.Command{
 	Use:   "version",
 	Short: "Print version information",
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Printf("tfmigrate %s (commit: %s, built: %s)\n", Tag, Commit, BuildDate)
+		fmt.Printf("statebridge %s (commit: %s, built: %s)\n", Tag, Commit, BuildDate)
 	},
 }
 

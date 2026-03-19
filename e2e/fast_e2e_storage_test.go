@@ -8,11 +8,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/redtenant/tfmigrate/pkg/conditions"
-	"github.com/redtenant/tfmigrate/pkg/download"
-	"github.com/redtenant/tfmigrate/pkg/generator"
-	"github.com/redtenant/tfmigrate/pkg/state"
-	"github.com/redtenant/tfmigrate/pkg/upload"
+	"github.com/terraprovider/statebridge/pkg/conditions"
+	"github.com/terraprovider/statebridge/pkg/download"
+	"github.com/terraprovider/statebridge/pkg/generator"
+	"github.com/terraprovider/statebridge/pkg/state"
+	"github.com/terraprovider/statebridge/pkg/upload"
 )
 
 func TestE2EFast_UploadDownload(t *testing.T) {

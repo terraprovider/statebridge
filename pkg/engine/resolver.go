@@ -5,8 +5,8 @@ import (
 	"fmt"
 
 	tfjson "github.com/hashicorp/terraform-json"
-	"github.com/redtenant/tfmigrate/pkg/state"
-	tmpl "github.com/redtenant/tfmigrate/pkg/template"
+	"github.com/terraprovider/statebridge/pkg/state"
+	tmpl "github.com/terraprovider/statebridge/pkg/template"
 )
 
 // Resolver handles import ID resolution, template evaluation, and state lookups.

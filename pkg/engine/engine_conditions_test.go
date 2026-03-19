@@ -8,7 +8,7 @@ import (
 
 	tfjson "github.com/hashicorp/terraform-json"
 
-	"github.com/redtenant/tfmigrate/internal/testutil"
+	"github.com/terraprovider/statebridge/internal/testutil"
 )
 
 func TestEngine_ProcessFiles_Conditions(t *testing.T) {
