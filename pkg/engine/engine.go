@@ -7,10 +7,10 @@ import (
 	"os"
 	"strings"
 
-	"github.com/redtenant/tfmigrate/pkg/generator"
-	"github.com/redtenant/tfmigrate/pkg/migration"
-	"github.com/redtenant/tfmigrate/pkg/state"
-	tmpl "github.com/redtenant/tfmigrate/pkg/template"
+	"github.com/terraprovider/statebridge/pkg/generator"
+	"github.com/terraprovider/statebridge/pkg/migration"
+	"github.com/terraprovider/statebridge/pkg/state"
+	tmpl "github.com/terraprovider/statebridge/pkg/template"
 )
 
 // SkipReason indicates why a migration file was skipped during processing.

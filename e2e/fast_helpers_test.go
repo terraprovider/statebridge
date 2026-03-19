@@ -25,7 +25,7 @@ var (
 func ensureProviderCache(t *testing.T) {
 	t.Helper()
 	providerCacheOnce.Do(func() {
-		dir, err := os.MkdirTemp("", "tfmigrate-e2e-fast-plugin-cache-*")
+		dir, err := os.MkdirTemp("", "statebridge-e2e-fast-plugin-cache-*")
 		if err != nil {
 			t.Fatalf("creating provider cache dir: %v", err)
 		}

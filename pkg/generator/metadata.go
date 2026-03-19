@@ -33,12 +33,12 @@ type MetadataResourceCheck struct {
 }
 
 const (
-	metadataBeginMarker = "# tfmigrate:metadata:begin"
-	metadataEndMarker   = "# tfmigrate:metadata:end"
+	metadataBeginMarker = "# statebridge:metadata:begin"
+	metadataEndMarker   = "# statebridge:metadata:end"
 )
 
 // RenderMetadataComment serializes metadata as a commented JSON block
-// with tfmigrate:metadata:begin/end delimiters.
+// with statebridge:metadata:begin/end delimiters.
 func RenderMetadataComment(meta *MigrationMetadata) string {
 	if meta == nil {
 		return ""

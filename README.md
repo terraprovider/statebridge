@@ -1,19 +1,19 @@
-# tfmigrate
+# statebridge
 
-A declarative code generator for OpenTofu state migrations. Define resource moves, renames, imports, and removals in YAML, and tfmigrate generates the corresponding HCL code (`import`, `moved`, `removed` blocks) in your layer directories.
+A declarative code generator for OpenTofu state migrations. Define resource moves, renames, imports, and removals in YAML, and statebridge generates the corresponding HCL code (`import`, `moved`, `removed` blocks) in your layer directories.
 
 ## Installation
 
 ```bash
-go install github.com/redtenant/tfmigrate@latest
+go install github.com/terraprovider/statebridge@latest
 ```
 
 Or build from source:
 
 ```bash
-git clone https://github.com/redtenant/tfmigrate.git
-cd tfmigrate
-go build -o tfmigrate .
+git clone https://github.com/terraprovider/statebridge.git
+cd statebridge
+go build -o statebridge .
 ```
 
 ## Quick Start
@@ -35,7 +35,7 @@ operations:
 2. Generate the HCL:
 
 ```bash
-tfmigrate generate migrations/001_move_web_server.yaml
+statebridge generate migrations/001_move_web_server.yaml
 ```
 
 3. This produces two files (one per layer, named with a content hash):
@@ -177,13 +177,13 @@ With attribute expansion — each element of a list attribute produces a separat
 
 ```bash
 # Generate from a single file
-tfmigrate generate migrations/001_move.yaml
+statebridge generate migrations/001_move.yaml
 
 # Generate from a directory (files sorted by name)
-tfmigrate generate migrations/
+statebridge generate migrations/
 
 # Preview without writing files
-tfmigrate generate --dry-run migrations/
+statebridge generate --dry-run migrations/
 ```
 
 | Flag | Description |
@@ -206,13 +206,13 @@ Conditions are automatically inferred from block types, making all migrations sa
 
 ```bash
 # 1. Generate and upload (from repo root)
-tfmigrate generate --upload --backend-config=storage_account_name=myacct migrations/
+statebridge generate --upload --backend-config=storage_account_name=myacct migrations/
 
 # 2. Per layer: download applicable migrations
-cd layers/compute && tfmigrate download --backend-config=storage_account_name=myacct
+cd layers/compute && statebridge download --backend-config=storage_account_name=myacct
 
 # 3. Plan and apply
-tfmigrate plan --out=tfplan --detailed-exitcode
+statebridge plan --out=tfplan --detailed-exitcode
 if [ $? -eq 2 ]; then
   tofu apply tfplan
 fi

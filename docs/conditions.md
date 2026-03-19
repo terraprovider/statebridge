@@ -69,7 +69,7 @@ Useful for skipping migrations after a source layer has been intentionally delet
 
 Conditions are evaluated at two points:
 
-1. **Download time** (`tfmigrate download`): Conditions embedded in migration metadata are evaluated against the layer's state. Only migrations whose conditions pass are written to disk.
-2. **Upload guard** (`tfmigrate upload` / `generate --upload`): Existing blobs are checked — if their conditions still pass, the migration is considered "active" and overwriting is refused (unless `--force` is used).
+1. **Download time** (`statebridge download`): Conditions embedded in migration metadata are evaluated against the layer's state. Only migrations whose conditions pass are written to disk.
+2. **Upload guard** (`statebridge upload` / `generate --upload`): Existing blobs are checked — if their conditions still pass, the migration is considered "active" and overwriting is refused (unless `--force` is used).
 
 For `layer == "."`, the layer's own state is read and checked. For cross-layer conditions, the download command warns and treats them as met (state of other layers is not available during per-layer download).

@@ -10,7 +10,7 @@ import (
 	"sort"
 
 	tfexec "github.com/hashicorp/terraform-exec/tfexec"
-	"github.com/redtenant/tfmigrate/pkg/generator"
+	"github.com/terraprovider/statebridge/pkg/generator"
 )
 
 // Runner executes tofu commands in a working directory.

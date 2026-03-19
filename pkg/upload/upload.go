@@ -9,9 +9,9 @@ import (
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 
-	"github.com/redtenant/tfmigrate/pkg/conditions"
-	"github.com/redtenant/tfmigrate/pkg/generator"
-	"github.com/redtenant/tfmigrate/pkg/state"
+	"github.com/terraprovider/statebridge/pkg/conditions"
+	"github.com/terraprovider/statebridge/pkg/generator"
+	"github.com/terraprovider/statebridge/pkg/state"
 )
 
 // UploaderFactory creates BlobUploader instances for a given storage account

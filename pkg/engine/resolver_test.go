@@ -6,8 +6,8 @@ import (
 
 	tfjson "github.com/hashicorp/terraform-json"
 
-	"github.com/redtenant/tfmigrate/internal/testutil"
-	"github.com/redtenant/tfmigrate/pkg/state"
+	"github.com/terraprovider/statebridge/internal/testutil"
+	"github.com/terraprovider/statebridge/pkg/state"
 )
 
 func TestResolveImportID_Explicit(t *testing.T) {

@@ -1,6 +1,6 @@
 # e2e — End-to-End Tests
 
-End-to-end tests exercise the full tfmigrate pipeline against real or local OpenTofu resources.
+End-to-end tests exercise the full statebridge pipeline against real or local OpenTofu resources.
 
 ## Test Suites
 

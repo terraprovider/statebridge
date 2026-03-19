@@ -1,5 +1,5 @@
 // Package testutil provides test helpers and mock implementations
-// for use across the tfmigrate test suite.
+// for use across the statebridge test suite.
 package testutil
 
 import (

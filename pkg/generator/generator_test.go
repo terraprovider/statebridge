@@ -507,7 +507,7 @@ func TestWriter_SetFileMetadata(t *testing.T) {
 
 	rendered := w.RenderAll()
 	for _, content := range rendered {
-		if !strings.Contains(content, "tfmigrate:metadata:begin") {
+		if !strings.Contains(content, "statebridge:metadata:begin") {
 			t.Error("expected metadata comment in rendered output")
 		}
 		if !strings.Contains(content, "resources_exist") {

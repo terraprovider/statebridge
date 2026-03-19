@@ -7,8 +7,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/redtenant/tfmigrate/pkg/auth"
-	"github.com/redtenant/tfmigrate/pkg/download"
+	"github.com/terraprovider/statebridge/pkg/auth"
+	"github.com/terraprovider/statebridge/pkg/download"
 )
 
 var (
@@ -33,13 +33,13 @@ The backend is automatically initialized to read state for condition evaluation.
 
 Examples:
   # Download applicable migrations to the current layer directory
-  cd layers/compute && tfmigrate download
+  cd layers/compute && statebridge download
 
   # Override backend config
-  tfmigrate download --backend-config=storage_account_name=myacct
+  statebridge download --backend-config=storage_account_name=myacct
 
   # Preview what would be downloaded
-  tfmigrate download --dry-run`,
+  statebridge download --dry-run`,
 	Args: cobra.NoArgs,
 	RunE: runDownload,
 }

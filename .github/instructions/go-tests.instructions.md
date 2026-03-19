@@ -1,5 +1,5 @@
 ---
-description: "Use when writing or modifying Go test files in tfmigrate. Covers table-driven test patterns, test helpers from internal/testutil/, and build tag conventions."
+description: "Use when writing or modifying Go test files in statebridge. Covers table-driven test patterns, test helpers from internal/testutil/, and build tag conventions."
 applyTo: "**/*_test.go"
 ---
 

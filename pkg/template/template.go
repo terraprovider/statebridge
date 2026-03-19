@@ -1,4 +1,4 @@
-// Package template provides Go text/template evaluation for tfmigrate
+// Package template provides Go text/template evaluation for statebridge
 // migration address and import ID transformations.
 package template
 

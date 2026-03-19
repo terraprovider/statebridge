@@ -6,7 +6,7 @@ import (
 
 	tfjson "github.com/hashicorp/terraform-json"
 
-	"github.com/redtenant/tfmigrate/pkg/generator"
+	"github.com/terraprovider/statebridge/pkg/generator"
 )
 
 func buildState(resources ...*tfjson.StateResource) *tfjson.State {

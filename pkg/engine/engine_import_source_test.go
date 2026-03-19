@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	tfjson "github.com/hashicorp/terraform-json"
-	"github.com/redtenant/tfmigrate/internal/testutil"
+	"github.com/terraprovider/statebridge/internal/testutil"
 )
 
 // TestEngine_ProcessFiles_ImportFromSource tests source-based imports

@@ -5,7 +5,7 @@ import (
 
 	tfjson "github.com/hashicorp/terraform-json"
 
-	"github.com/redtenant/tfmigrate/internal/testutil"
+	"github.com/terraprovider/statebridge/internal/testutil"
 )
 
 func TestFlattenState_NilState(t *testing.T) {

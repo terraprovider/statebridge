@@ -1,4 +1,4 @@
-// Package cmd implements the CLI commands for tfmigrate using cobra.
+// Package cmd implements the CLI commands for statebridge using cobra.
 package cmd
 
 import (
@@ -22,9 +22,9 @@ func (e *ExitCodeError) Error() string {
 
 // rootCmd represents the base command when called without any subcommands.
 var rootCmd = &cobra.Command{
-	Use:   "tfmigrate",
+	Use:   "statebridge",
 	Short: "Generate OpenTofu HCL migration code from declarative YAML files",
-	Long: `tfmigrate is a declarative code generator for OpenTofu state migrations.
+	Long: `statebridge is a declarative code generator for OpenTofu state migrations.
 
 It reads YAML migration files that describe resource moves, renames, imports,
 and removals, then generates the corresponding HCL code (import, moved, removed

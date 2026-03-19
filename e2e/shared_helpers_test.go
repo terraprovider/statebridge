@@ -21,9 +21,9 @@ import (
 	"github.com/hashicorp/terraform-exec/tfexec"
 	tfjson "github.com/hashicorp/terraform-json"
 
-	"github.com/redtenant/tfmigrate/pkg/auth"
-	"github.com/redtenant/tfmigrate/pkg/engine"
-	"github.com/redtenant/tfmigrate/pkg/state"
+	"github.com/terraprovider/statebridge/pkg/auth"
+	"github.com/terraprovider/statebridge/pkg/engine"
+	"github.com/terraprovider/statebridge/pkg/state"
 )
 
 // ---------------------------------------------------------------------------
@@ -301,7 +301,7 @@ func writeMigration(t *testing.T, dir, name, content string) string {
 	return migDir
 }
 
-// runGenerate runs the tfmigrate engine to process migration files and generate HCL.
+// runGenerate runs the statebridge engine to process migration files and generate HCL.
 // migrationPaths are absolute paths to YAML files or directories containing them.
 // Layer paths in the YAML must be absolute for parallel test safety.
 // Returns the list of generated file paths.

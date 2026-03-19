@@ -1,13 +1,13 @@
 # CLI Reference
 
-Complete reference for all tfmigrate commands and flags.
+Complete reference for all statebridge commands and flags.
 
 ## `generate`
 
 Generate HCL migration files from YAML definitions.
 
 ```
-tfmigrate generate [migration-files-or-dirs...] [flags]
+statebridge generate [migration-files-or-dirs...] [flags]
 ```
 
 ### Arguments
@@ -16,13 +16,13 @@ Pass one or more file paths or directories. Directories are scanned for `.yaml`/
 
 ```bash
 # Single file
-tfmigrate generate migrations/001_move.yaml
+statebridge generate migrations/001_move.yaml
 
 # Entire directory (files sorted by name)
-tfmigrate generate migrations/
+statebridge generate migrations/
 
 # Mix of files and directories
-tfmigrate generate migrations/001_move.yaml other_migrations/
+statebridge generate migrations/001_move.yaml other_migrations/
 ```
 
 ### Flags
@@ -41,7 +41,7 @@ tfmigrate generate migrations/001_move.yaml other_migrations/
 Preview what would be generated without writing any files:
 
 ```bash
-tfmigrate generate --dry-run migrations/
+statebridge generate --dry-run migrations/
 ```
 
 By default, migration files referencing non-existent layer directories (e.g., `source_layer` that was deleted after a migration was applied) are automatically skipped with a message. Use `--strict` to make missing layers a hard error.
@@ -53,7 +53,7 @@ By default, migration files referencing non-existent layer directories (e.g., `s
 Upload pre-generated migration files to Azure Blob Storage.
 
 ```
-tfmigrate upload [layer-dirs...] [flags]
+statebridge upload [layer-dirs...] [flags]
 ```
 
 Each layer directory is scanned for `migration.*.tf` files and uploaded to the storage container discovered from the layer's backend configuration.
@@ -68,13 +68,13 @@ Each layer directory is scanned for `migration.*.tf` files and uploaded to the s
 
 ```bash
 # Upload from specific layers
-tfmigrate upload ./layers/compute ./layers/networking
+statebridge upload ./layers/compute ./layers/networking
 
 # Override backend config values
-tfmigrate upload --backend-config=storage_account_name=myacct ./layers/compute
+statebridge upload --backend-config=storage_account_name=myacct ./layers/compute
 
 # Use a backend config file
-tfmigrate upload --backend-config=backend.hcl ./layers/compute
+statebridge upload --backend-config=backend.hcl ./layers/compute
 ```
 
 See [Azure Blob Storage](azure-storage.md) for details on backend discovery, upload guard, and authentication.
@@ -86,7 +86,7 @@ See [Azure Blob Storage](azure-storage.md) for details on backend discovery, upl
 Download applicable migration files from the layer's blob storage container to the current directory.
 
 ```
-tfmigrate download [flags]
+statebridge download [flags]
 ```
 
 This command must be run from within a layer directory containing backend configuration. Conditions embedded in migration metadata are evaluated against the layer's state, and only migrations that need to be applied are written.
@@ -103,13 +103,13 @@ This command must be run from within a layer directory containing backend config
 cd layers/compute
 
 # Download applicable migrations
-tfmigrate download
+statebridge download
 
 # Override backend config
-tfmigrate download --backend-config=storage_account_name=myacct
+statebridge download --backend-config=storage_account_name=myacct
 
 # Preview what would be downloaded
-tfmigrate download --dry-run
+statebridge download --dry-run
 ```
 
 ### Download Flow
@@ -134,19 +134,19 @@ Run targeted `tofu plan` scoped to resources in downloaded migration files. Must
 
 ```bash
 # Targeted plan (default — only resources in migration metadata)
-tfmigrate plan
+statebridge plan
 
 # Save plan and detect changes via exit code
-tfmigrate plan --out=tfplan --detailed-exitcode
+statebridge plan --out=tfplan --detailed-exitcode
 
 # Full plan without targeting
-tfmigrate plan --no-target
+statebridge plan --no-target
 
 # Pass variables
-tfmigrate plan --var="env=prod" --var-file=prod.tfvars
+statebridge plan --var="env=prod" --var-file=prod.tfvars
 
 # Disable state locking
-tfmigrate plan --lock=false
+statebridge plan --lock=false
 ```
 
 ### Flags
@@ -171,7 +171,7 @@ If no migration files are found, the command prints a message and exits with cod
 To apply changes, save the plan and use tofu directly:
 
 ```bash
-tfmigrate plan --out=tfplan --detailed-exitcode
+statebridge plan --out=tfplan --detailed-exitcode
 # exit 0 = no changes, exit 2 = changes detected
 if [ $? -eq 2 ]; then
   tofu apply tfplan
@@ -186,13 +186,13 @@ Removes completed migration blobs from Azure Blob Storage.
 
 ```bash
 # Dry run: see what would be pruned
-tfmigrate prune --dry-run ./layers/compute ./layers/networking
+statebridge prune --dry-run ./layers/compute ./layers/networking
 
 # Prune completed migrations (evaluates embedded conditions)
-tfmigrate prune ./layers/compute ./layers/networking
+statebridge prune ./layers/compute ./layers/networking
 
 # Force delete all migration blobs
-tfmigrate prune --force ./layers/compute
+statebridge prune --force ./layers/compute
 ```
 
 ### Flags
@@ -228,11 +228,11 @@ The 8-character SHA-256 hash is computed from the rendered HCL content, ensuring
 Generated `.tf` files include an embedded metadata block used by `download` and `plan` commands:
 
 ```hcl
-# Generated by tfmigrate - do not edit manually
+# Generated by statebridge - do not edit manually
 #
-# tfmigrate:metadata:begin
+# statebridge:metadata:begin
 # {"conditions":{"resources_exist":[{"layer":".","addresses":["aws_instance.web"]}]},"resources":["aws_instance.web","aws_instance.api"]}
-# tfmigrate:metadata:end
+# statebridge:metadata:end
 
 import {
   ...

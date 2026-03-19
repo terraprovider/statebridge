@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/redtenant/tfmigrate/pkg/download"
-	"github.com/redtenant/tfmigrate/pkg/upload"
+	"github.com/terraprovider/statebridge/pkg/download"
+	"github.com/terraprovider/statebridge/pkg/upload"
 )
 
 func TestMain(m *testing.M) {

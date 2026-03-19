@@ -1,4 +1,4 @@
-// Package migration defines the YAML schema types for tfmigrate migration files
+// Package migration defines the YAML schema types for statebridge migration files
 // and provides parsing and validation functionality.
 package migration
 

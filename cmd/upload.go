@@ -6,8 +6,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/redtenant/tfmigrate/pkg/auth"
-	"github.com/redtenant/tfmigrate/pkg/upload"
+	"github.com/terraprovider/statebridge/pkg/auth"
+	"github.com/terraprovider/statebridge/pkg/upload"
 )
 
 var (
@@ -32,10 +32,10 @@ Authentication uses Azure SDK credentials configured via environment variables
 
 Examples:
   # Upload migration files from specific layer directories
-  tfmigrate upload ./layers/compute ./layers/networking
+  statebridge upload ./layers/compute ./layers/networking
 
   # Upload with additional backend config overrides
-  tfmigrate upload --backend-config=storage_account_name=myacct ./layers/compute`,
+  statebridge upload --backend-config=storage_account_name=myacct ./layers/compute`,
 	Args: cobra.MinimumNArgs(1),
 	RunE: runUpload,
 }

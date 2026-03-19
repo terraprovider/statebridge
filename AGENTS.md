@@ -1,10 +1,10 @@
-# AGENTS.md — AI Agent Instructions for tfmigrate
+# AGENTS.md — AI Agent Instructions for statebridge
 
-This file provides context for AI coding agents (Claude Code, Copilot, Cursor, etc.) to generate tfmigrate YAML migration files from natural language descriptions.
+This file provides context for AI coding agents (Claude Code, Copilot, Cursor, etc.) to generate statebridge YAML migration files from natural language descriptions.
 
 ## What This Project Does
 
-tfmigrate is a CLI tool that generates OpenTofu/Terraform HCL migration code (`import`, `moved`, `removed` blocks) from declarative YAML files. Users describe what resources need to move, rename, import, or remove, and the tool produces the correct HCL in each affected layer directory.
+statebridge is a CLI tool that generates OpenTofu/Terraform HCL migration code (`import`, `moved`, `removed` blocks) from declarative YAML files. Users describe what resources need to move, rename, import, or remove, and the tool produces the correct HCL in each affected layer directory.
 
 A **layer** is a Terraform/OpenTofu root module identified by its filesystem path (e.g., `./layers/networking`).
 
@@ -34,7 +34,7 @@ E2E environment: `ARM_CLIENT_ID`, `ARM_TENANT_ID`, `ARM_SUBSCRIPTION_ID`, `ARM_U
 
 ### Code Conventions
 
-- **Go 1.26**, module `github.com/redtenant/tfmigrate`
+- **Go 1.26**, module `github.com/terraprovider/statebridge`
 - **Error handling:** Always wrap with context — `fmt.Errorf("context: %w", err)`
 - **Validation:** Collect all errors before returning, don't fast-fail (see `pkg/migration/validation.go`)
 - **Tests:** Table-driven with `t.Run()` subtests. Use helpers from `internal/testutil/` (no external test frameworks)
@@ -835,19 +835,19 @@ Use the `--backend-config` CLI flag on `generate`, `upload`, or `download` to pa
 
 ```bash
 # Generate with backend config (auto-inits layers on state read failure)
-tfmigrate generate --backend-config=bucket=my-state-bucket --backend-config=key=terraform.tfstate migrations/
+statebridge generate --backend-config=bucket=my-state-bucket --backend-config=key=terraform.tfstate migrations/
 
 # Upload with backend config
-tfmigrate upload --backend-config=storage_account_name=myacct ./layers/compute
+statebridge upload --backend-config=storage_account_name=myacct ./layers/compute
 
 # Download with backend config
-tfmigrate download --backend-config=storage_account_name=myacct
+statebridge download --backend-config=storage_account_name=myacct
 
 # Point to a backend config file
-tfmigrate generate --backend-config=backend.hcl migrations/
+statebridge generate --backend-config=backend.hcl migrations/
 
 # Strict mode: treat missing layer directories as errors
-tfmigrate generate --strict migrations/
+statebridge generate --strict migrations/
 ```
 
 - `--strict` (generate only): Treat missing layer directories as hard errors instead of auto-skipping
@@ -858,13 +858,13 @@ tfmigrate generate --strict migrations/
 
 ```bash
 # Dry run: see what would be pruned
-tfmigrate prune --dry-run ./layers/compute ./layers/networking
+statebridge prune --dry-run ./layers/compute ./layers/networking
 
 # Prune completed migrations (evaluates conditions)
-tfmigrate prune ./layers/compute ./layers/networking
+statebridge prune ./layers/compute ./layers/networking
 
 # Force delete all migration blobs
-tfmigrate prune --force ./layers/compute
+statebridge prune --force ./layers/compute
 ```
 
 The prune command lists migration blobs in Azure Blob Storage, evaluates their embedded conditions, and deletes blobs whose conditions no longer hold (migration completed). Blobs without conditions are kept.
@@ -887,7 +887,7 @@ When generating YAML, ensure:
 9. `import` requires `layer` and non-empty `imports` list; each entry requires `address` and `id`
 9a. Import entries may have an optional `source` block: requires `source.layer` (non-empty) and `source.address` (non-empty). When `source.expand` is set, `key` is required. `key` without `source` is invalid.
 10. Template expressions (`{{ }}`) are only valid in `keys` map values, `import_id` fields (move), and `id`/`key` fields (import with `source`)
-11. Layer paths are relative to where `tfmigrate generate` is run
+11. Layer paths are relative to where `statebridge generate` is run
 12. When `keys` is present, all state keys must be covered (completeness check)
 13. A key matching multiple operations is an overlap error
 14. `condition` is optional; if present, each resource check requires `layer` (non-empty) and `addresses` (non-empty list of non-empty strings)
@@ -941,16 +941,16 @@ After creating a migration file, the user runs:
 
 ```bash
 # Preview without writing
-tfmigrate generate --dry-run migrations/
+statebridge generate --dry-run migrations/
 
 # Generate the HCL files
-tfmigrate generate migrations/
+statebridge generate migrations/
 
 # Generate with backend config for auto-init
-tfmigrate generate --backend-config=storage_account_name=myacct migrations/
+statebridge generate --backend-config=storage_account_name=myacct migrations/
 
 # Generate and upload to Azure Blob Storage in one step
-tfmigrate generate --upload --backend-config=storage_account_name=myacct migrations/
+statebridge generate --upload --backend-config=storage_account_name=myacct migrations/
 ```
 
 ### CI Workflow
@@ -959,14 +959,14 @@ The full lifecycle for applying migrations in CI:
 
 ```bash
 # 1. Generate and upload (from repo root, once)
-tfmigrate generate --upload --backend-config=storage_account_name=myacct migrations/
+statebridge generate --upload --backend-config=storage_account_name=myacct migrations/
 
 # 2. Per layer: download applicable migrations
 cd layers/compute
-tfmigrate download --backend-config=storage_account_name=myacct
+statebridge download --backend-config=storage_account_name=myacct
 
 # 3. Plan and apply
-tfmigrate plan --out=tfplan --detailed-exitcode
+statebridge plan --out=tfplan --detailed-exitcode
 if [ $? -eq 2 ]; then
   tofu apply tfplan
 fi
@@ -974,7 +974,7 @@ fi
 
 ### Resilient Multi-File Processing
 
-When processing multiple migration YAML files, tfmigrate is resilient to individual file failures. If one YAML file fails — for example, because its source resource no longer exists in state after a partial pipeline run — it is skipped with an informational message to stderr, and remaining files continue to be processed:
+When processing multiple migration YAML files, statebridge is resilient to individual file failures. If one YAML file fails — for example, because its source resource no longer exists in state after a partial pipeline run — it is skipped with an informational message to stderr, and remaining files continue to be processed:
 
 ```
 Skipping "migrations/001_move.yaml": operation[0] (move): no resources matching "aws_instance.gone" found in state
@@ -1001,7 +1001,7 @@ Generated migration files can be persisted to Azure Blob Storage using either th
 ### Generate and Upload
 
 ```bash
-tfmigrate generate --upload --backend-config=storage_account_name=myacct migrations/
+statebridge generate --upload --backend-config=storage_account_name=myacct migrations/
 ```
 
 Runs the full pipeline, writes files to disk, then uploads each generated `.tf` file to `migrations/<filename>` in the Azure Blob Storage container configured in that layer's backend. Cannot be combined with `--dry-run`. The `--backend-config` flag is used both for auto-init during state reads and for backend config discovery during upload.
@@ -1009,7 +1009,7 @@ Runs the full pipeline, writes files to disk, then uploads each generated `.tf` 
 ### Standalone Upload
 
 ```bash
-tfmigrate upload [layer-dirs...] [flags]
+statebridge upload [layer-dirs...] [flags]
 ```
 
 Uploads pre-generated `migration.*.tf` files from layer directories. Useful when generation and upload are separate CI steps.
@@ -1026,13 +1026,13 @@ Uploads pre-generated `migration.*.tf` files from layer directories. Useful when
 
 ```bash
 # Upload from specific layers
-tfmigrate upload ./layers/compute ./layers/networking
+statebridge upload ./layers/compute ./layers/networking
 
 # Override backend config
-tfmigrate upload --backend-config=storage_account_name=myacct ./layers/compute
+statebridge upload --backend-config=storage_account_name=myacct ./layers/compute
 
 # Use a backend config file
-tfmigrate upload --backend-config=backend.hcl ./layers/compute
+statebridge upload --backend-config=backend.hcl ./layers/compute
 ```
 
 ### Backend Configuration Discovery
@@ -1067,7 +1067,7 @@ Uses `pkg/auth` for Azure credentials via environment variables:
 
 ### Upload Guard (Overwrite Protection)
 
-When uploading, tfmigrate checks whether existing migration blobs are still "active" (their metadata conditions still pass against the layer's state). If an existing blob is still needed — for example, because a cross-layer migration was only partially applied — the upload is refused:
+When uploading, statebridge checks whether existing migration blobs are still "active" (their metadata conditions still pass against the layer's state). If an existing blob is still needed — for example, because a cross-layer migration was only partially applied — the upload is refused:
 
 ```
 Error: refusing to overwrite "migrations/migration.001_move.a1b2c3d4.tf": migration is still active in layer "./layers/app" (conditions pass); use --force to override
@@ -1081,14 +1081,14 @@ The guard logic lives in `pkg/upload/upload.go` (`checkActiveBlobs` method) and 
 
 ### Auto-Pruning Stale Blobs
 
-When using `--upload`, migration files that are retired (`status: retired`) or auto-skipped due to missing layers have their previously-uploaded blobs automatically pruned from blob storage. This keeps storage clean without requiring manual `tfmigrate prune` for the common case.
+When using `--upload`, migration files that are retired (`status: retired`) or auto-skipped due to missing layers have their previously-uploaded blobs automatically pruned from blob storage. This keeps storage clean without requiring manual `statebridge prune` for the common case.
 
-Only blobs in layers that are being actively uploaded to are auto-pruned. For fully orphaned layers (no active migrations target them), use `tfmigrate prune` manually.
+Only blobs in layers that are being actively uploaded to are auto-pruned. For fully orphaned layers (no active migrations target them), use `statebridge prune` manually.
 
 ## Downloading Migrations from Azure Blob Storage
 
 ```bash
-tfmigrate download [flags]
+statebridge download [flags]
 ```
 
 Downloads applicable migration files from the layer's blob container to the current working directory. Operates per-layer (must run from a layer directory).
@@ -1113,7 +1113,7 @@ Downloads applicable migration files from the layer's blob container to the curr
 ## Plan Command
 
 ```bash
-tfmigrate plan [flags]
+statebridge plan [flags]
 ```
 
 Run targeted `tofu plan` scoped to resources in migration file metadata. Must run from a layer directory containing `migration.*.tf` files.
@@ -1142,7 +1142,7 @@ Run targeted `tofu plan` scoped to resources in migration file metadata. Must ru
 To apply changes, save the plan and use tofu directly:
 
 ```bash
-tfmigrate plan --out=tfplan --detailed-exitcode
+statebridge plan --out=tfplan --detailed-exitcode
 if [ $? -eq 2 ]; then
   tofu apply tfplan
 fi
@@ -1153,11 +1153,11 @@ fi
 Generated `.tf` files include a structured JSON metadata block as comments:
 
 ```hcl
-# Generated by tfmigrate - do not edit manually
+# Generated by statebridge - do not edit manually
 #
-# tfmigrate:metadata:begin
+# statebridge:metadata:begin
 # {"conditions":{"resources_exist":[{"layer":".","addresses":["azurerm_vm.web"]}]},"resources":["azurerm_vm.web","azurerm_vnet.main"]}
-# tfmigrate:metadata:end
+# statebridge:metadata:end
 
 import {
   ...

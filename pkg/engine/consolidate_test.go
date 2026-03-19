@@ -6,8 +6,8 @@ import (
 
 	tfjson "github.com/hashicorp/terraform-json"
 
-	"github.com/redtenant/tfmigrate/internal/testutil"
-	"github.com/redtenant/tfmigrate/pkg/generator"
+	"github.com/terraprovider/statebridge/internal/testutil"
+	"github.com/terraprovider/statebridge/pkg/generator"
 )
 
 // --- Helper: allModulePrefixes ---

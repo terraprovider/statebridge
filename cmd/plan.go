@@ -7,7 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/redtenant/tfmigrate/pkg/tofu"
+	"github.com/terraprovider/statebridge/pkg/tofu"
 )
 
 var (
@@ -34,16 +34,16 @@ typically placed there by the download command.
 
 Examples:
   # Targeted plan (default)
-  tfmigrate plan
+  statebridge plan
 
   # Full plan without targeting
-  tfmigrate plan --no-target
+  statebridge plan --no-target
 
   # Save plan to file with detailed exit code
-  tfmigrate plan --out=tfplan --detailed-exitcode
+  statebridge plan --out=tfplan --detailed-exitcode
 
   # Pass variables and disable locking
-  tfmigrate plan --var="env=prod" --lock=false`,
+  statebridge plan --var="env=prod" --lock=false`,
 	Args: cobra.NoArgs,
 	RunE: runPlan,
 }

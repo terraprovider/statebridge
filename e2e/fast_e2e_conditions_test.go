@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/redtenant/tfmigrate/pkg/engine"
+	"github.com/terraprovider/statebridge/pkg/engine"
 )
 
 func TestE2EFast_ConditionSkip(t *testing.T) {

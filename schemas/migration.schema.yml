@@ -1,7 +1,7 @@
 $schema: "http://json-schema.org/draft-07/schema#"
 $id: "schemas/migration.schema.yml"
-title: "tfmigrate Migration File"
-description: "Schema for tfmigrate YAML migration files that declare resource moves, renames, removals, and imports across OpenTofu/Terraform layers"
+title: "statebridge Migration File"
+description: "Schema for statebridge YAML migration files that declare resource moves, renames, removals, and imports across OpenTofu/Terraform layers"
 x-config:
   type: migration
   displayName: Migration File

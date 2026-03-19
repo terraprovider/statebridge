@@ -8,10 +8,10 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/redtenant/tfmigrate/pkg/auth"
-	"github.com/redtenant/tfmigrate/pkg/engine"
-	"github.com/redtenant/tfmigrate/pkg/state"
-	"github.com/redtenant/tfmigrate/pkg/upload"
+	"github.com/terraprovider/statebridge/pkg/auth"
+	"github.com/terraprovider/statebridge/pkg/engine"
+	"github.com/terraprovider/statebridge/pkg/state"
+	"github.com/terraprovider/statebridge/pkg/upload"
 )
 
 var (
@@ -38,19 +38,19 @@ in each migration operation.
 
 Examples:
   # Process a single migration file
-  tfmigrate generate migrations/001_move_compute.yaml
+  statebridge generate migrations/001_move_compute.yaml
 
   # Process all migrations in a directory
-  tfmigrate generate migrations/
+  statebridge generate migrations/
 
   # Process multiple files and directories
-  tfmigrate generate migrations/001_move.yaml migrations/002_rename.yaml
+  statebridge generate migrations/001_move.yaml migrations/002_rename.yaml
 
   # Dry run: preview generated HCL without writing files
-  tfmigrate generate --dry-run migrations/
+  statebridge generate --dry-run migrations/
 
   # Generate and upload to Azure Blob Storage
-  tfmigrate generate --upload migrations/`,
+  statebridge generate --upload migrations/`,
 	Args: cobra.MinimumNArgs(1),
 	RunE: runGenerate,
 }

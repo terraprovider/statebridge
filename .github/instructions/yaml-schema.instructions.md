@@ -1,9 +1,9 @@
 ---
-description: "Use when editing or creating tfmigrate YAML migration files. Covers the YAML schema, operation types (move, rename, remove, import), validation rules, and template syntax."
+description: "Use when editing or creating statebridge YAML migration files. Covers the YAML schema, operation types (move, rename, remove, import), validation rules, and template syntax."
 applyTo: "migrations/**/*.yaml"
 ---
 
-# tfmigrate Migration YAML
+# statebridge Migration YAML
 
 See [AGENTS.md](../../AGENTS.md) for the full schema reference and translation patterns.
 

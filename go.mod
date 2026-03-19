@@ -1,4 +1,4 @@
-module github.com/redtenant/tfmigrate
+module github.com/terraprovider/statebridge
 
 go 1.26.1
 
