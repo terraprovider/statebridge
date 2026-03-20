@@ -13,7 +13,7 @@ jobs:
       hashes: ${{ steps.hash.outputs.hashes }}
 
     permissions:
-      contents: write
+      contents: read
       id-token: write
       packages: write
     steps:
@@ -35,7 +35,7 @@ jobs:
         run: aqua install
 
       - name: Run GoReleaser
-        run: goreleaser release --clean
+        run: goreleaser release --clean --skip publish
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -43,7 +43,11 @@ jobs:
         with:
           name: dist
           path: |
-            dist/*
+            dist/*.sbom.json
+            dist/*.sigstore.json
+            dist/*.tar.gz
+            dist/*.zip
+            dist/*.txt
 
       - name: Generate hashes
         id: hash
@@ -69,7 +73,11 @@ jobs:
       - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
         with:
           subject-path: |
-            dist/*
+            dist/*.sbom.json
+            dist/*.sigstore.json
+            dist/*.tar.gz
+            dist/*.zip
+            dist/*.txt
 
   provenance:
     needs: [build]
@@ -83,4 +91,25 @@ jobs:
     uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v2.1.0
     with:
       base64-subjects: "${{ needs.build.outputs.hashes }}"
-      upload-assets: true
+      upload-assets: false
+
+  release:
+    timeout-minutes: 10
+    runs-on: ubuntu-24.04
+    needs: [build, provenance]
+    permissions:
+      contents: write # required to create a release
+    steps:
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: dist
+          path: dist
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: ${{ needs.provenance.outputs.provenance-name }}
+          path: dist
+
+      - run: ls dist
+      - run: gh release create -R "$GITHUB_REPOSITORY" "$GITHUB_REF_NAME" -p dist/*
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
