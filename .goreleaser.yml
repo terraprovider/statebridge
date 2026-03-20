@@ -35,12 +35,8 @@ signs:
     args: [ "sign-blob", "--bundle=${signature}", "${artifact}", "--yes" ]
 
 sboms:
-  - artifacts: archive
-    cmd: syft
-
-changelog:
-  use: github-native
+  - id: default
+    disable: false
 
 release:
-  prerelease: auto
-  draft: true
+  prerelease: "true"
