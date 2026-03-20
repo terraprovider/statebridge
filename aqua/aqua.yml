@@ -24,4 +24,3 @@ packages:
   - name: anchore/syft@v1.42.3
   - name: goreleaser/goreleaser@v2.14.3
   - name: SonarSource/sonar-scanner-cli@8.0.1.6346
-  - name: golangci/golangci-lint@v2.11.3
