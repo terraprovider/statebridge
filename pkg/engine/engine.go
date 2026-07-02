@@ -346,7 +346,7 @@ func (e *Engine) processMoveModule(
 	groupMap := make(map[string]*baseGroup)
 	var groupOrder []string
 	for _, r := range resources {
-		base := stripKeyFromAddress(r.Address)
+		base := state.BaseAddress(r.Address)
 		if _, ok := groupMap[base]; !ok {
 			groupMap[base] = &baseGroup{baseAddr: base}
 			groupOrder = append(groupOrder, base)
@@ -398,16 +398,6 @@ func (e *Engine) processMoveModule(
 	return blocks, nil
 }
 
-// stripKeyFromAddress removes the key/index suffix from a resource address.
-// "aws_s3_bucket.data[\"key\"]" → "aws_s3_bucket.data"
-// "aws_instance.web" → "aws_instance.web"
-func stripKeyFromAddress(address string) string {
-	if idx := strings.Index(address, "["); idx >= 0 {
-		return address[:idx]
-	}
-	return address
-}
-
 // processMoveAllResources handles an all_resources move by discovering all
 // managed resources in the source layer and generating blocks for each.
 // For cross-layer moves: removed + import blocks.
@@ -457,7 +447,7 @@ func (e *Engine) processMoveAllResources(
 	groupMap := make(map[string]*baseGroup)
 	var groupOrder []string
 	for _, r := range resources {
-		base := stripKeyFromAddress(r.Address)
+		base := state.BaseAddress(r.Address)
 		if _, ok := groupMap[base]; !ok {
 			groupMap[base] = &baseGroup{baseAddr: base}
 			groupOrder = append(groupOrder, base)

@@ -239,6 +239,16 @@ Match priority: exact > longest prefix > catch-all.
 - Single resource: generates one `removed` + one `import`
 - For_each resource: expands all instances with same keys
 
+**Indexed module instances** — the `from` address may reference a resource inside an indexed (`count`/`for_each`) module instance, e.g. `module.configuration_policies[0].azuread_group_without_members.all`. Provide the base resource address **including** the module index but **without** the resource's own for_each key. All keys of that resource are moved (or use `keys` to remap/filter):
+
+```yaml
+resources:
+  - from: "module.configuration_policies[0].azuread_group_without_members.all"
+    # moves every key, e.g. .all["cfg_intune_rdp_access_allowed"], .all["cfg_..."]
+```
+
+The module index (`[0]`) is preserved; only the trailing resource for_each key is treated as the key to move. Numeric indices are supported. Indexed sub-modules at any nesting depth work (e.g. `module.a[0].module.b[1].type.name`). String module indices containing dots (e.g. `module.foo["a.b"]`) are not supported.
+
 **`merge_duplicates`** — Deduplicate when multiple source resources produce the same destination address:
 
 ```yaml
@@ -762,6 +772,18 @@ Without a `keys` map, all instances are moved with the same keys:
   destination_layer: "<destination>"
   resources:
     - from: "<resource_type>.<name>"
+```
+
+### "Move a for_each resource out of an indexed module" / "Move resource inside module.foo[0]"
+
+Use the base resource address including the module index but without the resource's own for_each key. All keys are moved (add `keys` to remap or filter):
+
+```yaml
+- type: move
+  source_layer: "<source>"
+  destination_layer: "<destination>"
+  resources:
+    - from: "module.<module_name>[<index>].<resource_type>.<name>"
 ```
 
 ### "Split resource by key prefix" / "Route different for_each keys to different layers"

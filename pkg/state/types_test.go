@@ -471,3 +471,130 @@ func TestAllManagedResources_ForEach(t *testing.T) {
 		t.Fatalf("expected 2 for_each instances, got %d", len(resources))
 	}
 }
+
+func TestBaseAddress(t *testing.T) {
+	tests := []struct {
+		address string
+		want    string
+	}{
+		{"aws_instance.web", "aws_instance.web"},
+		{`aws_s3_bucket.data["key"]`, "aws_s3_bucket.data"},
+		{"aws_instance.web[0]", "aws_instance.web"},
+		{"module.foo.aws_instance.web", "module.foo.aws_instance.web"},
+		{`module.foo.aws_s3_bucket.data["key"]`, "module.foo.aws_s3_bucket.data"},
+		// Indexed module instances: the module index must be preserved and only
+		// the trailing resource key stripped.
+		{"module.configuration_policies[0].azuread_group.all", "module.configuration_policies[0].azuread_group.all"},
+		{`module.configuration_policies[0].azuread_group.all["cfg_x"]`, "module.configuration_policies[0].azuread_group.all"},
+		{`module.foo[0].module.bar[1].type.name["k"]`, "module.foo[0].module.bar[1].type.name"},
+		{"module.foo[0].type.name[2]", "module.foo[0].type.name"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.address, func(t *testing.T) {
+			if got := BaseAddress(tt.address); got != tt.want {
+				t.Errorf("BaseAddress(%q) = %q, want %q", tt.address, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestResourceExists_IndexedModuleForEach(t *testing.T) {
+	s := buildModuleState(nil,
+		&tfjson.StateModule{
+			Address: "module.configuration_policies[0]",
+			Resources: []*tfjson.StateResource{
+				{
+					Address:         `module.configuration_policies[0].azuread_group.all["cfg_a"]`,
+					Mode:            tfjson.ManagedResourceMode,
+					Type:            "azuread_group",
+					Name:            "all",
+					Index:           "cfg_a",
+					ProviderName:    "registry.opentofu.org/hashicorp/azuread",
+					AttributeValues: map[string]interface{}{"id": "grp-a"},
+				},
+				{
+					Address:         `module.configuration_policies[0].azuread_group.all["cfg_b"]`,
+					Mode:            tfjson.ManagedResourceMode,
+					Type:            "azuread_group",
+					Name:            "all",
+					Index:           "cfg_b",
+					ProviderName:    "registry.opentofu.org/hashicorp/azuread",
+					AttributeValues: map[string]interface{}{"id": "grp-b"},
+				},
+			},
+		},
+	)
+
+	// Base address (with module index, no resource key) matches any instance.
+	if !ResourceExists(s, "module.configuration_policies[0].azuread_group.all") {
+		t.Error("expected base address under indexed module to match for_each instances")
+	}
+	// Exact instance addresses match.
+	if !ResourceExists(s, `module.configuration_policies[0].azuread_group.all["cfg_a"]`) {
+		t.Error("expected exact instance cfg_a to exist")
+	}
+	// A missing key must not match, even though other keys exist.
+	if ResourceExists(s, `module.configuration_policies[0].azuread_group.all["cfg_missing"]`) {
+		t.Error("expected missing key under indexed module to not match")
+	}
+	// A different module index must not match.
+	if ResourceExists(s, "module.configuration_policies[1].azuread_group.all") {
+		t.Error("expected a different module index to not match")
+	}
+	// The indexed module prefix matches (any resource beneath it).
+	if !ResourceExists(s, "module.configuration_policies[0]") {
+		t.Error("expected indexed module prefix to match resources beneath it")
+	}
+}
+
+func TestLookupResourcesByPrefix_IndexedModule(t *testing.T) {
+	s := buildModuleState(nil,
+		&tfjson.StateModule{
+			Address: "module.configuration_policies[0]",
+			Resources: []*tfjson.StateResource{
+				{
+					Address:         `module.configuration_policies[0].azuread_group.all["cfg_a"]`,
+					Mode:            tfjson.ManagedResourceMode,
+					Type:            "azuread_group",
+					Name:            "all",
+					Index:           "cfg_a",
+					ProviderName:    "registry.opentofu.org/hashicorp/azuread",
+					AttributeValues: map[string]interface{}{"id": "grp-a"},
+				},
+				{
+					Address:         `module.configuration_policies[0].azuread_group.all["cfg_b"]`,
+					Mode:            tfjson.ManagedResourceMode,
+					Type:            "azuread_group",
+					Name:            "all",
+					Index:           "cfg_b",
+					ProviderName:    "registry.opentofu.org/hashicorp/azuread",
+					AttributeValues: map[string]interface{}{"id": "grp-b"},
+				},
+				// A different resource under the same indexed module must not be
+				// lumped in with the azuread_group.all base group.
+				{
+					Address:         "module.configuration_policies[0].azuread_application.app",
+					Mode:            tfjson.ManagedResourceMode,
+					Type:            "azuread_application",
+					Name:            "app",
+					ProviderName:    "registry.opentofu.org/hashicorp/azuread",
+					AttributeValues: map[string]interface{}{"id": "app-1"},
+				},
+			},
+		},
+	)
+
+	idx := NewStateIndex(s)
+	got, err := idx.LookupResourcesByPrefix("module.configuration_policies[0].azuread_group.all")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("expected 2 instances of azuread_group.all, got %d", len(got))
+	}
+	for _, r := range got {
+		if r.Type != "azuread_group" {
+			t.Errorf("unexpected resource in group: %q", r.Address)
+		}
+	}
+}

@@ -58,7 +58,7 @@ func NewStateIndex(s *tfjson.State) *StateIndex {
 	idx.resources = resources
 	for _, r := range resources {
 		idx.byAddress[r.Address] = r
-		base := baseAddress(r.Address)
+		base := BaseAddress(r.Address)
 		idx.byBase[base] = append(idx.byBase[base], r)
 	}
 
@@ -98,18 +98,22 @@ func (i *StateIndex) ResourceExists(address string) bool {
 		return false
 	}
 
-	if strings.Contains(address, "[") {
+	// An address carrying a resource-level for_each/count key (a trailing
+	// "[...]" after the resource type.name) refers to one specific instance
+	// and is matched exactly. Module-instance indices such as module.foo[0]
+	// are deliberately not treated as resource keys here.
+	if hasResourceKey(address) {
 		_, ok := i.byAddress[address]
 		return ok
 	}
 
-	base := baseAddress(address)
-	if len(i.byBase[base]) > 0 {
+	// A base resource address matches any of its for_each/count instances.
+	if len(i.byBase[address]) > 0 {
 		return true
 	}
 
-	// Fall back to module prefix check: "module.foo" matches any resource
-	// whose address starts with "module.foo."
+	// A module path (possibly indexed, e.g. "module.foo" or "module.foo[0]")
+	// matches when any resource exists beneath it.
 	return i.HasResourcesWithPrefix(address)
 }
 
@@ -188,11 +192,63 @@ func FlattenState(s *tfjson.State) []*ResourceInfo {
 	return flattenModule(s.Values.RootModule)
 }
 
-func baseAddress(address string) string {
-	if idx := strings.Index(address, "["); idx >= 0 {
+// BaseAddress strips a trailing resource-level for_each/count key from a
+// Terraform resource address, leaving any module-instance indices intact.
+// If the address has no resource key, it is returned unchanged.
+//
+//	aws_s3_bucket.data["k"]      → aws_s3_bucket.data
+//	module.m[0].type.name["k"]   → module.m[0].type.name
+//	module.m[0].type.name        → module.m[0].type.name
+//	aws_instance.web             → aws_instance.web
+//
+// The resource key, when present, is always the final bracketed segment of the
+// address because the resource type.name is the last component. Module-instance
+// indices such as module.m[0] are therefore preserved: they are never at the
+// very end of a full resource address.
+func BaseAddress(address string) string {
+	if !strings.HasSuffix(address, "]") {
+		return address
+	}
+	if idx := strings.LastIndex(address, "["); idx >= 0 {
 		return address[:idx]
 	}
 	return address
+}
+
+// hasResourceKey reports whether the address ends with a resource-level
+// for_each/count key (e.g. `type.name["k"]` or `module.m[0].type.name[2]`),
+// as opposed to a bare module-instance index (e.g. `module.m[0]`) or no index.
+func hasResourceKey(address string) bool {
+	if !strings.HasSuffix(address, "]") {
+		return false
+	}
+	idx := strings.LastIndex(address, "[")
+	if idx < 0 {
+		return false
+	}
+	// If everything up to the final bracket is a pure module path, the bracket
+	// is a module-instance index rather than a resource key.
+	return !isModulePath(address[:idx])
+}
+
+// isModulePath reports whether address is a pure module path — a sequence of
+// `module.<name>` steps (each optionally carrying an index) with no trailing
+// resource type/name. For example: "module.foo", "module.foo[0]",
+// "module.foo.module.bar". Returns false for "module.foo.aws_x.y" or "aws_x.y".
+func isModulePath(address string) bool {
+	if !strings.HasPrefix(address, "module.") {
+		return false
+	}
+	parts := strings.Split(address, ".")
+	if len(parts)%2 != 0 {
+		return false
+	}
+	for i := 0; i < len(parts); i += 2 {
+		if parts[i] != "module" {
+			return false
+		}
+	}
+	return true
 }
 
 // flattenModule recursively extracts resources from a module and its children.

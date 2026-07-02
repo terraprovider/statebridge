@@ -87,6 +87,47 @@ operations:
 			srcRemovedCount: 1,
 			dstImportCount:  1,
 		},
+		{
+			name: "for_each move under indexed module",
+			yaml: `
+description: "Move a for_each resource out of an indexed module instance"
+operations:
+  - type: move
+    source_layer: "SRC"
+    destination_layer: "DST"
+    resources:
+      - from: "module.configuration_policies[0].azuread_group_without_members.all"
+`,
+			stateResources: []*tfjson.StateResource{
+				testutil.NewResource(
+					`module.configuration_policies[0].azuread_group_without_members.all["cfg_intune_rdp_access_allowed"]`,
+					"azuread_group_without_members", "all", "cfg_intune_rdp_access_allowed",
+					map[string]interface{}{"id": "grp-rdp"}),
+				testutil.NewResource(
+					`module.configuration_policies[0].azuread_group_without_members.all["cfg_other"]`,
+					"azuread_group_without_members", "all", "cfg_other",
+					map[string]interface{}{"id": "grp-other"}),
+				// A sibling resource that is NOT moved, so the module instance is
+				// not fully emptied and the removed block stays resource-level.
+				testutil.NewResource(
+					"module.configuration_policies[0].azuread_application.app",
+					"azuread_application", "app", nil,
+					map[string]interface{}{"id": "app-1"}),
+			},
+			srcContains: []string{
+				"removed {",
+				"module.configuration_policies[0].azuread_group_without_members.all",
+			},
+			dstContains: []string{
+				`module.configuration_policies[0].azuread_group_without_members.all["cfg_intune_rdp_access_allowed"]`,
+				`module.configuration_policies[0].azuread_group_without_members.all["cfg_other"]`,
+				`"grp-rdp"`,
+				`"grp-other"`,
+			},
+			dstNotContains:  []string{"azuread_application"},
+			srcRemovedCount: 1,
+			dstImportCount:  2,
+		},
 	}
 
 	for _, tt := range tests {
