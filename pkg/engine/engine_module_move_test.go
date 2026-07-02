@@ -19,6 +19,7 @@ func TestEngine_ProcessFiles_ModuleMove(t *testing.T) {
 		dstNotContains  []string
 		srcRemovedCount int
 		srcContains     []string
+		srcNotContains  []string
 	}{
 		{
 			name: "basic module move",
@@ -145,6 +146,63 @@ operations:
 			dstNotContains: []string{"module.foo"},
 			srcContains:    []string{"module.foo"},
 		},
+		{
+			name: "indexed sub-module single instance",
+			yaml: `
+description: "Move module.foo containing an indexed sub-module instance"
+operations:
+  - type: move
+    source_layer: "SRC"
+    destination_layer: "DST"
+    resources:
+      - from: "module.foo"
+        to: "module.bar"
+`,
+			stateResources: []*tfjson.StateResource{
+				testutil.NewResource(`module.foo.module.sub[0].aws_s3_bucket.data["k1"]`, "aws_s3_bucket", "data", "k1",
+					map[string]interface{}{"id": "b-k1"}),
+				testutil.NewResource(`module.foo.module.sub[0].aws_s3_bucket.data["k2"]`, "aws_s3_bucket", "data", "k2",
+					map[string]interface{}{"id": "b-k2"}),
+			},
+			dstImportCount: 2,
+			// Import blocks keep the full indexed, keyed destination addresses.
+			dstContains: []string{
+				`module.bar.module.sub[0].aws_s3_bucket.data["k1"]`,
+				`module.bar.module.sub[0].aws_s3_bucket.data["k2"]`,
+			},
+			// Removed block strips the module index (OpenTofu forbids it).
+			srcRemovedCount: 1,
+			srcContains:     []string{"from = module.foo.module.sub.aws_s3_bucket.data"},
+			srcNotContains:  []string{"module.foo.module.sub[0]"},
+		},
+		{
+			name: "indexed sub-module multiple instances deduplicated",
+			yaml: `
+description: "Move module.foo with a count=2 sub-module"
+operations:
+  - type: move
+    source_layer: "SRC"
+    destination_layer: "DST"
+    resources:
+      - from: "module.foo"
+`,
+			stateResources: []*tfjson.StateResource{
+				testutil.NewResource(`module.foo.module.sub[0].aws_s3_bucket.data["k1"]`, "aws_s3_bucket", "data", "k1",
+					map[string]interface{}{"id": "b0-k1"}),
+				testutil.NewResource(`module.foo.module.sub[1].aws_s3_bucket.data["k1"]`, "aws_s3_bucket", "data", "k1",
+					map[string]interface{}{"id": "b1-k1"}),
+			},
+			// Both module instances collapse to one config address → a single
+			// deduplicated removed block, but both instances are re-imported.
+			dstImportCount: 2,
+			dstContains: []string{
+				`module.foo.module.sub[0].aws_s3_bucket.data["k1"]`,
+				`module.foo.module.sub[1].aws_s3_bucket.data["k1"]`,
+			},
+			srcRemovedCount: 1,
+			srcContains:     []string{"from = module.foo.module.sub.aws_s3_bucket.data"},
+			srcNotContains:  []string{"module.foo.module.sub[0]", "module.foo.module.sub[1]"},
+		},
 	}
 
 	for _, tc := range tests {
@@ -184,6 +242,9 @@ operations:
 				}
 				for _, s := range tc.srcContains {
 					testutil.AssertContains(t, srcContent, s)
+				}
+				for _, s := range tc.srcNotContains {
+					testutil.AssertNotContains(t, srcContent, s)
 				}
 			}
 		})

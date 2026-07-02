@@ -428,6 +428,7 @@ func (e *Engine) processMoveModule(
 
 	srcPrefix := srcAddr + "."
 	var blocks []generator.Block
+	seenRemoved := make(map[string]bool)
 
 	for _, base := range groupOrder {
 		g := groupMap[base]
@@ -436,14 +437,24 @@ func (e *Engine) processMoveModule(
 		suffix := strings.TrimPrefix(g.baseAddr, srcPrefix)
 		destBase := dstAddr + "." + suffix
 
-		// Emit removed block for this base address
-		blocks = append(blocks, &generator.RemovedBlock{
-			From:        g.baseAddr,
-			Destroy:     false,
-			Layer:       srcLayer,
-			Description: description,
-			Source:      sourceFile,
-		})
+		// Emit removed block using the module-index-stripped configuration
+		// address. OpenTofu forbids instance keys — including module-instance
+		// indices — in removed.from, so resources under indexed sub-modules
+		// (e.g. module.foo.module.bar[0].res.name) must be forgotten via their
+		// config address. Multiple module instances collapse to a single config
+		// address, so deduplicate. Because a whole-module move relocates every
+		// instance, the bracket-less removed address correctly forgets them all.
+		removedFrom := state.ConfigAddress(g.baseAddr)
+		if !seenRemoved[removedFrom] {
+			seenRemoved[removedFrom] = true
+			blocks = append(blocks, &generator.RemovedBlock{
+				From:        removedFrom,
+				Destroy:     false,
+				Layer:       srcLayer,
+				Description: description,
+				Source:      sourceFile,
+			})
+		}
 
 		// Emit import blocks for each instance
 		for _, r := range g.resources {
@@ -528,6 +539,7 @@ func (e *Engine) processMoveAllResources(
 	}
 
 	var blocks []generator.Block
+	seenRemoved := make(map[string]bool)
 
 	for _, base := range groupOrder {
 		g := groupMap[base]
@@ -538,13 +550,19 @@ func (e *Engine) processMoveAllResources(
 				// For same-layer moves, omitted resources are just skipped (no removed block needed)
 				continue
 			}
-			blocks = append(blocks, &generator.RemovedBlock{
-				From:        g.baseAddr,
-				Destroy:     cfg.destroy,
-				Layer:       srcLayer,
-				Description: description,
-				Source:      sourceFile,
-			})
+			// Strip module-instance indices (OpenTofu forbids them in
+			// removed.from) and deduplicate across module instances.
+			removedFrom := state.ConfigAddress(g.baseAddr)
+			if !seenRemoved[removedFrom] {
+				seenRemoved[removedFrom] = true
+				blocks = append(blocks, &generator.RemovedBlock{
+					From:        removedFrom,
+					Destroy:     cfg.destroy,
+					Layer:       srcLayer,
+					Description: description,
+					Source:      sourceFile,
+				})
+			}
 			continue
 		}
 
@@ -576,14 +594,20 @@ func (e *Engine) processMoveAllResources(
 				})
 			}
 		} else {
-			// Cross-layer: emit removed + import blocks
-			blocks = append(blocks, &generator.RemovedBlock{
-				From:        g.baseAddr,
-				Destroy:     false,
-				Layer:       srcLayer,
-				Description: description,
-				Source:      sourceFile,
-			})
+			// Cross-layer: emit removed + import blocks. Strip module-instance
+			// indices from the removed address (OpenTofu forbids them) and
+			// deduplicate across module instances that share a config address.
+			removedFrom := state.ConfigAddress(g.baseAddr)
+			if !seenRemoved[removedFrom] {
+				seenRemoved[removedFrom] = true
+				blocks = append(blocks, &generator.RemovedBlock{
+					From:        removedFrom,
+					Destroy:     false,
+					Layer:       srcLayer,
+					Description: description,
+					Source:      sourceFile,
+				})
+			}
 
 			for _, r := range g.resources {
 				importIDExpr := ""
