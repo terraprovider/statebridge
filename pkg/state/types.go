@@ -45,6 +45,7 @@ type StateIndex struct {
 	resources []*ResourceInfo
 	byAddress map[string]*ResourceInfo
 	byBase    map[string][]*ResourceInfo
+	byConfig  map[string][]*ResourceInfo
 }
 
 // NewStateIndex builds a StateIndex from the given state.
@@ -52,14 +53,17 @@ func NewStateIndex(s *tfjson.State) *StateIndex {
 	idx := &StateIndex{
 		byAddress: make(map[string]*ResourceInfo),
 		byBase:    make(map[string][]*ResourceInfo),
+		byConfig:  make(map[string][]*ResourceInfo),
 	}
 
 	resources := FlattenState(s)
 	idx.resources = resources
 	for _, r := range resources {
 		idx.byAddress[r.Address] = r
-		base := baseAddress(r.Address)
+		base := BaseAddress(r.Address)
 		idx.byBase[base] = append(idx.byBase[base], r)
+		cfg := ConfigAddress(r.Address)
+		idx.byConfig[cfg] = append(idx.byConfig[cfg], r)
 	}
 
 	return idx
@@ -98,18 +102,36 @@ func (i *StateIndex) ResourceExists(address string) bool {
 		return false
 	}
 
-	if strings.Contains(address, "[") {
+	// An address carrying a resource-level for_each/count key (a trailing
+	// "[...]" after the resource type.name) refers to one specific instance
+	// and is matched exactly. Module-instance indices such as module.foo[0]
+	// are deliberately not treated as resource keys here.
+	if hasResourceKey(address) {
 		_, ok := i.byAddress[address]
 		return ok
 	}
 
-	base := baseAddress(address)
-	if len(i.byBase[base]) > 0 {
+	// A base resource address matches any of its for_each/count instances.
+	if len(i.byBase[address]) > 0 {
 		return true
 	}
 
-	// Fall back to module prefix check: "module.foo" matches any resource
-	// whose address starts with "module.foo."
+	// A bracket-free configuration address matches any resource instance sharing
+	// that config address. This lets a module-config address such as
+	// "module.cp.random_id.items" match indexed state instances like
+	// "module.cp[0].random_id.items[\"a\"]" — the form emitted for removed
+	// blocks when a resource lives inside an indexed module instance. We only
+	// apply this when the query itself carries no instance keys, so an explicit
+	// instance reference like "module.cp[1].random_id.items" is NOT satisfied by
+	// a different instance ("module.cp[0]...").
+	if !strings.Contains(address, "[") {
+		if len(i.byConfig[address]) > 0 {
+			return true
+		}
+	}
+
+	// A module path (possibly indexed, e.g. "module.foo" or "module.foo[0]")
+	// matches when any resource exists beneath it.
 	return i.HasResourcesWithPrefix(address)
 }
 
@@ -178,6 +200,38 @@ func (i *StateIndex) AllManagedResources() []*ResourceInfo {
 	return result
 }
 
+// ModuleInstanceBases returns the distinct base addresses (module-instance
+// indices preserved, resource for_each/count keys stripped) of all resource
+// instances that share the given configuration address — an address with ALL
+// instance keys removed, as produced by ConfigAddress.
+//
+// When a resource lives inside a multi-instance (count/for_each) module, each
+// module instance yields a distinct base address here — for example
+// "module.cp[0].random_id.items" and "module.cp[1].random_id.items" — even
+// though both collapse to the single configuration address
+// "module.cp.random_id.items". This is used to detect whether a resource
+// referenced via one module instance actually spans several module instances
+// in state.
+//
+// The result is deduplicated and sorted. Returns nil for a nil index or when no
+// instances share the configuration address.
+func (i *StateIndex) ModuleInstanceBases(configAddr string) []string {
+	if i == nil {
+		return nil
+	}
+	seen := make(map[string]bool)
+	var result []string
+	for _, r := range i.byConfig[configAddr] {
+		b := BaseAddress(r.Address)
+		if !seen[b] {
+			seen[b] = true
+			result = append(result, b)
+		}
+	}
+	sort.Strings(result)
+	return result
+}
+
 // FlattenState recursively walks the state module tree and returns all
 // resource instances as a flat slice of ResourceInfo.
 // Returns nil if the state or root module is nil.
@@ -188,11 +242,100 @@ func FlattenState(s *tfjson.State) []*ResourceInfo {
 	return flattenModule(s.Values.RootModule)
 }
 
-func baseAddress(address string) string {
-	if idx := strings.Index(address, "["); idx >= 0 {
+// BaseAddress strips a trailing resource-level for_each/count key from a
+// Terraform resource address, leaving any module-instance indices intact.
+// If the address has no resource key, it is returned unchanged.
+//
+//	aws_s3_bucket.data["k"]      → aws_s3_bucket.data
+//	module.m[0].type.name["k"]   → module.m[0].type.name
+//	module.m[0].type.name        → module.m[0].type.name
+//	aws_instance.web             → aws_instance.web
+//
+// The resource key, when present, is always the final bracketed segment of the
+// address because the resource type.name is the last component. Module-instance
+// indices such as module.m[0] are therefore preserved: they are never at the
+// very end of a full resource address.
+func BaseAddress(address string) string {
+	if !strings.HasSuffix(address, "]") {
+		return address
+	}
+	if idx := strings.LastIndex(address, "["); idx >= 0 {
 		return address[:idx]
 	}
 	return address
+}
+
+// ConfigAddress removes every instance key from an address — both
+// module-instance indices (e.g. `module.foo[0]`) and resource for_each/count
+// keys (e.g. `res.name["k"]`) — yielding the pure module-and-resource
+// configuration address.
+//
+//	module.cp[0].random_id.items["a"] → module.cp.random_id.items
+//	module.cp[0]                       → module.cp
+//	aws_instance.web[2]                → aws_instance.web
+//	aws_instance.web                   → aws_instance.web
+//
+// This is the address form required by OpenTofu `removed` blocks, which forbid
+// instance keys of any kind. It is also used to match a config address against
+// the indexed instances that share it.
+func ConfigAddress(address string) string {
+	if !strings.Contains(address, "[") {
+		return address
+	}
+	var b strings.Builder
+	b.Grow(len(address))
+	depth := 0
+	for i := 0; i < len(address); i++ {
+		switch address[i] {
+		case '[':
+			depth++
+		case ']':
+			if depth > 0 {
+				depth--
+			}
+		default:
+			if depth == 0 {
+				b.WriteByte(address[i])
+			}
+		}
+	}
+	return b.String()
+}
+
+// hasResourceKey reports whether the address ends with a resource-level
+// for_each/count key (e.g. `type.name["k"]` or `module.m[0].type.name[2]`),
+// as opposed to a bare module-instance index (e.g. `module.m[0]`) or no index.
+func hasResourceKey(address string) bool {
+	if !strings.HasSuffix(address, "]") {
+		return false
+	}
+	idx := strings.LastIndex(address, "[")
+	if idx < 0 {
+		return false
+	}
+	// If everything up to the final bracket is a pure module path, the bracket
+	// is a module-instance index rather than a resource key.
+	return !isModulePath(address[:idx])
+}
+
+// isModulePath reports whether address is a pure module path — a sequence of
+// `module.<name>` steps (each optionally carrying an index) with no trailing
+// resource type/name. For example: "module.foo", "module.foo[0]",
+// "module.foo.module.bar". Returns false for "module.foo.aws_x.y" or "aws_x.y".
+func isModulePath(address string) bool {
+	if !strings.HasPrefix(address, "module.") {
+		return false
+	}
+	parts := strings.Split(address, ".")
+	if len(parts)%2 != 0 {
+		return false
+	}
+	for i := 0; i < len(parts); i += 2 {
+		if parts[i] != "module" {
+			return false
+		}
+	}
+	return true
 }
 
 // flattenModule recursively extracts resources from a module and its children.

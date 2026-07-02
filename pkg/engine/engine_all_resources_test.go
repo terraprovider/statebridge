@@ -19,6 +19,7 @@ func TestEngine_ProcessFiles_AllResources(t *testing.T) {
 		dstNotContains  []string
 		srcRemovedCount int
 		srcContains     []string
+		srcNotContains  []string
 	}{
 		{
 			name: "basic all resources",
@@ -225,6 +226,35 @@ operations:
 			dstContains:    []string{"azuredevops_serviceendpoint_azurerm.kv", `id = "proj-123/endpoint-id"`},
 			dstNotContains: []string{"azuredevops_serviceendpoint_azurerm.key_vault"},
 		},
+		{
+			name: "indexed module instances deduplicated removed",
+			yaml: `
+description: "Move all resources including an indexed module"
+operations:
+  - type: move
+    source_layer: "SRC"
+    destination_layer: "DST"
+    all_resources: true
+`,
+			stateResources: []*tfjson.StateResource{
+				testutil.NewResource(`module.cp[0].random_id.items["a"]`, "random_id", "items", "a",
+					map[string]interface{}{"id": "id-0a"}),
+				testutil.NewResource(`module.cp[1].random_id.items["a"]`, "random_id", "items", "a",
+					map[string]interface{}{"id": "id-1a"}),
+			},
+			// Import blocks keep full indexed, keyed addresses; both instances
+			// are re-imported.
+			dstImportCount: 2,
+			dstContains: []string{
+				`module.cp[0].random_id.items["a"]`,
+				`module.cp[1].random_id.items["a"]`,
+			},
+			// Both instances collapse to one config address → single removed
+			// block with no module index.
+			srcRemovedCount: 1,
+			srcContains:     []string{"from = module.cp.random_id.items"},
+			srcNotContains:  []string{"module.cp[0]", "module.cp[1]"},
+		},
 	}
 
 	for _, tc := range tests {
@@ -264,6 +294,9 @@ operations:
 				}
 				for _, s := range tc.srcContains {
 					testutil.AssertContains(t, srcContent, s)
+				}
+				for _, s := range tc.srcNotContains {
+					testutil.AssertNotContains(t, srcContent, s)
 				}
 			}
 		})

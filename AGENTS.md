@@ -239,6 +239,22 @@ Match priority: exact > longest prefix > catch-all.
 - Single resource: generates one `removed` + one `import`
 - For_each resource: expands all instances with same keys
 
+**Indexed module instances** — the `from` address may reference a resource inside an indexed (`count`/`for_each`) module instance, e.g. `module.configuration_policies[0].azuread_group_without_members.all`. Provide the base resource address **including** the module index but **without** the resource's own for_each key. All keys of that resource are moved (or use `keys` to remap/filter):
+
+```yaml
+resources:
+  - from: "module.configuration_policies[0].azuread_group_without_members.all"
+    # moves every key, e.g. .all["cfg_intune_rdp_access_allowed"], .all["cfg_..."]
+```
+
+The module index (`[0]`) is preserved; only the trailing resource for_each key is treated as the key to move. Numeric indices are supported. Indexed sub-modules at any nesting depth work (e.g. `module.a[0].module.b[1].type.name`). String module indices containing dots (e.g. `module.foo["a.b"]`) are not supported.
+
+For a **cross-layer** move, the generated destination `import` blocks keep the full indexed, keyed address (e.g. `module.configuration_policies[0].azuread_group_without_members.all["cfg_x"]`), but the source `removed` block uses the **module-index-stripped configuration address** (e.g. `module.configuration_policies.azuread_group_without_members.all`). This is required because OpenTofu forbids instance keys — including module-instance indices — in a `removed` block's `from`.
+
+> ⚠️ **Constraint — `removed` covers all instances of the config node.** A bracket-less `removed { from = module.NAME.type.name }` forgets **every** dynamic instance of that resource across **every** instance of the module (all `count`/`for_each` module instances × all resource keys), because OpenTofu cannot scope a `removed` block to a single module instance. This is exactly correct for the common `count = 1` conditional-module pattern (only `[0]` exists). But if the module has **multiple** instances (`count = 2`, or a `for_each` module) and you move only `[0]`, the source `removed` block would also forget the same resource from `[1]`, `[2]`, … even though the `import` side only re-creates `[0]` in the destination — orphaning the other instances' state. **statebridge enforces this:** a cross-layer indexed-module move whose source layer's state contains more than one instance of the module fails at `generate` time with an error listing the offending instances. Only use an indexed-module cross-layer move when the module has a single instance (or move the resource out of every module instance).
+>
+> For the source `removed` block to apply, the moved resource must also be **absent from the source layer's configuration** afterwards (an empty `for_each` still counts as declared) — typically by removing it from the module or pointing the module at a variant that no longer declares it.
+
 **`merge_duplicates`** — Deduplicate when multiple source resources produce the same destination address:
 
 ```yaml
@@ -763,6 +779,20 @@ Without a `keys` map, all instances are moved with the same keys:
   resources:
     - from: "<resource_type>.<name>"
 ```
+
+### "Move a for_each resource out of an indexed module" / "Move resource inside module.foo[0]"
+
+Use the base resource address including the module index but without the resource's own for_each key. All keys are moved (add `keys` to remap or filter):
+
+```yaml
+- type: move
+  source_layer: "<source>"
+  destination_layer: "<destination>"
+  resources:
+    - from: "module.<module_name>[<index>].<resource_type>.<name>"
+```
+
+The destination `import` blocks keep the full indexed, keyed address; the source `removed` block uses the module-index-stripped config address (OpenTofu forbids instance keys in `removed`). Because a bracket-less `removed` config address forgets the resource across **all** instances of the module, only use this for single-instance modules (`count = 1`, the common conditional-module pattern). See the "Indexed module instances" constraint in the move-operation reference above.
 
 ### "Split resource by key prefix" / "Route different for_each keys to different layers"
 

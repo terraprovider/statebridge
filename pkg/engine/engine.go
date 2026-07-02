@@ -36,6 +36,23 @@ type ProcessResult struct {
 	SkippedFiles []SkippedFile
 }
 
+// fatalMigrationError marks an error that must abort processing immediately
+// instead of being treated as a skippable per-file failure. Skippable failures
+// (e.g. a source resource that no longer exists in state after a partial
+// pipeline run) let other migration files proceed; fatal failures indicate a
+// structurally invalid or destructive migration that the user must fix.
+type fatalMigrationError struct {
+	err error
+}
+
+func (e *fatalMigrationError) Error() string { return e.err.Error() }
+func (e *fatalMigrationError) Unwrap() error { return e.err }
+
+// fatalf constructs a fatalMigrationError from a printf-style message.
+func fatalf(format string, args ...interface{}) error {
+	return &fatalMigrationError{err: fmt.Errorf(format, args...)}
+}
+
 // Config holds the configuration for the Engine.
 type Config struct {
 	// StateReader reads Terraform/OpenTofu state for layers.
@@ -142,6 +159,13 @@ func (e *Engine) ProcessFiles(ctx context.Context, paths []string) (*ProcessResu
 
 		blocks, err := e.processMigration(ctx, mf)
 		if err != nil {
+			// Fatal errors (structurally invalid or destructive migrations) abort
+			// immediately; other processing errors are skippable so unrelated
+			// migration files can still be generated.
+			var fatal *fatalMigrationError
+			if errors.As(err, &fatal) {
+				return nil, fmt.Errorf("%q: %w", mf.FilePath, err)
+			}
 			fmt.Fprintf(os.Stderr, "Skipping %q: %v\n", mf.FilePath, err)
 			skippedFiles = append(skippedFiles, SkippedFile{mf.FilePath, migration.YamlStem(mf.FilePath), SkipError})
 			continue
@@ -290,11 +314,59 @@ func (e *Engine) processMoveResource(
 		return e.processMoveModule(ctx, srcLayer, dstLayer, sameLayer, srcAddr, dstAddr, description, sourceFile)
 	}
 
+	// Guard: refuse a cross-layer move out of a single instance of a
+	// multi-instance (count/for_each) module. See method doc for the rationale.
+	if !sameLayer {
+		if err := e.checkIndexedModuleMoveSafety(ctx, srcLayer, srcAddr); err != nil {
+			return nil, err
+		}
+	}
+
 	if len(res.Keys) > 0 {
 		return e.processMoveKeyed(ctx, srcLayer, dstLayer, sameLayer, srcAddr, dstAddr, res, opIndex, tracker, description, sourceFile)
 	}
 
 	return e.processMoveSimple(ctx, srcLayer, dstLayer, sameLayer, srcAddr, dstAddr, res, tracker, description, sourceFile)
+}
+
+// checkIndexedModuleMoveSafety refuses a cross-layer move of a resource that
+// lives inside a single instance of a multi-instance (count/for_each) module.
+//
+// A cross-layer move generates a source removed block, and OpenTofu forbids
+// instance keys — including module-instance indices — in a removed block's
+// `from`. statebridge therefore emits the module-index-stripped configuration
+// address (e.g. "module.cp.random_id.items"), which OpenTofu applies to the
+// resource across EVERY instance of the module. The destination import side,
+// however, only re-creates the single referenced instance. If the module has
+// more than one instance in state, the other instances' state would be
+// forgotten (orphaned) without being re-imported, so we refuse rather than
+// generate a destructive migration.
+//
+// The check is a no-op when srcAddr carries no module-instance index (the
+// removed address then equals the base address, so there is no cross-instance
+// scope), which covers all non-indexed moves without reading state.
+func (e *Engine) checkIndexedModuleMoveSafety(ctx context.Context, srcLayer, srcAddr string) error {
+	configAddr := state.ConfigAddress(srcAddr)
+	if configAddr == state.BaseAddress(srcAddr) {
+		return nil // no module-instance index → no cross-instance risk
+	}
+
+	s, err := e.resolver.ReadState(ctx, srcLayer)
+	if err != nil {
+		return err
+	}
+
+	bases := state.NewStateIndex(s).ModuleInstanceBases(configAddr)
+	if len(bases) <= 1 {
+		return nil // single (or zero) module instance → safe
+	}
+
+	return fatalf(
+		"cannot move %q out of a single instance of a multi-instance module: state contains %d instances of this module (%s); "+
+			"a cross-layer move must emit a removed block using the module-index-stripped address %q, which OpenTofu applies to the resource in ALL module instances, "+
+			"but the destination only re-imports the referenced instance — this would orphan the other instances' state. "+
+			"Move the resource out of every module instance, or reduce the module to a single instance first",
+		srcAddr, len(bases), strings.Join(bases, ", "), configAddr)
 }
 
 // processMoveModule handles a module-level move by discovering all managed
@@ -346,7 +418,7 @@ func (e *Engine) processMoveModule(
 	groupMap := make(map[string]*baseGroup)
 	var groupOrder []string
 	for _, r := range resources {
-		base := stripKeyFromAddress(r.Address)
+		base := state.BaseAddress(r.Address)
 		if _, ok := groupMap[base]; !ok {
 			groupMap[base] = &baseGroup{baseAddr: base}
 			groupOrder = append(groupOrder, base)
@@ -356,6 +428,7 @@ func (e *Engine) processMoveModule(
 
 	srcPrefix := srcAddr + "."
 	var blocks []generator.Block
+	seenRemoved := make(map[string]bool)
 
 	for _, base := range groupOrder {
 		g := groupMap[base]
@@ -364,14 +437,24 @@ func (e *Engine) processMoveModule(
 		suffix := strings.TrimPrefix(g.baseAddr, srcPrefix)
 		destBase := dstAddr + "." + suffix
 
-		// Emit removed block for this base address
-		blocks = append(blocks, &generator.RemovedBlock{
-			From:        g.baseAddr,
-			Destroy:     false,
-			Layer:       srcLayer,
-			Description: description,
-			Source:      sourceFile,
-		})
+		// Emit removed block using the module-index-stripped configuration
+		// address. OpenTofu forbids instance keys — including module-instance
+		// indices — in removed.from, so resources under indexed sub-modules
+		// (e.g. module.foo.module.bar[0].res.name) must be forgotten via their
+		// config address. Multiple module instances collapse to a single config
+		// address, so deduplicate. Because a whole-module move relocates every
+		// instance, the bracket-less removed address correctly forgets them all.
+		removedFrom := state.ConfigAddress(g.baseAddr)
+		if !seenRemoved[removedFrom] {
+			seenRemoved[removedFrom] = true
+			blocks = append(blocks, &generator.RemovedBlock{
+				From:        removedFrom,
+				Destroy:     false,
+				Layer:       srcLayer,
+				Description: description,
+				Source:      sourceFile,
+			})
+		}
 
 		// Emit import blocks for each instance
 		for _, r := range g.resources {
@@ -396,16 +479,6 @@ func (e *Engine) processMoveModule(
 	}
 
 	return blocks, nil
-}
-
-// stripKeyFromAddress removes the key/index suffix from a resource address.
-// "aws_s3_bucket.data[\"key\"]" → "aws_s3_bucket.data"
-// "aws_instance.web" → "aws_instance.web"
-func stripKeyFromAddress(address string) string {
-	if idx := strings.Index(address, "["); idx >= 0 {
-		return address[:idx]
-	}
-	return address
 }
 
 // processMoveAllResources handles an all_resources move by discovering all
@@ -457,7 +530,7 @@ func (e *Engine) processMoveAllResources(
 	groupMap := make(map[string]*baseGroup)
 	var groupOrder []string
 	for _, r := range resources {
-		base := stripKeyFromAddress(r.Address)
+		base := state.BaseAddress(r.Address)
 		if _, ok := groupMap[base]; !ok {
 			groupMap[base] = &baseGroup{baseAddr: base}
 			groupOrder = append(groupOrder, base)
@@ -466,6 +539,7 @@ func (e *Engine) processMoveAllResources(
 	}
 
 	var blocks []generator.Block
+	seenRemoved := make(map[string]bool)
 
 	for _, base := range groupOrder {
 		g := groupMap[base]
@@ -476,13 +550,19 @@ func (e *Engine) processMoveAllResources(
 				// For same-layer moves, omitted resources are just skipped (no removed block needed)
 				continue
 			}
-			blocks = append(blocks, &generator.RemovedBlock{
-				From:        g.baseAddr,
-				Destroy:     cfg.destroy,
-				Layer:       srcLayer,
-				Description: description,
-				Source:      sourceFile,
-			})
+			// Strip module-instance indices (OpenTofu forbids them in
+			// removed.from) and deduplicate across module instances.
+			removedFrom := state.ConfigAddress(g.baseAddr)
+			if !seenRemoved[removedFrom] {
+				seenRemoved[removedFrom] = true
+				blocks = append(blocks, &generator.RemovedBlock{
+					From:        removedFrom,
+					Destroy:     cfg.destroy,
+					Layer:       srcLayer,
+					Description: description,
+					Source:      sourceFile,
+				})
+			}
 			continue
 		}
 
@@ -514,14 +594,20 @@ func (e *Engine) processMoveAllResources(
 				})
 			}
 		} else {
-			// Cross-layer: emit removed + import blocks
-			blocks = append(blocks, &generator.RemovedBlock{
-				From:        g.baseAddr,
-				Destroy:     false,
-				Layer:       srcLayer,
-				Description: description,
-				Source:      sourceFile,
-			})
+			// Cross-layer: emit removed + import blocks. Strip module-instance
+			// indices from the removed address (OpenTofu forbids them) and
+			// deduplicate across module instances that share a config address.
+			removedFrom := state.ConfigAddress(g.baseAddr)
+			if !seenRemoved[removedFrom] {
+				seenRemoved[removedFrom] = true
+				blocks = append(blocks, &generator.RemovedBlock{
+					From:        removedFrom,
+					Destroy:     false,
+					Layer:       srcLayer,
+					Description: description,
+					Source:      sourceFile,
+				})
+			}
 
 			for _, r := range g.resources {
 				importIDExpr := ""
@@ -625,7 +711,7 @@ func (e *Engine) processMoveSimple(
 
 		if tracker.shouldEmitRemoved(srcKey) {
 			blocks = append(blocks, &generator.RemovedBlock{
-				From:        srcAddr,
+				From:        state.ConfigAddress(srcAddr),
 				Destroy:     false,
 				Layer:       srcLayer,
 				Description: description,
@@ -657,7 +743,7 @@ func (e *Engine) processMoveSimple(
 
 		blocks = append(blocks,
 			&generator.RemovedBlock{
-				From:        srcAddr,
+				From:        state.ConfigAddress(srcAddr),
 				Destroy:     false,
 				Layer:       srcLayer,
 				Description: description,
@@ -797,7 +883,7 @@ func (e *Engine) processMoveKeyed(
 	if !sameLayer && tracker.shouldEmitRemoved(srcKey) {
 		// Prepend removed block before import blocks
 		removedBlock := &generator.RemovedBlock{
-			From:        srcAddr,
+			From:        state.ConfigAddress(srcAddr),
 			Destroy:     false,
 			Layer:       srcLayer,
 			Description: description,

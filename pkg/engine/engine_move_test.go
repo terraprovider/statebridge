@@ -87,6 +87,49 @@ operations:
 			srcRemovedCount: 1,
 			dstImportCount:  1,
 		},
+		{
+			name: "for_each move under indexed module",
+			yaml: `
+description: "Move a for_each resource out of an indexed module instance"
+operations:
+  - type: move
+    source_layer: "SRC"
+    destination_layer: "DST"
+    resources:
+      - from: "module.configuration_policies[0].azuread_group_without_members.all"
+`,
+			stateResources: []*tfjson.StateResource{
+				testutil.NewResource(
+					`module.configuration_policies[0].azuread_group_without_members.all["cfg_intune_rdp_access_allowed"]`,
+					"azuread_group_without_members", "all", "cfg_intune_rdp_access_allowed",
+					map[string]interface{}{"id": "grp-rdp"}),
+				testutil.NewResource(
+					`module.configuration_policies[0].azuread_group_without_members.all["cfg_other"]`,
+					"azuread_group_without_members", "all", "cfg_other",
+					map[string]interface{}{"id": "grp-other"}),
+				// A sibling resource that is NOT moved, so the module instance is
+				// not fully emptied and the removed block stays resource-level.
+				testutil.NewResource(
+					"module.configuration_policies[0].azuread_application.app",
+					"azuread_application", "app", nil,
+					map[string]interface{}{"id": "app-1"}),
+			},
+			srcContains: []string{
+				"removed {",
+				// Module-instance index is stripped for the removed block (the only
+				// form OpenTofu accepts); import blocks keep the full indexed key.
+				"from = module.configuration_policies.azuread_group_without_members.all",
+			},
+			dstContains: []string{
+				`module.configuration_policies[0].azuread_group_without_members.all["cfg_intune_rdp_access_allowed"]`,
+				`module.configuration_policies[0].azuread_group_without_members.all["cfg_other"]`,
+				`"grp-rdp"`,
+				`"grp-other"`,
+			},
+			dstNotContains:  []string{"azuread_application"},
+			srcRemovedCount: 1,
+			dstImportCount:  2,
+		},
 	}
 
 	for _, tt := range tests {
@@ -122,6 +165,90 @@ operations:
 			}
 		})
 	}
+}
+
+// TestEngine_ProcessFiles_Move_IndexedModuleMultiInstanceError verifies the
+// guard that refuses a cross-layer move of a resource out of one instance of a
+// multi-instance (count/for_each) module. Because the source removed block must
+// use a module-index-stripped address that OpenTofu applies to ALL module
+// instances, allowing this would orphan the other instances' state.
+func TestEngine_ProcessFiles_Move_IndexedModuleMultiInstanceError(t *testing.T) {
+	dir, layers := testutil.SetupLayers(t, "src", "dst")
+	srcLayer := layers["src"]
+	dstLayer := layers["dst"]
+
+	yaml := strings.ReplaceAll(strings.ReplaceAll(`
+description: "Move a for_each resource out of one instance of a count=2 module"
+operations:
+  - type: move
+    source_layer: "SRC"
+    destination_layer: "DST"
+    resources:
+      - from: "module.configuration_policies[0].random_id.items"
+`, "SRC", srcLayer), "DST", dstLayer)
+	migrationFile := testutil.WriteMigration(t, dir, "001_move.yaml", yaml)
+
+	// State holds the same resource under two module instances ([0] and [1]).
+	mock := testutil.NewMockStateReader(map[string]*tfjson.State{
+		srcLayer: testutil.BuildState(
+			testutil.NewResource(`module.configuration_policies[0].random_id.items["a"]`,
+				"random_id", "items", "a", map[string]interface{}{"id": "id-0a"}),
+			testutil.NewResource(`module.configuration_policies[1].random_id.items["a"]`,
+				"random_id", "items", "a", map[string]interface{}{"id": "id-1a"}),
+		),
+	})
+
+	err := runEngineExpectError(t, Config{StateReader: mock}, []string{migrationFile})
+	for _, want := range []string{
+		"multi-instance module",
+		"module.configuration_policies[0].random_id.items",
+		"module.configuration_policies[1].random_id.items",
+		"module.configuration_policies.random_id.items",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("expected error to contain %q, got: %v", want, err)
+		}
+	}
+}
+
+// TestEngine_ProcessFiles_Move_IndexedModuleSingleInstanceOK verifies the guard
+// does NOT trigger for a single-instance (count = 1) module — the common
+// conditional-module pattern — which is safe to move.
+func TestEngine_ProcessFiles_Move_IndexedModuleSingleInstanceOK(t *testing.T) {
+	dir, layers := testutil.SetupLayers(t, "src", "dst")
+	srcLayer := layers["src"]
+	dstLayer := layers["dst"]
+
+	yaml := strings.ReplaceAll(strings.ReplaceAll(`
+description: "Move a for_each resource out of a single-instance module"
+operations:
+  - type: move
+    source_layer: "SRC"
+    destination_layer: "DST"
+    resources:
+      - from: "module.configuration_policies[0].random_id.items"
+`, "SRC", srcLayer), "DST", dstLayer)
+	migrationFile := testutil.WriteMigration(t, dir, "001_move.yaml", yaml)
+
+	mock := testutil.NewMockStateReader(map[string]*tfjson.State{
+		srcLayer: testutil.BuildState(
+			testutil.NewResource(`module.configuration_policies[0].random_id.items["a"]`,
+				"random_id", "items", "a", map[string]interface{}{"id": "id-0a"}),
+			testutil.NewResource(`module.configuration_policies[0].random_id.items["b"]`,
+				"random_id", "items", "b", map[string]interface{}{"id": "id-0b"}),
+		),
+	})
+
+	result := runEngine(t, Config{StateReader: mock}, []string{migrationFile})
+
+	srcContent := readLayerFile(t, result.OutputFiles, srcLayer)
+	// Removed block uses the module-index-stripped config address.
+	testutil.AssertContains(t, srcContent, "from = module.configuration_policies.random_id.items")
+
+	dstContent := readLayerFile(t, result.OutputFiles, dstLayer)
+	testutil.AssertBlockCount(t, dstContent, "import {", 2)
+	testutil.AssertContains(t, dstContent, `module.configuration_policies[0].random_id.items["a"]`)
+	testutil.AssertContains(t, dstContent, `module.configuration_policies[0].random_id.items["b"]`)
 }
 
 func TestEngine_ProcessFiles_MultipleOperationsSameLayer(t *testing.T) {
