@@ -615,7 +615,7 @@ func (e *Engine) processMoveSimple(
 
 		if tracker.shouldEmitRemoved(srcKey) {
 			blocks = append(blocks, &generator.RemovedBlock{
-				From:        srcAddr,
+				From:        state.ConfigAddress(srcAddr),
 				Destroy:     false,
 				Layer:       srcLayer,
 				Description: description,
@@ -647,7 +647,7 @@ func (e *Engine) processMoveSimple(
 
 		blocks = append(blocks,
 			&generator.RemovedBlock{
-				From:        srcAddr,
+				From:        state.ConfigAddress(srcAddr),
 				Destroy:     false,
 				Layer:       srcLayer,
 				Description: description,
@@ -787,7 +787,7 @@ func (e *Engine) processMoveKeyed(
 	if !sameLayer && tracker.shouldEmitRemoved(srcKey) {
 		// Prepend removed block before import blocks
 		removedBlock := &generator.RemovedBlock{
-			From:        srcAddr,
+			From:        state.ConfigAddress(srcAddr),
 			Destroy:     false,
 			Layer:       srcLayer,
 			Description: description,

@@ -153,11 +153,11 @@ func forEachAssertions(layerName, resourceBase string, keys []string) []layerAss
 func TestE2EFast_MoveOperations(t *testing.T) {
 	tests := []moveTestCase{
 		{
-			name:          "SimpleMove",
-			destLayerName: "networking",
-			sourceTF:      randomIDResource("moved") + randomIDResource("importable"),
+			name:                "SimpleMove",
+			destLayerName:       "networking",
+			sourceTF:            randomIDResource("moved") + randomIDResource("importable"),
 			sourcePostMigrateTF: randomProviderHCL + randomIDResource("importable"),
-			destTF: randomIDResource("moved"),
+			destTF:              randomIDResource("moved"),
 			migrationYAMLTemplate: `
 description: "Move random_id from shared to networking"
 operations:
@@ -379,13 +379,13 @@ operations:
 // ---------------------------------------------------------------------------
 
 func TestE2EFast_AllResourcesMoveWithOverridesOmit(t *testing.T) {
-  t.Parallel()
-  rootDir, _, vars := setupFastProject(t)
+	t.Parallel()
+	rootDir, _, vars := setupFastProject(t)
 
-  sharedDir := filepath.Join(rootDir, "layers", "shared")
-  networkingDir := filepath.Join(rootDir, "layers", "networking")
+	sharedDir := filepath.Join(rootDir, "layers", "shared")
+	networkingDir := filepath.Join(rootDir, "layers", "networking")
 
-  updateTfFile(t, sharedDir, "main.tf", `
+	updateTfFile(t, sharedDir, "main.tf", `
 terraform {
   required_providers {
     random = {
@@ -413,16 +413,16 @@ resource "random_id" "importable" {
 }
 `)
 
-  tofuInit(t, sharedDir)
-  tofuApply(t, sharedDir, vars)
-  t.Cleanup(func() {
-    tofuDestroy(t, networkingDir, vars)
-    tofuDestroy(t, sharedDir, vars)
-  })
+	tofuInit(t, sharedDir)
+	tofuApply(t, sharedDir, vars)
+	t.Cleanup(func() {
+		tofuDestroy(t, networkingDir, vars)
+		tofuDestroy(t, sharedDir, vars)
+	})
 
-  assertResourceInState(t, sharedDir, "random_id.moved")
+	assertResourceInState(t, sharedDir, "random_id.moved")
 
-  migDir := writeMigration(t, rootDir, "001_move_random_id.yaml", fmt.Sprintf(`
+	migDir := writeMigration(t, rootDir, "001_move_random_id.yaml", fmt.Sprintf(`
 description: "Move random_id from shared to networking"
 operations:
   - type: move
@@ -432,7 +432,7 @@ operations:
       - from: "random_id.moved"
 `, sharedDir, networkingDir))
 
-  updateTfFile(t, networkingDir, "main.tf", `
+	updateTfFile(t, networkingDir, "main.tf", `
 terraform {
   required_providers {
     random = {
@@ -452,7 +452,7 @@ resource "random_id" "moved" {
 }
 `)
 
-  updateTfFile(t, sharedDir, "main.tf", `
+	updateTfFile(t, sharedDir, "main.tf", `
 terraform {
   required_providers {
     random = {
@@ -472,22 +472,108 @@ resource "random_id" "importable" {
 }
 `)
 
-  files := runGenerate(t, []string{migDir})
-  if len(files) == 0 {
-    t.Fatal("expected generated migration files, got none")
-  }
+	files := runGenerate(t, []string{migDir})
+	if len(files) == 0 {
+		t.Fatal("expected generated migration files, got none")
+	}
 
-  tofuInit(t, networkingDir)
-  tofuApply(t, networkingDir, vars)
-  tofuApply(t, sharedDir, vars)
+	tofuInit(t, networkingDir)
+	tofuApply(t, networkingDir, vars)
+	tofuApply(t, sharedDir, vars)
 
-  assertResourceInState(t, networkingDir, "random_id.moved")
-  assertResourceNotInState(t, sharedDir, "random_id.moved")
+	assertResourceInState(t, networkingDir, "random_id.moved")
+	assertResourceNotInState(t, sharedDir, "random_id.moved")
 
-  cleanupMigrationFiles(t, sharedDir)
-  cleanupMigrationFiles(t, networkingDir)
-  assertCleanPlan(t, sharedDir, vars)
-  assertCleanPlan(t, networkingDir, vars)
+	cleanupMigrationFiles(t, sharedDir)
+	cleanupMigrationFiles(t, networkingDir)
+	assertCleanPlan(t, sharedDir, vars)
+	assertCleanPlan(t, networkingDir, vars)
+}
+
+// TestE2EFast_IndexedModuleForEachMove verifies moving every keyed instance of a
+// for_each resource that lives inside an indexed module instance
+// (module.configuration_policies[0].random_id.items) to another layer.
+//
+// This exercises the address handling for indexed modules end-to-end and, in
+// particular, that the generated source-layer removed block strips the module
+// instance index (module.configuration_policies.random_id.items) — the only
+// form OpenTofu accepts — while the destination import blocks keep the full
+// indexed, keyed addresses.
+func TestE2EFast_IndexedModuleForEachMove(t *testing.T) {
+	t.Parallel()
+	rootDir, _, vars := setupFastProject(t)
+
+	sharedDir := filepath.Join(rootDir, "layers", "shared")
+	networkingDir := filepath.Join(rootDir, "layers", "networking")
+
+	// Source layer: indexed module instance with a for_each resource + a sibling
+	// (random_id.keep) that stays behind.
+	updateTfFile(t, sharedDir, "main.tf",
+		randomProviderHCL+indexedForeachModuleBlock("foreachmod", []string{"cfg_a", "cfg_b"}))
+	tofuInit(t, sharedDir)
+	tofuApply(t, sharedDir, vars)
+	t.Cleanup(func() {
+		tofuDestroy(t, networkingDir, vars)
+		tofuDestroy(t, sharedDir, vars)
+	})
+
+	assertResourceInState(t, sharedDir, `module.configuration_policies[0].random_id.items["cfg_a"]`)
+	assertResourceInState(t, sharedDir, `module.configuration_policies[0].random_id.items["cfg_b"]`)
+
+	migDir := writeMigration(t, rootDir, "001_indexed_module_move.yaml", fmt.Sprintf(`
+description: "Move all keys of a for_each resource out of an indexed module"
+operations:
+  - type: move
+    source_layer: "%s"
+    destination_layer: "%s"
+    resources:
+      - from: "module.configuration_policies[0].random_id.items"
+`, sharedDir, networkingDir))
+
+	// Generate while the source still uses the original module, so statebridge
+	// can read source state to resolve import IDs and for_each keys.
+	files := runGenerate(t, []string{migDir})
+	if len(files) == 0 {
+		t.Fatal("expected generated migration files, got none")
+	}
+
+	// The source removed block must use the module-index-stripped config address.
+	sharedFile := generatedFileInLayer(t, files, sharedDir)
+	assertFileContains(t, sharedFile, "from = module.configuration_policies.random_id.items")
+
+	// The destination import blocks keep the full indexed, keyed addresses.
+	networkingFile := generatedFileInLayer(t, files, networkingDir)
+	assertFileContains(t, networkingFile, `to = module.configuration_policies[0].random_id.items["cfg_a"]`)
+	assertFileContains(t, networkingFile, `to = module.configuration_policies[0].random_id.items["cfg_b"]`)
+
+	// Destination layer declares the same indexed module so the imported
+	// instances have a matching configuration to bind to.
+	updateTfFile(t, networkingDir, "main.tf",
+		randomProviderHCL+indexedForeachModuleBlock("foreachmod", []string{"cfg_a", "cfg_b"}))
+
+	// Source layer switches to the "after" module variant, which no longer
+	// declares random_id.items (required for a valid removed block).
+	updateTfFile(t, sharedDir, "main.tf",
+		randomProviderHCL+indexedForeachModuleBlock("foreachmod_after", nil))
+
+	// Apply the import in the destination, then the removal in the source. Both
+	// need a re-init because their module configuration changed.
+	tofuInit(t, networkingDir)
+	tofuApply(t, networkingDir, vars)
+	tofuInit(t, sharedDir)
+	tofuApply(t, sharedDir, vars)
+
+	assertResourceInState(t, networkingDir, `module.configuration_policies[0].random_id.items["cfg_a"]`)
+	assertResourceInState(t, networkingDir, `module.configuration_policies[0].random_id.items["cfg_b"]`)
+	assertResourceNotInState(t, sharedDir, `module.configuration_policies[0].random_id.items["cfg_a"]`)
+	assertResourceNotInState(t, sharedDir, `module.configuration_policies[0].random_id.items["cfg_b"]`)
+	// The sibling stays behind in the source layer.
+	assertResourceInState(t, sharedDir, "module.configuration_policies[0].random_id.keep")
+
+	cleanupMigrationFiles(t, sharedDir)
+	cleanupMigrationFiles(t, networkingDir)
+	assertCleanPlan(t, sharedDir, vars)
+	assertCleanPlan(t, networkingDir, vars)
 }
 
 // TestE2EFast_SplitForEachToMultipleLayers tests routing different for_each keys

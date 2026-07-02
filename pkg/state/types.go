@@ -45,6 +45,7 @@ type StateIndex struct {
 	resources []*ResourceInfo
 	byAddress map[string]*ResourceInfo
 	byBase    map[string][]*ResourceInfo
+	byConfig  map[string][]*ResourceInfo
 }
 
 // NewStateIndex builds a StateIndex from the given state.
@@ -52,6 +53,7 @@ func NewStateIndex(s *tfjson.State) *StateIndex {
 	idx := &StateIndex{
 		byAddress: make(map[string]*ResourceInfo),
 		byBase:    make(map[string][]*ResourceInfo),
+		byConfig:  make(map[string][]*ResourceInfo),
 	}
 
 	resources := FlattenState(s)
@@ -60,6 +62,8 @@ func NewStateIndex(s *tfjson.State) *StateIndex {
 		idx.byAddress[r.Address] = r
 		base := BaseAddress(r.Address)
 		idx.byBase[base] = append(idx.byBase[base], r)
+		cfg := ConfigAddress(r.Address)
+		idx.byConfig[cfg] = append(idx.byConfig[cfg], r)
 	}
 
 	return idx
@@ -110,6 +114,20 @@ func (i *StateIndex) ResourceExists(address string) bool {
 	// A base resource address matches any of its for_each/count instances.
 	if len(i.byBase[address]) > 0 {
 		return true
+	}
+
+	// A bracket-free configuration address matches any resource instance sharing
+	// that config address. This lets a module-config address such as
+	// "module.cp.random_id.items" match indexed state instances like
+	// "module.cp[0].random_id.items[\"a\"]" — the form emitted for removed
+	// blocks when a resource lives inside an indexed module instance. We only
+	// apply this when the query itself carries no instance keys, so an explicit
+	// instance reference like "module.cp[1].random_id.items" is NOT satisfied by
+	// a different instance ("module.cp[0]...").
+	if !strings.Contains(address, "[") {
+		if len(i.byConfig[address]) > 0 {
+			return true
+		}
 	}
 
 	// A module path (possibly indexed, e.g. "module.foo" or "module.foo[0]")
@@ -213,6 +231,43 @@ func BaseAddress(address string) string {
 		return address[:idx]
 	}
 	return address
+}
+
+// ConfigAddress removes every instance key from an address — both
+// module-instance indices (e.g. `module.foo[0]`) and resource for_each/count
+// keys (e.g. `res.name["k"]`) — yielding the pure module-and-resource
+// configuration address.
+//
+//	module.cp[0].random_id.items["a"] → module.cp.random_id.items
+//	module.cp[0]                       → module.cp
+//	aws_instance.web[2]                → aws_instance.web
+//	aws_instance.web                   → aws_instance.web
+//
+// This is the address form required by OpenTofu `removed` blocks, which forbid
+// instance keys of any kind. It is also used to match a config address against
+// the indexed instances that share it.
+func ConfigAddress(address string) string {
+	if !strings.Contains(address, "[") {
+		return address
+	}
+	var b strings.Builder
+	b.Grow(len(address))
+	depth := 0
+	for i := 0; i < len(address); i++ {
+		switch address[i] {
+		case '[':
+			depth++
+		case ']':
+			if depth > 0 {
+				depth--
+			}
+		default:
+			if depth == 0 {
+				b.WriteByte(address[i])
+			}
+		}
+	}
+	return b.String()
 }
 
 // hasResourceKey reports whether the address ends with a resource-level

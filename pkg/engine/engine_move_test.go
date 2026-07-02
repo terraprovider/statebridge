@@ -116,7 +116,9 @@ operations:
 			},
 			srcContains: []string{
 				"removed {",
-				"module.configuration_policies[0].azuread_group_without_members.all",
+				// Module-instance index is stripped for the removed block (the only
+				// form OpenTofu accepts); import blocks keep the full indexed key.
+				"from = module.configuration_policies.azuread_group_without_members.all",
 			},
 			dstContains: []string{
 				`module.configuration_policies[0].azuread_group_without_members.all["cfg_intune_rdp_access_allowed"]`,

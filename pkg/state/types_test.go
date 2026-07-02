@@ -498,6 +498,30 @@ func TestBaseAddress(t *testing.T) {
 	}
 }
 
+func TestConfigAddress(t *testing.T) {
+	tests := []struct {
+		address string
+		want    string
+	}{
+		{"aws_instance.web", "aws_instance.web"},
+		{"aws_instance.web[2]", "aws_instance.web"},
+		{`aws_s3_bucket.data["key"]`, "aws_s3_bucket.data"},
+		{"module.foo.aws_instance.web", "module.foo.aws_instance.web"},
+		// Module-instance indices are stripped along with resource keys.
+		{"module.cp[0]", "module.cp"},
+		{"module.cp[0].random_id.items", "module.cp.random_id.items"},
+		{`module.cp[0].random_id.items["a"]`, "module.cp.random_id.items"},
+		{`module.a[0].module.b[1].type.name["k"]`, "module.a.module.b.type.name"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.address, func(t *testing.T) {
+			if got := ConfigAddress(tt.address); got != tt.want {
+				t.Errorf("ConfigAddress(%q) = %q, want %q", tt.address, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestResourceExists_IndexedModuleForEach(t *testing.T) {
 	s := buildModuleState(nil,
 		&tfjson.StateModule{
@@ -544,6 +568,15 @@ func TestResourceExists_IndexedModuleForEach(t *testing.T) {
 	// The indexed module prefix matches (any resource beneath it).
 	if !ResourceExists(s, "module.configuration_policies[0]") {
 		t.Error("expected indexed module prefix to match resources beneath it")
+	}
+	// The config address (module index stripped) — the form emitted for removed
+	// blocks — must match the indexed instances in state.
+	if !ResourceExists(s, "module.configuration_policies.azuread_group.all") {
+		t.Error("expected config address (module index stripped) to match indexed instances")
+	}
+	// A config address for a resource that does not exist must not match.
+	if ResourceExists(s, "module.configuration_policies.azuread_group.missing") {
+		t.Error("expected config address for a missing resource to not match")
 	}
 }
 

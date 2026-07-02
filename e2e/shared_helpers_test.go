@@ -84,6 +84,27 @@ module "%s" {
 }`, name, moduleName)
 }
 
+// indexedForeachModuleBlock returns HCL for an indexed (count = 1) module block
+// named "configuration_policies" pointing at the given module directory under
+// ../../modules/. When the module is "foreachmod", it instantiates
+// random_id.items over the given keys, producing state addresses of the form
+// module.configuration_policies[0].random_id.items["<key>"]. The "foreachmod_after"
+// module variant omits random_id.items entirely (only random_id.keep remains),
+// which is how a source layer drops the moved resource after a cross-layer move.
+func indexedForeachModuleBlock(moduleSource string, keys []string) string {
+	quoted := make([]string, len(keys))
+	for i, k := range keys {
+		quoted[i] = fmt.Sprintf("%q", k)
+	}
+	return fmt.Sprintf(`
+module "configuration_policies" {
+  count  = 1
+  source = "../../modules/%s"
+  prefix = var.prefix
+  keys   = [%s]
+}`, moduleSource, strings.Join(quoted, ", "))
+}
+
 // ---------------------------------------------------------------------------
 // Unique prefix / directory helpers
 // ---------------------------------------------------------------------------
@@ -392,6 +413,19 @@ func assertFileContains(t *testing.T, path, substr string) {
 	if !strings.Contains(string(data), substr) {
 		t.Errorf("expected %s to contain %q", path, substr)
 	}
+}
+
+// generatedFileInLayer returns the generated migration file whose directory is
+// layerDir. Fatals if no generated file was produced for that layer.
+func generatedFileInLayer(t *testing.T, files []string, layerDir string) string {
+	t.Helper()
+	for _, f := range files {
+		if filepath.Dir(f) == layerDir {
+			return f
+		}
+	}
+	t.Fatalf("expected a generated migration file in layer %s", layerDir)
+	return ""
 }
 
 // requireGenerate runs the engine and fatals if no files were generated.
