@@ -522,6 +522,88 @@ func TestConfigAddress(t *testing.T) {
 	}
 }
 
+func TestModuleInstanceBases(t *testing.T) {
+	newInst := func(addr, key string) *tfjson.StateResource {
+		return &tfjson.StateResource{
+			Address:         addr,
+			Mode:            tfjson.ManagedResourceMode,
+			Type:            "random_id",
+			Name:            "items",
+			Index:           key,
+			ProviderName:    "registry.opentofu.org/hashicorp/random",
+			AttributeValues: map[string]interface{}{"id": "x"},
+		}
+	}
+
+	t.Run("multiple module instances", func(t *testing.T) {
+		s := buildModuleState(nil,
+			&tfjson.StateModule{
+				Address: "module.cp[0]",
+				Resources: []*tfjson.StateResource{
+					newInst(`module.cp[0].random_id.items["a"]`, "a"),
+					newInst(`module.cp[0].random_id.items["b"]`, "b"),
+				},
+			},
+			&tfjson.StateModule{
+				Address: "module.cp[1]",
+				Resources: []*tfjson.StateResource{
+					newInst(`module.cp[1].random_id.items["a"]`, "a"),
+				},
+			},
+		)
+		idx := NewStateIndex(s)
+		got := idx.ModuleInstanceBases("module.cp.random_id.items")
+		want := []string{"module.cp[0].random_id.items", "module.cp[1].random_id.items"}
+		if len(got) != len(want) {
+			t.Fatalf("expected %d bases, got %d: %v", len(want), len(got), got)
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Errorf("base[%d] = %q, want %q", i, got[i], want[i])
+			}
+		}
+	})
+
+	t.Run("single module instance", func(t *testing.T) {
+		s := buildModuleState(nil,
+			&tfjson.StateModule{
+				Address: "module.cp[0]",
+				Resources: []*tfjson.StateResource{
+					newInst(`module.cp[0].random_id.items["a"]`, "a"),
+					newInst(`module.cp[0].random_id.items["b"]`, "b"),
+				},
+			},
+		)
+		idx := NewStateIndex(s)
+		got := idx.ModuleInstanceBases("module.cp.random_id.items")
+		if len(got) != 1 || got[0] != "module.cp[0].random_id.items" {
+			t.Errorf("expected single base module.cp[0].random_id.items, got %v", got)
+		}
+	})
+
+	t.Run("nil index", func(t *testing.T) {
+		var idx *StateIndex
+		if got := idx.ModuleInstanceBases("module.cp.random_id.items"); got != nil {
+			t.Errorf("expected nil for nil index, got %v", got)
+		}
+	})
+
+	t.Run("no match", func(t *testing.T) {
+		s := buildModuleState(nil,
+			&tfjson.StateModule{
+				Address: "module.cp[0]",
+				Resources: []*tfjson.StateResource{
+					newInst(`module.cp[0].random_id.items["a"]`, "a"),
+				},
+			},
+		)
+		idx := NewStateIndex(s)
+		if got := idx.ModuleInstanceBases("module.other.random_id.items"); got != nil {
+			t.Errorf("expected nil for unmatched config address, got %v", got)
+		}
+	})
+}
+
 func TestResourceExists_IndexedModuleForEach(t *testing.T) {
 	s := buildModuleState(nil,
 		&tfjson.StateModule{

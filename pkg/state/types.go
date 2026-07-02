@@ -200,6 +200,38 @@ func (i *StateIndex) AllManagedResources() []*ResourceInfo {
 	return result
 }
 
+// ModuleInstanceBases returns the distinct base addresses (module-instance
+// indices preserved, resource for_each/count keys stripped) of all resource
+// instances that share the given configuration address — an address with ALL
+// instance keys removed, as produced by ConfigAddress.
+//
+// When a resource lives inside a multi-instance (count/for_each) module, each
+// module instance yields a distinct base address here — for example
+// "module.cp[0].random_id.items" and "module.cp[1].random_id.items" — even
+// though both collapse to the single configuration address
+// "module.cp.random_id.items". This is used to detect whether a resource
+// referenced via one module instance actually spans several module instances
+// in state.
+//
+// The result is deduplicated and sorted. Returns nil for a nil index or when no
+// instances share the configuration address.
+func (i *StateIndex) ModuleInstanceBases(configAddr string) []string {
+	if i == nil {
+		return nil
+	}
+	seen := make(map[string]bool)
+	var result []string
+	for _, r := range i.byConfig[configAddr] {
+		b := BaseAddress(r.Address)
+		if !seen[b] {
+			seen[b] = true
+			result = append(result, b)
+		}
+	}
+	sort.Strings(result)
+	return result
+}
+
 // FlattenState recursively walks the state module tree and returns all
 // resource instances as a flat slice of ResourceInfo.
 // Returns nil if the state or root module is nil.

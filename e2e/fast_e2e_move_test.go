@@ -5,6 +5,7 @@ package e2e
 import (
 	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -509,7 +510,7 @@ func TestE2EFast_IndexedModuleForEachMove(t *testing.T) {
 	// Source layer: indexed module instance with a for_each resource + a sibling
 	// (random_id.keep) that stays behind.
 	updateTfFile(t, sharedDir, "main.tf",
-		randomProviderHCL+indexedForeachModuleBlock("foreachmod", []string{"cfg_a", "cfg_b"}))
+		randomProviderHCL+indexedForeachModuleBlock("foreachmod", 1, []string{"cfg_a", "cfg_b"}))
 	tofuInit(t, sharedDir)
 	tofuApply(t, sharedDir, vars)
 	t.Cleanup(func() {
@@ -549,12 +550,12 @@ operations:
 	// Destination layer declares the same indexed module so the imported
 	// instances have a matching configuration to bind to.
 	updateTfFile(t, networkingDir, "main.tf",
-		randomProviderHCL+indexedForeachModuleBlock("foreachmod", []string{"cfg_a", "cfg_b"}))
+		randomProviderHCL+indexedForeachModuleBlock("foreachmod", 1, []string{"cfg_a", "cfg_b"}))
 
 	// Source layer switches to the "after" module variant, which no longer
 	// declares random_id.items (required for a valid removed block).
 	updateTfFile(t, sharedDir, "main.tf",
-		randomProviderHCL+indexedForeachModuleBlock("foreachmod_after", nil))
+		randomProviderHCL+indexedForeachModuleBlock("foreachmod_after", 1, nil))
 
 	// Apply the import in the destination, then the removal in the source. Both
 	// need a re-init because their module configuration changed.
@@ -574,6 +575,62 @@ operations:
 	cleanupMigrationFiles(t, networkingDir)
 	assertCleanPlan(t, sharedDir, vars)
 	assertCleanPlan(t, networkingDir, vars)
+}
+
+// TestE2EFast_IndexedModuleMultiInstanceMoveRejected verifies that statebridge
+// refuses, at generate time, a cross-layer move out of one instance of a
+// multi-instance (count = 2) module. The generated source removed block would
+// otherwise forget the resource from every module instance while the import only
+// re-creates the referenced one. This exercises the guard against REAL OpenTofu
+// state (confirming a count = 2 module yields module.configuration_policies[0]
+// and [1] addresses that the guard detects).
+func TestE2EFast_IndexedModuleMultiInstanceMoveRejected(t *testing.T) {
+	t.Parallel()
+	rootDir, _, vars := setupFastProject(t)
+
+	sharedDir := filepath.Join(rootDir, "layers", "shared")
+	networkingDir := filepath.Join(rootDir, "layers", "networking")
+
+	// count = 2 => module.configuration_policies[0] and [1], each with items.
+	updateTfFile(t, sharedDir, "main.tf",
+		randomProviderHCL+indexedForeachModuleBlock("foreachmod", 2, []string{"cfg_a", "cfg_b"}))
+	tofuInit(t, sharedDir)
+	tofuApply(t, sharedDir, vars)
+	t.Cleanup(func() {
+		tofuDestroy(t, sharedDir, vars)
+	})
+
+	assertResourceInState(t, sharedDir, `module.configuration_policies[0].random_id.items["cfg_a"]`)
+	assertResourceInState(t, sharedDir, `module.configuration_policies[1].random_id.items["cfg_a"]`)
+
+	migDir := writeMigration(t, rootDir, "001_indexed_multi_instance.yaml", fmt.Sprintf(`
+description: "Attempt to move a resource out of one instance of a count=2 module"
+operations:
+  - type: move
+    source_layer: "%s"
+    destination_layer: "%s"
+    resources:
+      - from: "module.configuration_policies[0].random_id.items"
+`, sharedDir, networkingDir))
+
+	err := runGenerateExpectError(t, []string{migDir})
+	for _, want := range []string{
+		"multi-instance module",
+		"module.configuration_policies[0].random_id.items",
+		"module.configuration_policies[1].random_id.items",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("expected error to contain %q, got: %v", want, err)
+		}
+	}
+
+	// No migration files should have been written to either layer.
+	if matches, _ := filepath.Glob(filepath.Join(sharedDir, "migration.*.tf")); len(matches) != 0 {
+		t.Errorf("expected no generated files in source layer, got: %v", matches)
+	}
+	if matches, _ := filepath.Glob(filepath.Join(networkingDir, "migration.*.tf")); len(matches) != 0 {
+		t.Errorf("expected no generated files in destination layer, got: %v", matches)
+	}
 }
 
 // TestE2EFast_SplitForEachToMultipleLayers tests routing different for_each keys

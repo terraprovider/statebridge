@@ -36,6 +36,23 @@ type ProcessResult struct {
 	SkippedFiles []SkippedFile
 }
 
+// fatalMigrationError marks an error that must abort processing immediately
+// instead of being treated as a skippable per-file failure. Skippable failures
+// (e.g. a source resource that no longer exists in state after a partial
+// pipeline run) let other migration files proceed; fatal failures indicate a
+// structurally invalid or destructive migration that the user must fix.
+type fatalMigrationError struct {
+	err error
+}
+
+func (e *fatalMigrationError) Error() string { return e.err.Error() }
+func (e *fatalMigrationError) Unwrap() error { return e.err }
+
+// fatalf constructs a fatalMigrationError from a printf-style message.
+func fatalf(format string, args ...interface{}) error {
+	return &fatalMigrationError{err: fmt.Errorf(format, args...)}
+}
+
 // Config holds the configuration for the Engine.
 type Config struct {
 	// StateReader reads Terraform/OpenTofu state for layers.
@@ -142,6 +159,13 @@ func (e *Engine) ProcessFiles(ctx context.Context, paths []string) (*ProcessResu
 
 		blocks, err := e.processMigration(ctx, mf)
 		if err != nil {
+			// Fatal errors (structurally invalid or destructive migrations) abort
+			// immediately; other processing errors are skippable so unrelated
+			// migration files can still be generated.
+			var fatal *fatalMigrationError
+			if errors.As(err, &fatal) {
+				return nil, fmt.Errorf("%q: %w", mf.FilePath, err)
+			}
 			fmt.Fprintf(os.Stderr, "Skipping %q: %v\n", mf.FilePath, err)
 			skippedFiles = append(skippedFiles, SkippedFile{mf.FilePath, migration.YamlStem(mf.FilePath), SkipError})
 			continue
@@ -290,11 +314,59 @@ func (e *Engine) processMoveResource(
 		return e.processMoveModule(ctx, srcLayer, dstLayer, sameLayer, srcAddr, dstAddr, description, sourceFile)
 	}
 
+	// Guard: refuse a cross-layer move out of a single instance of a
+	// multi-instance (count/for_each) module. See method doc for the rationale.
+	if !sameLayer {
+		if err := e.checkIndexedModuleMoveSafety(ctx, srcLayer, srcAddr); err != nil {
+			return nil, err
+		}
+	}
+
 	if len(res.Keys) > 0 {
 		return e.processMoveKeyed(ctx, srcLayer, dstLayer, sameLayer, srcAddr, dstAddr, res, opIndex, tracker, description, sourceFile)
 	}
 
 	return e.processMoveSimple(ctx, srcLayer, dstLayer, sameLayer, srcAddr, dstAddr, res, tracker, description, sourceFile)
+}
+
+// checkIndexedModuleMoveSafety refuses a cross-layer move of a resource that
+// lives inside a single instance of a multi-instance (count/for_each) module.
+//
+// A cross-layer move generates a source removed block, and OpenTofu forbids
+// instance keys — including module-instance indices — in a removed block's
+// `from`. statebridge therefore emits the module-index-stripped configuration
+// address (e.g. "module.cp.random_id.items"), which OpenTofu applies to the
+// resource across EVERY instance of the module. The destination import side,
+// however, only re-creates the single referenced instance. If the module has
+// more than one instance in state, the other instances' state would be
+// forgotten (orphaned) without being re-imported, so we refuse rather than
+// generate a destructive migration.
+//
+// The check is a no-op when srcAddr carries no module-instance index (the
+// removed address then equals the base address, so there is no cross-instance
+// scope), which covers all non-indexed moves without reading state.
+func (e *Engine) checkIndexedModuleMoveSafety(ctx context.Context, srcLayer, srcAddr string) error {
+	configAddr := state.ConfigAddress(srcAddr)
+	if configAddr == state.BaseAddress(srcAddr) {
+		return nil // no module-instance index → no cross-instance risk
+	}
+
+	s, err := e.resolver.ReadState(ctx, srcLayer)
+	if err != nil {
+		return err
+	}
+
+	bases := state.NewStateIndex(s).ModuleInstanceBases(configAddr)
+	if len(bases) <= 1 {
+		return nil // single (or zero) module instance → safe
+	}
+
+	return fatalf(
+		"cannot move %q out of a single instance of a multi-instance module: state contains %d instances of this module (%s); "+
+			"a cross-layer move must emit a removed block using the module-index-stripped address %q, which OpenTofu applies to the resource in ALL module instances, "+
+			"but the destination only re-imports the referenced instance — this would orphan the other instances' state. "+
+			"Move the resource out of every module instance, or reduce the module to a single instance first",
+		srcAddr, len(bases), strings.Join(bases, ", "), configAddr)
 }
 
 // processMoveModule handles a module-level move by discovering all managed
