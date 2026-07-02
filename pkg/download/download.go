@@ -128,6 +128,24 @@ func (d *Downloader) Download(ctx context.Context, targetDir string) ([]string, 
 
 		filename := filepath.Base(blobName)
 
+		// Scope by source layer: in a shared container, a blob may belong to a
+		// different layer. Skip blobs that provably belong elsewhere; when the
+		// ownership is undecidable (this layer's key can't be determined), warn
+		// and fall back to condition-based applicability.
+		if meta != nil && meta.SourceLayer != nil {
+			match, determinable := meta.SourceLayer.Matches(
+				config.StorageAccountName, config.ContainerName, config.Key)
+			switch {
+			case !determinable:
+				fmt.Fprintf(os.Stderr,
+					"Warning: cannot determine this layer's backend key; falling back to conditions for %s\n",
+					filename)
+			case !match:
+				fmt.Fprintf(os.Stderr, "Skipping %s: belongs to another layer\n", filename)
+				continue
+			}
+		}
+
 		// Evaluate conditions if metadata is present
 		if meta != nil && meta.Conditions != nil {
 			applicable, err := d.evaluateConditions(ctx, meta, stateReader, targetDir)

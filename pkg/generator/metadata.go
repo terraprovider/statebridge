@@ -13,9 +13,35 @@ import (
 // It carries conditions and resource addresses needed by the download command
 // to evaluate applicability and by plan for targeting.
 type MigrationMetadata struct {
+	// Version is the metadata schema version. Absent/0 indicates a legacy
+	// (v1) file written before versioning; CurrentMetadataVersion is written
+	// for all newly generated files.
+	Version int `json:"version,omitempty"`
+
+	// SourceLayer identifies the layer (by its Terraform backend coordinates)
+	// that a migration file belongs to. It is used to scope blob operations —
+	// download, upload guard/cleanup, and prune — when multiple layers share a
+	// single storage container. Absent for legacy files or when the backend
+	// coordinates could not be discovered at generate time.
+	SourceLayer *MetadataSourceLayer `json:"source_layer,omitempty"`
+
 	Conditions *MetadataCondition `json:"conditions,omitempty"`
 	Resources  []string           `json:"resources"`
 }
+
+// MetadataSourceLayer records the Azure Blob Storage backend coordinates of the
+// layer that owns a migration file. In a shared-container setup these coordinates
+// (specifically the state Key) distinguish one layer's migrations from another's.
+type MetadataSourceLayer struct {
+	StorageAccountName string `json:"storage_account_name,omitempty"`
+	ContainerName      string `json:"container_name,omitempty"`
+	Key                string `json:"key,omitempty"`
+}
+
+// CurrentMetadataVersion is the metadata schema version written to newly
+// generated migration files. Version 2 introduced the source_layer field for
+// shared-container scoping; version 1 (absent) files predate it.
+const CurrentMetadataVersion = 2
 
 // MetadataCondition mirrors migration.Condition with JSON tags for embedding
 // in generated .tf file metadata comments.
@@ -311,4 +337,52 @@ func pathsEqual(a, b string) bool {
 	cleanA := filepath.Clean(filepath.FromSlash(a))
 	cleanB := filepath.Clean(filepath.FromSlash(b))
 	return cleanA == cleanB
+}
+
+// Matches reports whether this source-layer descriptor refers to the layer with
+// the given backend coordinates.
+//
+//   - match is true only when every field recorded in the descriptor equals the
+//     corresponding argument. Empty descriptor fields act as wildcards (they do
+//     not constrain the comparison).
+//   - determinable is false when the descriptor records a Key but the caller
+//     could not supply one (currentKey == ""). In that case ownership cannot be
+//     decided and callers should fall back to condition-based behaviour. It is
+//     always true for a nil descriptor (a legacy file trivially "matches").
+//
+// A nil receiver returns (true, true): legacy files have no source-layer scope
+// and are treated as applicable everywhere.
+func (s *MetadataSourceLayer) Matches(account, container, key string) (match bool, determinable bool) {
+	if s == nil {
+		return true, true
+	}
+
+	if s.Key != "" && key == "" {
+		// The descriptor is keyed but the caller cannot determine its own key,
+		// so ownership is undecidable.
+		return false, false
+	}
+
+	if s.StorageAccountName != "" && s.StorageAccountName != account {
+		return false, true
+	}
+	if s.ContainerName != "" && s.ContainerName != container {
+		return false, true
+	}
+	if s.Key != "" && s.Key != key {
+		return false, true
+	}
+	return true, true
+}
+
+// OwnedByOther reports whether this descriptor provably identifies a layer other
+// than the one with the given backend coordinates. It is true only when
+// ownership is determinable and does not match — i.e. the blob demonstrably
+// belongs to a different layer and must not be acted upon.
+//
+// A nil receiver (legacy file) and the indeterminate case both return false, so
+// callers keep their existing behaviour for those blobs.
+func (s *MetadataSourceLayer) OwnedByOther(account, container, key string) bool {
+	match, determinable := s.Matches(account, container, key)
+	return determinable && !match
 }

@@ -44,6 +44,20 @@ The upload target (storage account and container) is resolved per layer by:
 
 Required backend fields: `storage_account_name`, `container_name`.
 
+## Shared-Container Scoping
+
+By default each layer is assumed to have its own storage container, so its `migrations/` prefix holds only its own blobs. If **multiple layers share a single storage account and container** (distinguished only by their backend `key`), all layers' migration blobs sit next to each other under the same `migrations/` prefix.
+
+To keep each layer acting only on its own blobs, statebridge embeds the owning layer's backend coordinates (`storage_account_name`, `container_name`, `key`) in each generated file's metadata as a `source_layer` descriptor (see the "Migration Metadata" section in `AGENTS.md`). Every blob-listing operation is then scoped:
+
+- **`download`** skips blobs whose `source_layer` provably belongs to a different layer.
+- **`upload`** guard and old-version cleanup never block on or delete another layer's blobs.
+- **`prune`** (and auto-prune on `--upload`) never delete another layer's blobs; `--force` stays layer-scoped.
+
+Scoping is fully backward compatible: files generated before this feature carry no `source_layer` and are treated exactly as before (unscoped). When a layer's own `key` cannot be determined at download time, statebridge falls back to condition-based applicability and prints a warning.
+
+For scoping to work, each layer's backend block must declare a distinct `key`. The `key` is now parsed from the `backend "azurerm"` block and `--backend-config=key=...` flags.
+
 ## Version Cleanup
 
 Before uploading, the tool checks for existing blobs matching the same migration stem (e.g., `migrations/migration.001_move.*.tf`). Old versions with a different content hash are automatically deleted:
@@ -96,8 +110,9 @@ Must be run from within a layer directory containing backend configuration.
 2. Lists all `migrations/migration.*.tf` blobs in the layer's storage container
 3. Cleans up all existing `migration.*.tf` files in the target directory (blob storage is source of truth)
 4. Downloads each blob and parses embedded metadata
-5. Evaluates auto-inferred + explicit conditions: for `layer == "."`, reads state and checks; for cross-layer conditions, warns and treats as met
-6. Writes only applicable files; skipped files print a message to stderr
+5. Scopes by `source_layer`: skips blobs owned by a different layer (shared container); legacy blobs and indeterminate-key cases fall through to condition evaluation
+6. Evaluates auto-inferred + explicit conditions: for `layer == "."`, reads state and checks; for cross-layer conditions, warns and treats as met
+7. Writes only applicable files; skipped files print a message to stderr
 
 ## Prune
 

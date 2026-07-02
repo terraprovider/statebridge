@@ -10,8 +10,8 @@ The generator package renders HCL blocks (`import`, `moved`, `removed`) and writ
 | `import_block.go` | `import` block HCL rendering |
 | `moved_block.go` | `moved` block HCL rendering |
 | `removed_block.go` | `removed` block HCL rendering |
-| `metadata.go` | Migration metadata type, JSON render/parse, address extraction, condition inference/merge |
-| `writer.go` | File output: deterministic block sorting, content-addressed filenames, metadata embedding |
+| `metadata.go` | Migration metadata type (version, source_layer, conditions, resources), JSON render/parse, address extraction, condition inference/merge, source-layer `Matches`/`OwnedByOther` scoping helpers |
+| `writer.go` | File output: deterministic block sorting, content-addressed filenames, metadata embedding, source-layer resolver stamping |
 
 ## Test Files
 

@@ -533,3 +533,82 @@ func TestWriter_SetFileMetadata_NilIgnored(t *testing.T) {
 		t.Fatalf("expected 1 output file, got %d", len(rendered))
 	}
 }
+
+func TestWriter_SourceLayerResolver_StampsVersionAndSourceLayer(t *testing.T) {
+	layer := t.TempDir()
+	w := NewWriter()
+	w.SetSourceLayerResolver(func(layerPath string) *MetadataSourceLayer {
+		if layerPath != layer {
+			t.Errorf("resolver called with %q, want %q", layerPath, layer)
+		}
+		return &MetadataSourceLayer{
+			StorageAccountName: "acct",
+			ContainerName:      "tfstate",
+			Key:                "compute.tfstate",
+		}
+	})
+	w.AddBlock(&ImportBlock{To: "aws_instance.web", ID: "i-123", Layer: layer, Source: "001.yaml"})
+
+	rendered := w.RenderAll()
+	content := onlyValue(t, rendered)
+
+	meta, err := ParseMetadataComment(content)
+	if err != nil {
+		t.Fatalf("ParseMetadataComment: %v", err)
+	}
+	if meta.Version != CurrentMetadataVersion {
+		t.Errorf("version = %d, want %d", meta.Version, CurrentMetadataVersion)
+	}
+	if meta.SourceLayer == nil || meta.SourceLayer.Key != "compute.tfstate" {
+		t.Errorf("source_layer = %+v, want key compute.tfstate", meta.SourceLayer)
+	}
+}
+
+func TestWriter_NoResolver_StampsVersionOnly(t *testing.T) {
+	layer := t.TempDir()
+	w := NewWriter()
+	w.AddBlock(&ImportBlock{To: "aws_instance.web", ID: "i-123", Layer: layer, Source: "001.yaml"})
+
+	content := onlyValue(t, w.RenderAll())
+	meta, err := ParseMetadataComment(content)
+	if err != nil {
+		t.Fatalf("ParseMetadataComment: %v", err)
+	}
+	if meta.Version != CurrentMetadataVersion {
+		t.Errorf("version = %d, want %d", meta.Version, CurrentMetadataVersion)
+	}
+	if meta.SourceLayer != nil {
+		t.Errorf("source_layer = %+v, want nil (no resolver)", meta.SourceLayer)
+	}
+}
+
+// TestWriter_ResolverReturningNil confirms a resolver that yields nil for a
+// layer (e.g. undiscoverable backend) still produces valid metadata with the
+// version stamped but no source_layer.
+func TestWriter_ResolverReturningNil(t *testing.T) {
+	layer := t.TempDir()
+	w := NewWriter()
+	w.SetSourceLayerResolver(func(string) *MetadataSourceLayer { return nil })
+	w.AddBlock(&ImportBlock{To: "aws_instance.web", ID: "i-123", Layer: layer, Source: "001.yaml"})
+
+	content := onlyValue(t, w.RenderAll())
+	meta, err := ParseMetadataComment(content)
+	if err != nil {
+		t.Fatalf("ParseMetadataComment: %v", err)
+	}
+	if meta.SourceLayer != nil {
+		t.Errorf("source_layer = %+v, want nil", meta.SourceLayer)
+	}
+}
+
+// onlyValue returns the single value of a one-entry map, failing otherwise.
+func onlyValue(t *testing.T, m map[string]string) string {
+	t.Helper()
+	if len(m) != 1 {
+		t.Fatalf("expected 1 rendered file, got %d", len(m))
+	}
+	for _, v := range m {
+		return v
+	}
+	return ""
+}

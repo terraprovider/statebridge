@@ -13,6 +13,7 @@ func TestParseHCLBackend(t *testing.T) {
 		wantSA  string
 		wantCN  string
 		wantRG  string
+		wantKey string
 		wantErr bool
 	}{
 		{
@@ -29,9 +30,10 @@ terraform {
 }
 `,
 			},
-			wantSA: "mystorageacct",
-			wantCN: "tfstate",
-			wantRG: "myrg",
+			wantSA:  "mystorageacct",
+			wantCN:  "tfstate",
+			wantRG:  "myrg",
+			wantKey: "terraform.tfstate",
 		},
 		{
 			name: "backend in separate file among other tf files",
@@ -129,6 +131,9 @@ terraform {
 			if cfg.ResourceGroupName != tt.wantRG {
 				t.Errorf("ResourceGroupName = %q, want %q", cfg.ResourceGroupName, tt.wantRG)
 			}
+			if cfg.Key != tt.wantKey {
+				t.Errorf("Key = %q, want %q", cfg.Key, tt.wantKey)
+			}
 		})
 	}
 }
@@ -160,6 +165,7 @@ func TestParseInitArgs(t *testing.T) {
 			},
 			want: map[string]string{
 				"storage_account_name": "acct",
+				"key":                  "terraform.tfstate",
 			},
 		},
 		{
@@ -231,9 +237,9 @@ key                  = "terraform.tfstate"
 	if got["resource_group_name"] != "filerg" {
 		t.Errorf("resource_group_name = %q, want %q", got["resource_group_name"], "filerg")
 	}
-	// "key" should not be in the result (not a recognized field)
-	if _, ok := got["key"]; ok {
-		t.Error("key should not be in result (not recognized)")
+	// "key" is a recognized backend field and should be extracted.
+	if got["key"] != "terraform.tfstate" {
+		t.Errorf("key = %q, want %q", got["key"], "terraform.tfstate")
 	}
 }
 
@@ -363,12 +369,14 @@ func TestMergeBackendConfig(t *testing.T) {
 		StorageAccountName: "inline_acct",
 		ContainerName:      "inline_container",
 		ResourceGroupName:  "inline_rg",
+		Key:                "inline.tfstate",
 	}
 
 	overrides := map[string]string{
 		"storage_account_name": "override_acct",
 		// container_name not overridden
 		"resource_group_name": "override_rg",
+		"key":                 "override.tfstate",
 	}
 
 	result := MergeBackendConfig(base, overrides)
@@ -381,6 +389,9 @@ func TestMergeBackendConfig(t *testing.T) {
 	}
 	if result.ResourceGroupName != "override_rg" {
 		t.Errorf("ResourceGroupName = %q, want %q", result.ResourceGroupName, "override_rg")
+	}
+	if result.Key != "override.tfstate" {
+		t.Errorf("Key = %q, want %q", result.Key, "override.tfstate")
 	}
 
 	// Verify base was not modified
@@ -398,6 +409,11 @@ func TestBackendConfigValidate(t *testing.T) {
 		{
 			name:    "valid config",
 			config:  BackendConfig{StorageAccountName: "acct", ContainerName: "container"},
+			wantErr: false,
+		},
+		{
+			name:    "valid config with key",
+			config:  BackendConfig{StorageAccountName: "acct", ContainerName: "container", Key: "layer.tfstate"},
 			wantErr: false,
 		},
 		{

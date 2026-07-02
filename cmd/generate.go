@@ -10,6 +10,7 @@ import (
 
 	"github.com/terraprovider/statebridge/pkg/auth"
 	"github.com/terraprovider/statebridge/pkg/engine"
+	"github.com/terraprovider/statebridge/pkg/generator"
 	"github.com/terraprovider/statebridge/pkg/state"
 	"github.com/terraprovider/statebridge/pkg/upload"
 )
@@ -88,9 +89,10 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 	stateReader := state.NewTofuStateReader(resolvedTofuPath, initArgs)
 
 	cfg := engine.Config{
-		StateReader: stateReader,
-		DryRun:      flagDryRun,
-		Strict:      flagStrict,
+		StateReader:         stateReader,
+		DryRun:              flagDryRun,
+		Strict:              flagStrict,
+		SourceLayerResolver: buildSourceLayerResolver(initArgs),
 	}
 
 	eng := engine.New(cfg)
@@ -182,4 +184,30 @@ func runUploadAfterGenerate(ctx context.Context, eng *engine.Engine, tofuPath st
 	}
 
 	return nil
+}
+
+// buildSourceLayerResolver returns a resolver that maps a layer directory path
+// to its Azure backend coordinates, used to stamp generated migration files with
+// a source_layer descriptor. Results are cached per layer directory. When the
+// backend config cannot be discovered (e.g. a layer with no azurerm backend, or
+// missing required fields), the resolver returns nil so metadata simply omits
+// the source_layer — keeping generation working for local/non-shared setups.
+func buildSourceLayerResolver(initArgs []string) func(layerPath string) *generator.MetadataSourceLayer {
+	cache := make(map[string]*generator.MetadataSourceLayer)
+	return func(layerPath string) *generator.MetadataSourceLayer {
+		if cached, ok := cache[layerPath]; ok {
+			return cached
+		}
+		var descriptor *generator.MetadataSourceLayer
+		config, err := upload.DiscoverBackendConfig(layerPath, initArgs)
+		if err == nil && config != nil {
+			descriptor = &generator.MetadataSourceLayer{
+				StorageAccountName: config.StorageAccountName,
+				ContainerName:      config.ContainerName,
+				Key:                config.Key,
+			}
+		}
+		cache[layerPath] = descriptor
+		return descriptor
+	}
 }

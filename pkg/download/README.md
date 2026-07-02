@@ -6,7 +6,7 @@ The download package handles downloading migration files from Azure Blob Storage
 
 | File | Purpose |
 |------|---------|
-| `download.go` | `Manager`: lists blobs, parses metadata, evaluates conditions, downloads applicable migration files to the layer directory |
+| `download.go` | `Manager`: lists blobs, parses metadata, scopes by `source_layer` (skips other layers' blobs in a shared container), evaluates conditions, downloads applicable migration files to the layer directory |
 
 ## Test Files
 
