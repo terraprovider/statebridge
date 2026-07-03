@@ -16,6 +16,12 @@ type Writer struct {
 	blocks       []Block
 	fileMetadata map[string]*MigrationMetadata
 
+	// sourceLayerResolver, when set, maps a layer directory path to the backend
+	// coordinates of that layer. It is used to stamp each output file's metadata
+	// with a source_layer descriptor so downloads/prunes can scope blobs in a
+	// shared container. May return nil when coordinates are undiscoverable.
+	sourceLayerResolver func(layerPath string) *MetadataSourceLayer
+
 	// DryRun controls whether files are actually written to disk.
 	// When true, content is generated but not written.
 	DryRun bool
@@ -26,6 +32,14 @@ func NewWriter() *Writer {
 	return &Writer{
 		fileMetadata: make(map[string]*MigrationMetadata),
 	}
+}
+
+// SetSourceLayerResolver installs a resolver that maps a layer directory path to
+// the backend coordinates of that layer. The resolver is invoked at render time
+// for each output group so the generated file's metadata records which layer it
+// belongs to. Passing nil disables source-layer stamping.
+func (w *Writer) SetSourceLayerResolver(resolver func(layerPath string) *MetadataSourceLayer) {
+	w.sourceLayerResolver = resolver
 }
 
 // SetFileMetadata associates metadata (conditions) with a source
@@ -183,13 +197,22 @@ func (w *Writer) buildGroupMetadata(key groupKey, blocks []Block) *MigrationMeta
 
 	resources := ExtractResourceAddresses(blocks)
 
-	// If there's no stored metadata and no resources, skip metadata entirely
-	if stored == nil && len(resources) == 0 {
+	// Resolve the owning layer's backend coordinates, if a resolver is set.
+	var sourceLayer *MetadataSourceLayer
+	if w.sourceLayerResolver != nil {
+		sourceLayer = w.sourceLayerResolver(key.Layer)
+	}
+
+	// If there's no stored metadata, no resources, and no source-layer info to
+	// record, skip metadata entirely.
+	if stored == nil && len(resources) == 0 && sourceLayer == nil {
 		return nil
 	}
 
 	meta := &MigrationMetadata{
-		Resources: resources,
+		Version:     CurrentMetadataVersion,
+		SourceLayer: sourceLayer,
+		Resources:   resources,
 	}
 
 	// Infer conditions from block types and merge with explicit YAML conditions

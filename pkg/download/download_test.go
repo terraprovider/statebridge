@@ -416,3 +416,106 @@ terraform {
 		t.Fatal(err)
 	}
 }
+
+func writeBackendTFWithKey(t *testing.T, dir, key string) {
+	t.Helper()
+	err := os.WriteFile(filepath.Join(dir, "backend.tf"), []byte(fmt.Sprintf(`
+terraform {
+  backend "azurerm" {
+    storage_account_name = "testacct"
+    container_name       = "testcontainer"
+    key                  = %q
+  }
+}
+`, key)), 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDownloadSourceLayerScoping(t *testing.T) {
+	newDownloader := func(mock upload.BlobUploader) *Downloader {
+		return NewDownloader(nil, nil, WithUploaderFactory(func(_, _ string, _ azcore.TokenCredential) (upload.BlobUploader, error) {
+			return mock, nil
+		}))
+	}
+
+	t.Run("blob owned by another layer is skipped", func(t *testing.T) {
+		mock := newMockUploader()
+		mock.blobs["migrations/migration.001_test.abcd1234.tf"] = []byte(makeMigrationContent(&generator.MigrationMetadata{
+			Version:     generator.CurrentMetadataVersion,
+			SourceLayer: &generator.MetadataSourceLayer{StorageAccountName: "testacct", ContainerName: "testcontainer", Key: "other.tfstate"},
+			Resources:   []string{"test_resource.example"},
+		}))
+
+		dir := t.TempDir()
+		writeBackendTFWithKey(t, dir, "compute.tfstate")
+
+		files, err := newDownloader(mock).Download(context.Background(), dir)
+		if err != nil {
+			t.Fatalf("Download error: %v", err)
+		}
+		if len(files) != 0 {
+			t.Fatalf("expected 0 files (blob belongs to another layer), got %d", len(files))
+		}
+	})
+
+	t.Run("blob matching this layer is downloaded", func(t *testing.T) {
+		mock := newMockUploader()
+		mock.blobs["migrations/migration.001_test.abcd1234.tf"] = []byte(makeMigrationContent(&generator.MigrationMetadata{
+			Version:     generator.CurrentMetadataVersion,
+			SourceLayer: &generator.MetadataSourceLayer{StorageAccountName: "testacct", ContainerName: "testcontainer", Key: "compute.tfstate"},
+			Resources:   []string{"test_resource.example"},
+		}))
+
+		dir := t.TempDir()
+		writeBackendTFWithKey(t, dir, "compute.tfstate")
+
+		files, err := newDownloader(mock).Download(context.Background(), dir)
+		if err != nil {
+			t.Fatalf("Download error: %v", err)
+		}
+		if len(files) != 1 {
+			t.Fatalf("expected 1 file (matches this layer), got %d", len(files))
+		}
+	})
+
+	t.Run("legacy blob without source_layer is downloaded", func(t *testing.T) {
+		mock := newMockUploader()
+		mock.blobs["migrations/migration.001_test.abcd1234.tf"] = []byte(makeMigrationContent(&generator.MigrationMetadata{
+			Resources: []string{"test_resource.example"},
+		}))
+
+		dir := t.TempDir()
+		writeBackendTFWithKey(t, dir, "compute.tfstate")
+
+		files, err := newDownloader(mock).Download(context.Background(), dir)
+		if err != nil {
+			t.Fatalf("Download error: %v", err)
+		}
+		if len(files) != 1 {
+			t.Fatalf("expected 1 file (legacy, unscoped), got %d", len(files))
+		}
+	})
+
+	t.Run("indeterminate key falls back to download", func(t *testing.T) {
+		mock := newMockUploader()
+		mock.blobs["migrations/migration.001_test.abcd1234.tf"] = []byte(makeMigrationContent(&generator.MigrationMetadata{
+			Version:     generator.CurrentMetadataVersion,
+			SourceLayer: &generator.MetadataSourceLayer{StorageAccountName: "testacct", ContainerName: "testcontainer", Key: "compute.tfstate"},
+			Resources:   []string{"test_resource.example"},
+		}))
+
+		dir := t.TempDir()
+		// Backend has no key => this layer's key is undeterminable => lenient.
+		writeBackendTF(t, dir)
+
+		files, err := newDownloader(mock).Download(context.Background(), dir)
+		if err != nil {
+			t.Fatalf("Download error: %v", err)
+		}
+		if len(files) != 1 {
+			t.Fatalf("expected 1 file (indeterminate, lenient fallback), got %d", len(files))
+		}
+	})
+}

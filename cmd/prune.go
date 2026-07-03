@@ -134,7 +134,7 @@ func pruneLayer(
 	var pruned, kept int
 
 	for _, blobName := range migrationBlobs {
-		action, err := pruneBlob(ctx, uploader, blobName, layerDir, stateReader, force, dryRun)
+		action, err := pruneBlob(ctx, uploader, blobName, layerDir, config, stateReader, force, dryRun)
 		if err != nil {
 			return pruned, kept, err
 		}
@@ -172,21 +172,34 @@ func pruneBlob(
 	uploader upload.BlobUploader,
 	blobName string,
 	layerDir string,
+	config *upload.BackendConfig,
 	stateReader state.StateReader,
 	force bool,
 	dryRun bool,
 ) (bool, error) {
 	filename := filepath.Base(blobName)
 
-	if force {
-		return deleteOrDryRun(ctx, uploader, blobName, layerDir, filename, dryRun)
-	}
-
-	// Download and parse metadata for condition evaluation
+	// Download the blob so we can determine ownership (and, in non-force mode,
+	// evaluate conditions). In a shared container, blobs that provably belong to
+	// another layer must never be pruned by this layer.
 	content, err := uploader.DownloadBlob(ctx, blobName)
 	if err != nil {
+		// Preserve prior behaviour: force deletes even when unreadable;
+		// otherwise keep (nothing to evaluate).
+		if force {
+			return deleteOrDryRun(ctx, uploader, blobName, layerDir, filename, dryRun)
+		}
 		fmt.Fprintf(os.Stderr, "Warning: could not download %q, keeping: %v\n", blobName, err)
 		return false, nil
+	}
+
+	if upload.BlobContentOwnedByOtherLayer(content, config) {
+		fmt.Fprintf(os.Stderr, "%s: belongs to another layer, keeping\n", filename)
+		return false, nil
+	}
+
+	if force {
+		return deleteOrDryRun(ctx, uploader, blobName, layerDir, filename, dryRun)
 	}
 
 	meta, err := generator.ParseMetadataComment(string(content))

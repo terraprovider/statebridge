@@ -64,6 +64,13 @@ type Config struct {
 	// Strict if true causes missing layer directories to be hard errors
 	// instead of auto-skipping the migration file.
 	Strict bool
+
+	// SourceLayerResolver, when set, maps a layer directory path to the backend
+	// coordinates of that layer. It is used to stamp generated files with a
+	// source_layer descriptor so blob operations can be scoped per layer in a
+	// shared storage container. May return nil when coordinates are
+	// undiscoverable (metadata then omits source_layer for that group).
+	SourceLayerResolver func(layerPath string) *generator.MetadataSourceLayer
 }
 
 // Engine orchestrates the full migration pipeline: parse YAML, read state,
@@ -79,6 +86,9 @@ type Engine struct {
 func New(cfg Config) *Engine {
 	w := generator.NewWriter()
 	w.DryRun = cfg.DryRun
+	if cfg.SourceLayerResolver != nil {
+		w.SetSourceLayerResolver(cfg.SourceLayerResolver)
+	}
 
 	return &Engine{
 		config:   cfg,

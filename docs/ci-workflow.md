@@ -31,6 +31,8 @@ The `--backend-config` flag is used both for auto-initializing layers during sta
 
 Each layer downloads only the migrations that apply to it. Conditions embedded in the migration metadata are evaluated against the layer's current state — migrations that have already been applied are skipped.
 
+If several layers share one storage account and container (distinguished only by their backend `key`), download is additionally scoped by the `source_layer` recorded in each file's metadata, so a layer never picks up another layer's migrations. This requires each layer's backend block to declare a distinct `key`. See [Azure Blob Storage](azure-storage.md#shared-container-scoping) for details.
+
 ### Step 3: Plan and Apply
 
 `statebridge plan` runs a targeted `tofu plan` scoped to only the resources touched by the downloaded migrations. The `--detailed-exitcode` flag returns exit code 2 when changes are detected, allowing conditional apply.

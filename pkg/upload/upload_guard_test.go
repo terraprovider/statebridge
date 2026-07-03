@@ -27,7 +27,7 @@ func TestCheckActiveBlobs_GuardTriggered(t *testing.T) {
 
 	mgr := NewManager(nil, nil, WithGuardChecker(guardChecker))
 
-	err := mgr.checkActiveBlobs(ctx, mock, "migration.001_move.newnew99.tf", "/layers/compute")
+	err := mgr.checkActiveBlobs(ctx, mock, "migration.001_move.newnew99.tf", "/layers/compute", nil)
 	if err == nil {
 		t.Fatal("expected error when guard detects active blob")
 	}
@@ -54,7 +54,7 @@ func TestCheckActiveBlobs_GuardNotTriggered(t *testing.T) {
 
 	mgr := NewManager(nil, nil, WithGuardChecker(guardChecker))
 
-	err := mgr.checkActiveBlobs(ctx, mock, "migration.001_move.newnew99.tf", "/layers/compute")
+	err := mgr.checkActiveBlobs(ctx, mock, "migration.001_move.newnew99.tf", "/layers/compute", nil)
 	if err != nil {
 		t.Fatalf("expected no error when guard passes, got: %v", err)
 	}
@@ -76,7 +76,7 @@ func TestCheckActiveBlobs_ForceBypassesGuard(t *testing.T) {
 
 	mgr := NewManager(nil, nil, WithGuardChecker(guardChecker), WithForce(true))
 
-	err := mgr.checkActiveBlobs(ctx, mock, "migration.001_move.newnew99.tf", "/layers/compute")
+	err := mgr.checkActiveBlobs(ctx, mock, "migration.001_move.newnew99.tf", "/layers/compute", nil)
 	if err != nil {
 		t.Fatalf("expected no error with --force, got: %v", err)
 	}
@@ -93,7 +93,7 @@ func TestCheckActiveBlobs_NoExistingBlobs(t *testing.T) {
 
 	mgr := NewManager(nil, nil, WithGuardChecker(guardChecker))
 
-	err := mgr.checkActiveBlobs(ctx, mock, "migration.001_move.newnew99.tf", "/layers/compute")
+	err := mgr.checkActiveBlobs(ctx, mock, "migration.001_move.newnew99.tf", "/layers/compute", nil)
 	if err != nil {
 		t.Fatalf("expected no error with no existing blobs, got: %v", err)
 	}
@@ -110,7 +110,7 @@ func TestCheckActiveBlobs_NoGuardChecker(t *testing.T) {
 	// No guard checker configured — should be a no-op
 	mgr := NewManager(nil, nil)
 
-	err := mgr.checkActiveBlobs(ctx, mock, "migration.001_move.newnew99.tf", "/layers/compute")
+	err := mgr.checkActiveBlobs(ctx, mock, "migration.001_move.newnew99.tf", "/layers/compute", nil)
 	if err != nil {
 		t.Fatalf("expected no error without guard checker, got: %v", err)
 	}
@@ -132,7 +132,7 @@ func TestCheckActiveBlobs_SameHashSkipped(t *testing.T) {
 
 	mgr := NewManager(nil, nil, WithGuardChecker(guardChecker))
 
-	err := mgr.checkActiveBlobs(ctx, mock, "migration.001_move.newnew99.tf", "/layers/compute")
+	err := mgr.checkActiveBlobs(ctx, mock, "migration.001_move.newnew99.tf", "/layers/compute", nil)
 	if err != nil {
 		t.Fatalf("expected no error for same-hash blob, got: %v", err)
 	}
@@ -153,7 +153,7 @@ func TestCheckActiveBlobs_GuardEvalError(t *testing.T) {
 
 	mgr := NewManager(nil, nil, WithGuardChecker(guardChecker))
 
-	err := mgr.checkActiveBlobs(ctx, mock, "migration.001_move.newnew99.tf", "/layers/compute")
+	err := mgr.checkActiveBlobs(ctx, mock, "migration.001_move.newnew99.tf", "/layers/compute", nil)
 	if err != nil {
 		t.Fatalf("expected no blocking error on guard eval failure, got: %v", err)
 	}

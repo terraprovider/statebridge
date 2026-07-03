@@ -33,8 +33,9 @@ type Manager struct {
 	cred              azcore.TokenCredential
 	uploaderFactory   UploaderFactory
 	initArgs          []string
-	uploaderCache     map[string]BlobUploader // keyed by "account|container"
-	uploadedInSession map[string]bool         // track blobs uploaded in this session to avoid cleanup
+	uploaderCache     map[string]BlobUploader   // keyed by "account|container"
+	configCache       map[string]*BackendConfig // keyed by layer path
+	uploadedInSession map[string]bool           // track blobs uploaded in this session to avoid cleanup
 	force             bool
 	guardChecker      GuardChecker
 }
@@ -47,6 +48,7 @@ func NewManager(cred azcore.TokenCredential, initArgs []string, opts ...ManagerO
 		uploaderFactory:   DefaultUploaderFactory,
 		initArgs:          initArgs,
 		uploaderCache:     make(map[string]BlobUploader),
+		configCache:       make(map[string]*BackendConfig),
 		uploadedInSession: make(map[string]bool),
 	}
 	for _, opt := range opts {
@@ -176,7 +178,7 @@ func (m *Manager) UploadFromDisk(ctx context.Context, layerPaths []string) error
 // getUploader returns a cached BlobUploader for the given layer path.
 // On first call for a layer, it discovers backend config and creates an uploader.
 func (m *Manager) getUploader(layerPath string) (BlobUploader, error) {
-	config, err := DiscoverBackendConfig(layerPath, m.initArgs)
+	config, err := m.getBackendConfig(layerPath)
 	if err != nil {
 		return nil, err
 	}
@@ -195,20 +197,77 @@ func (m *Manager) getUploader(layerPath string) (BlobUploader, error) {
 	return uploader, nil
 }
 
+// getBackendConfig discovers and caches the backend config for a layer path.
+func (m *Manager) getBackendConfig(layerPath string) (*BackendConfig, error) {
+	if config, ok := m.configCache[layerPath]; ok {
+		return config, nil
+	}
+	config, err := DiscoverBackendConfig(layerPath, m.initArgs)
+	if err != nil {
+		return nil, err
+	}
+	m.configCache[layerPath] = config
+	return config, nil
+}
+
+// blobOwnedByOtherLayer reports whether the blob provably belongs to a layer
+// other than the one identified by config. It downloads and parses the blob's
+// metadata; on any download/parse error, missing metadata, or missing
+// source_layer descriptor it returns false (fail-open: act as in a
+// single-layer container). This scopes cross-layer operations in a shared
+// container so one layer never deletes/guards another layer's blobs.
+func (m *Manager) blobOwnedByOtherLayer(ctx context.Context, uploader BlobUploader, blobName string, config *BackendConfig) bool {
+	if config == nil {
+		return false // no coordinates to scope against ⇒ act as single-layer
+	}
+	content, err := uploader.DownloadBlob(ctx, blobName)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not download %q for layer-scope check: %v\n", blobName, err)
+		return false
+	}
+	return BlobContentOwnedByOtherLayer(content, config)
+}
+
+// BlobContentOwnedByOtherLayer is the pure predicate behind blobOwnedByOtherLayer,
+// operating on already-downloaded content so callers that have the bytes need not
+// re-download. It reports whether the blob's embedded source_layer descriptor
+// provably identifies a layer other than the one described by config. Returns
+// false on parse errors, missing metadata, a missing source_layer descriptor, or
+// a nil config (fail-open: act as in a single-layer container).
+func BlobContentOwnedByOtherLayer(content []byte, config *BackendConfig) bool {
+	if config == nil {
+		return false
+	}
+	meta, err := generator.ParseMetadataComment(string(content))
+	if err != nil || meta == nil || meta.SourceLayer == nil {
+		return false
+	}
+	return meta.SourceLayer.OwnedByOther(config.StorageAccountName, config.ContainerName, config.Key)
+}
+
 // uploadFile handles guard check, cleanup of old versions, and upload of a single file.
 func (m *Manager) uploadFile(ctx context.Context, uploader BlobUploader, filename string, content []byte, layerPath string) error {
 	blobName := "migrations/" + filename
+
+	// Discover this layer's backend coordinates so guard/cleanup can scope
+	// blobs to this layer in a shared container. Non-fatal on failure: fall
+	// back to unscoped behaviour (config == nil ⇒ act as today).
+	config, cfgErr := m.getBackendConfig(layerPath)
+	if cfgErr != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not discover backend config for %q, blob scoping disabled: %v\n", layerPath, cfgErr)
+		config = nil
+	}
 
 	// Track this blob as uploaded in current session BEFORE cleanup,
 	// so cleanupOldVersions won't delete a file we're about to upload.
 	m.uploadedInSession[blobName] = true
 
-	if err := m.checkActiveBlobs(ctx, uploader, filename, layerPath); err != nil {
+	if err := m.checkActiveBlobs(ctx, uploader, filename, layerPath, config); err != nil {
 		delete(m.uploadedInSession, blobName)
 		return err
 	}
 
-	if err := m.cleanupOldVersions(ctx, uploader, filename); err != nil {
+	if err := m.cleanupOldVersions(ctx, uploader, filename, config); err != nil {
 		delete(m.uploadedInSession, blobName)
 		return err
 	}
@@ -226,10 +285,13 @@ func (m *Manager) uploadFile(ctx context.Context, uploader BlobUploader, filenam
 // are still active (their metadata conditions still pass). If so, uploading
 // would overwrite a still-needed migration, and the upload is refused.
 //
+// In a shared container, blobs owned by a different layer are skipped so this
+// layer's upload is never blocked by another layer's still-active migration.
+//
 // This guard can be bypassed with the --force flag.
 // It is a no-op if no guardChecker is configured (e.g., when tofu binary
 // is not available).
-func (m *Manager) checkActiveBlobs(ctx context.Context, uploader BlobUploader, filename, layerPath string) error {
+func (m *Manager) checkActiveBlobs(ctx context.Context, uploader BlobUploader, filename, layerPath string, config *BackendConfig) error {
 	if m.force || m.guardChecker == nil {
 		return nil
 	}
@@ -258,6 +320,11 @@ func (m *Manager) checkActiveBlobs(ctx context.Context, uploader BlobUploader, f
 			continue
 		}
 
+		// Skip blobs that provably belong to a different layer (shared container).
+		if BlobContentOwnedByOtherLayer(blobContent, config) {
+			continue
+		}
+
 		active, err := m.guardChecker(ctx, blobContent, layerPath)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: could not evaluate guard for %q: %v\n", blobName, err)
@@ -283,7 +350,9 @@ func (m *Manager) checkActiveBlobs(ctx context.Context, uploader BlobUploader, f
 //
 // Blobs uploaded in the current session are skipped - they're part of the
 // current migration set (e.g., different layers from same YAML), not old versions.
-func (m *Manager) cleanupOldVersions(ctx context.Context, uploader BlobUploader, filename string) error {
+// In a shared container, blobs owned by a different layer are also skipped so
+// this layer's cleanup never deletes another layer's same-stem migration.
+func (m *Manager) cleanupOldVersions(ctx context.Context, uploader BlobUploader, filename string, config *BackendConfig) error {
 	stem, err := YamlStemFromFilename(filename)
 	if err != nil {
 		return err
@@ -304,6 +373,11 @@ func (m *Manager) cleanupOldVersions(ctx context.Context, uploader BlobUploader,
 		// Skip if this blob was uploaded in the current session
 		// (it's part of the current migration set, not an old version)
 		if m.uploadedInSession[blobName] {
+			continue
+		}
+
+		// Skip blobs that provably belong to a different layer (shared container).
+		if m.blobOwnedByOtherLayer(ctx, uploader, blobName, config) {
 			continue
 		}
 
@@ -338,6 +412,13 @@ func (m *Manager) PruneStems(ctx context.Context, stems []string, layerPaths []s
 		if err != nil {
 			return totalPruned, fmt.Errorf("getting uploader for %q: %w", layerPath, err)
 		}
+		// Discover this layer's coordinates so we only prune blobs that belong
+		// to it (shared container). Non-fatal: nil config ⇒ act as today.
+		config, cfgErr := m.getBackendConfig(layerPath)
+		if cfgErr != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not discover backend config for %q, prune scoping disabled: %v\n", layerPath, cfgErr)
+			config = nil
+		}
 		for _, stem := range stems {
 			prefix := "migrations/migration." + stem + "."
 			blobs, err := uploader.ListBlobs(ctx, prefix)
@@ -346,6 +427,10 @@ func (m *Manager) PruneStems(ctx context.Context, stems []string, layerPaths []s
 			}
 			for _, blob := range blobs {
 				if !strings.HasSuffix(blob, ".tf") {
+					continue
+				}
+				// Skip blobs that provably belong to a different layer.
+				if m.blobOwnedByOtherLayer(ctx, uploader, blob, config) {
 					continue
 				}
 				if err := uploader.DeleteBlob(ctx, blob); err != nil {

@@ -6,9 +6,9 @@ The upload package handles persisting generated migration `.tf` files to Azure B
 
 | File | Purpose |
 |------|---------|
-| `upload.go` | `Manager` orchestration: version cleanup, upload, overwrite protection guard, prune |
+| `upload.go` | `Manager` orchestration: version cleanup, upload, overwrite protection guard, prune. Guard/cleanup/prune are layer-scoped via `source_layer` metadata (`BlobContentOwnedByOtherLayer`) so shared-container blobs of other layers are left untouched |
 | `uploader.go` | `BlobUploader` interface and Azure Blob Storage implementation |
-| `backend.go` | Backend config discovery: parses HCL `backend "azurerm"` blocks and merges `--backend-config` flags |
+| `backend.go` | Backend config discovery: parses HCL `backend "azurerm"` blocks (including `key`) and merges `--backend-config` flags |
 
 ## Test Files
 

@@ -21,6 +21,10 @@ type BackendConfig struct {
 	StorageAccountName string
 	ContainerName      string
 	ResourceGroupName  string
+	// Key is the state blob path within the container. When multiple layers
+	// share a single container it is the field that distinguishes their state
+	// (and, via embedded metadata, their migration blobs) from one another.
+	Key string
 }
 
 // Validate checks that the required fields are populated.
@@ -137,6 +141,12 @@ func extractAzurermConfig(block *hcl.Block) (*BackendConfig, error) {
 			config.ResourceGroupName = val.AsString()
 		}
 	}
+	if attr, ok := attrs["key"]; ok {
+		val, diags := attr.Expr.Value(nil)
+		if !diags.HasErrors() {
+			config.Key = val.AsString()
+		}
+	}
 
 	return config, nil
 }
@@ -156,6 +166,7 @@ func ParseInitArgs(layerPath string, args []string) map[string]string {
 		"storage_account_name": true,
 		"container_name":       true,
 		"resource_group_name":  true,
+		"key":                  true,
 	}
 	result := make(map[string]string)
 
@@ -292,6 +303,9 @@ func MergeBackendConfig(base *BackendConfig, overrides map[string]string) *Backe
 	}
 	if v, ok := overrides["resource_group_name"]; ok && v != "" {
 		result.ResourceGroupName = v
+	}
+	if v, ok := overrides["key"]; ok && v != "" {
+		result.Key = v
 	}
 	return &result
 }

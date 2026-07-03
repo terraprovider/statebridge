@@ -136,7 +136,7 @@ func TestCleanupOldVersions(t *testing.T) {
 		})
 
 		mgr := &Manager{uploadedInSession: make(map[string]bool)}
-		err := mgr.cleanupOldVersions(ctx, mock, "migration.001_move.new99999.tf")
+		err := mgr.cleanupOldVersions(ctx, mock, "migration.001_move.new99999.tf", nil)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -153,7 +153,7 @@ func TestCleanupOldVersions(t *testing.T) {
 		})
 
 		mgr := &Manager{uploadedInSession: make(map[string]bool)}
-		err := mgr.cleanupOldVersions(ctx, mock, "migration.001_move.a1b2c3d4.tf")
+		err := mgr.cleanupOldVersions(ctx, mock, "migration.001_move.a1b2c3d4.tf", nil)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -167,7 +167,7 @@ func TestCleanupOldVersions(t *testing.T) {
 		mock := newMockUploader()
 
 		mgr := &Manager{uploadedInSession: make(map[string]bool)}
-		err := mgr.cleanupOldVersions(ctx, mock, "migration.001_move.a1b2c3d4.tf")
+		err := mgr.cleanupOldVersions(ctx, mock, "migration.001_move.a1b2c3d4.tf", nil)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -189,7 +189,7 @@ func TestCleanupOldVersions(t *testing.T) {
 		// Mark one as uploaded in this session (e.g., from another layer)
 		mgr.uploadedInSession["migrations/migration.001_move.session11.tf"] = true
 
-		err := mgr.cleanupOldVersions(ctx, mock, "migration.001_move.new99999.tf")
+		err := mgr.cleanupOldVersions(ctx, mock, "migration.001_move.new99999.tf", nil)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
