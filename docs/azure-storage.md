@@ -44,6 +44,8 @@ The upload target (storage account and container) is resolved per layer by:
 
 Required backend fields: `storage_account_name`, `container_name`.
 
+Any recognized authentication attributes present in the backend configuration (see [Per-Layer Credential Overrides](#per-layer-credential-overrides) below) are discovered and merged the same way, and are kept separate from the storage coordinates above.
+
 ## Shared-Container Scoping
 
 By default each layer is assumed to have its own storage container, so its `migrations/` prefix holds only its own blobs. If **multiple layers share a single storage account and container** (distinguished only by their backend `key`), all layers' migration blobs sit next to each other under the same `migrations/` prefix.
@@ -148,4 +150,55 @@ Upload, download, and prune commands authenticate using Azure SDK credentials co
 | `ARM_USE_OIDC` | OIDC federation (GitHub Actions, ADO Pipeline, generic) |
 | `ARM_OIDC_TOKEN` | Direct OIDC assertion token |
 | `ARM_OIDC_REQUEST_URL` / `ACTIONS_ID_TOKEN_REQUEST_URL` | OIDC token request URL |
+| `ARM_OIDC_REQUEST_TOKEN` / `ACTIONS_ID_TOKEN_REQUEST_TOKEN` | OIDC request auth token |
+
+These environment variables provide the baseline credential configuration for every layer.
+
+### Per-Layer Credential Overrides
+
+A layer's backend configuration (its inline `backend "azurerm"` block, and/or `--backend-config` CLI flags/files) can additionally supply any of the same authentication attributes that OpenTofu's own azurerm backend accepts. When present, these values are merged on top of the environment-sourced configuration: environment variables are read first, and a value supplied via backend configuration takes precedence on conflict. This mirrors how OpenTofu itself resolves azurerm backend authentication, and lets an individual layer's state storage live in a different Entra tenant/service principal than the one the rest of the pipeline runs under.
+
+Recognized backend-config authentication attributes:
+
+| Key | Purpose |
+|-----|---------|
+| `client_id` | Service principal (application) ID |
+| `tenant_id` | Entra tenant (directory) ID |
+| `client_secret` | Service principal client secret |
+| `client_certificate_path` | Path to a PFX/PKCS12 client certificate |
+| `client_certificate_password` | Password for the client certificate file |
+| `use_cli` | Authenticate via the Azure CLI (`az login` session) |
+| `use_msi` | Authenticate via Managed Service Identity |
+| `use_oidc` | Authenticate via OpenID Connect (OIDC) federation |
+| `oidc_token` | Direct OIDC assertion token |
+| `oidc_request_url` | OIDC token request URL |
+| `oidc_request_token` | OIDC request auth token |
+| `ado_service_connection_id` | ADO Pipeline service connection ID for OIDC |
+
+Example: a layer whose state lives in a storage account under a different tenant than the pipeline's default credentials:
+
+```hcl
+terraform {
+  backend "azurerm" {
+    storage_account_name = "otherTenantAcct"
+    container_name        = "tfstate"
+    key                   = "compute.tfstate"
+    client_id             = "11111111-1111-1111-1111-111111111111"
+    tenant_id             = "22222222-2222-2222-2222-222222222222"
+    use_oidc              = true
+  }
+}
+```
+
+Or supplied via `--backend-config`, keeping secrets out of committed HCL:
+
+```bash
+statebridge download \
+  --backend-config=client_id=11111111-1111-1111-1111-111111111111 \
+  --backend-config=tenant_id=22222222-2222-2222-2222-222222222222 \
+  --backend-config=use_oidc=true
+```
+
+As with the other backend-config values, `--backend-config` flags/files take precedence over the inline HCL block, and (as noted above) the fully merged set of layer values takes precedence over environment variables. As OpenTofu itself recommends, prefer environment variables or a git-ignored `--backend-config` file over committing secrets like `client_secret` directly in a `.tf` backend block.
+
 | `ARM_OIDC_REQUEST_TOKEN` / `ACTIONS_ID_TOKEN_REQUEST_TOKEN` | OIDC request auth token |

@@ -1095,6 +1095,10 @@ Uses `pkg/auth` for Azure credentials via environment variables:
 - `ARM_OIDC_REQUEST_URL` / `ACTIONS_ID_TOKEN_REQUEST_URL` (OIDC token request URL)
 - `ARM_OIDC_REQUEST_TOKEN` / `ACTIONS_ID_TOKEN_REQUEST_TOKEN` (OIDC request auth token)
 
+These environment variables provide the baseline credential configuration for every layer (`auth.WithDefaultEnvironmentVariables()`).
+
+**Per-layer credential merging.** A layer's backend configuration (inline `backend "azurerm"` block and/or `--backend-config` flags/files) can additionally set any of the following azurerm-backend-style attributes, listed in `auth.CredentialKeys`: `client_id`, `tenant_id`, `client_secret`, `client_certificate_path`, `client_certificate_password`, `use_cli`, `use_msi`, `use_oidc`, `oidc_token`, `oidc_request_url`, `oidc_request_token`, `ado_service_connection_id`. These are discovered into `upload.BackendConfig.Credentials` (kept separate from the storage-coordinate fields) by the same HCL-parsing/`--backend-config`-merging logic in `pkg/upload/backend.go`, then merged on top of the environment-sourced configuration via `upload.ResolveCredential`: environment variables populate the baseline first (`auth.WithDefaultEnvironmentVariables()`), and any value present in `Credentials` is applied second (`auth.WithBackendConfig()`), so it wins on conflict. This mirrors OpenTofu's own azurerm backend authentication resolution and lets a single layer's state storage authenticate against a different Entra tenant/service principal than the one the rest of the pipeline uses. When a layer sets no credential attributes, the shared base credential is used unchanged (no behavior change from before this feature). `upload.Manager` and `download.Downloader` resolve and cache the credential per layer path; `cmd/prune.go` resolves it inline per layer.
+
 ### Upload Guard (Overwrite Protection)
 
 When uploading, statebridge checks whether existing migration blobs are still "active" (their metadata conditions still pass against the layer's state). If an existing blob is still needed — for example, because a cross-layer migration was only partially applied — the upload is refused:

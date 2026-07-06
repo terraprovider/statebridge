@@ -426,3 +426,205 @@ func TestOptionError_StopsChain(t *testing.T) {
 		t.Fatal("expected error from nil certificate")
 	}
 }
+
+func TestWithBackendConfig_StringFields(t *testing.T) {
+	cfg, err := NewCredentialConfiguration(
+		WithBackendConfig(map[string]string{
+			"client_id":                 "bc-client",
+			"tenant_id":                 "bc-tenant",
+			"client_secret":             "bc-secret",
+			"oidc_token":                "bc-oidc-token",
+			"oidc_request_url":          "https://bc.example.com/token",
+			"oidc_request_token":        "bc-request-bearer",
+			"ado_service_connection_id": "bc-ado-conn",
+		}),
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.ClientId != "bc-client" {
+		t.Errorf("ClientId = %q, want %q", cfg.ClientId, "bc-client")
+	}
+	if cfg.TenantId != "bc-tenant" {
+		t.Errorf("TenantId = %q, want %q", cfg.TenantId, "bc-tenant")
+	}
+	if cfg.clientSecret == nil || *cfg.clientSecret != "bc-secret" {
+		t.Errorf("clientSecret = %v, want %q", cfg.clientSecret, "bc-secret")
+	}
+	if cfg.oidcToken == nil || *cfg.oidcToken != "bc-oidc-token" {
+		t.Errorf("oidcToken = %v, want %q", cfg.oidcToken, "bc-oidc-token")
+	}
+	if cfg.oidcTokenRequestURL == nil || *cfg.oidcTokenRequestURL != "https://bc.example.com/token" {
+		t.Errorf("oidcTokenRequestURL = %v, want %q", cfg.oidcTokenRequestURL, "https://bc.example.com/token")
+	}
+	if cfg.oidcRequestToken == nil || *cfg.oidcRequestToken != "bc-request-bearer" {
+		t.Errorf("oidcRequestToken = %v, want %q", cfg.oidcRequestToken, "bc-request-bearer")
+	}
+	if cfg.adoPipelineServiceConnectionID == nil || *cfg.adoPipelineServiceConnectionID != "bc-ado-conn" {
+		t.Errorf("adoPipelineServiceConnectionID = %v, want %q", cfg.adoPipelineServiceConnectionID, "bc-ado-conn")
+	}
+}
+
+func TestWithBackendConfig_CertificateFieldsWired(t *testing.T) {
+	// client_certificate_path/password point to a nonexistent file, so
+	// validate() fails while reading it — proving parseValues wired these
+	// fields the same way parseEnv does (TestParseEnv_CertificatePath is the
+	// environment-sourced equivalent of this test).
+	_, err := NewCredentialConfiguration(
+		WithBackendConfig(map[string]string{
+			"client_id":                   "bc-client",
+			"tenant_id":                   "bc-tenant",
+			"client_certificate_path":     "/path/to/bc-cert.pfx",
+			"client_certificate_password": "bc-cert-pass",
+		}),
+	)
+	if err == nil {
+		t.Fatal("expected error due to nonexistent certificate file")
+	}
+}
+
+func TestWithBackendConfig_BoolFields(t *testing.T) {
+	cfg, err := NewCredentialConfiguration(
+		WithClientAndTenant("client", "tenant"),
+		WithBackendConfig(map[string]string{
+			"use_cli":  "true",
+			"use_msi":  "false",
+			"use_oidc": "true",
+		}),
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.useAzCli == nil || !*cfg.useAzCli {
+		t.Error("expected useAzCli to be true")
+	}
+	if cfg.useMsi == nil || *cfg.useMsi {
+		t.Error("expected useMsi to be false")
+	}
+	if cfg.useOidc == nil || !*cfg.useOidc {
+		t.Error("expected useOidc to be true")
+	}
+}
+
+func TestWithBackendConfig_InvalidBoolReturnsError(t *testing.T) {
+	testCases := []string{"use_cli", "use_msi", "use_oidc"}
+	for _, key := range testCases {
+		t.Run(key, func(t *testing.T) {
+			_, err := NewCredentialConfiguration(
+				WithClientAndTenant("client", "tenant"),
+				WithBackendConfig(map[string]string{key: "not-a-bool"}),
+			)
+			if err == nil {
+				t.Fatalf("expected error for invalid %s value", key)
+			}
+		})
+	}
+}
+
+func TestWithBackendConfig_EmptyMapIsNoop(t *testing.T) {
+	cfg, err := NewCredentialConfiguration(
+		WithClientAndTenant("client", "tenant"),
+		WithBackendConfig(nil),
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.ClientId != "client" || cfg.TenantId != "tenant" {
+		t.Errorf("expected fields untouched, got ClientId=%q TenantId=%q", cfg.ClientId, cfg.TenantId)
+	}
+}
+
+func TestWithBackendConfig_EmptyValuesIgnored(t *testing.T) {
+	cfg, err := NewCredentialConfiguration(
+		WithClientAndTenant("client", "tenant"),
+		WithBackendConfig(map[string]string{
+			"client_id": "",
+			"tenant_id": "",
+		}),
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.ClientId != "client" {
+		t.Errorf("ClientId = %q, want unchanged %q", cfg.ClientId, "client")
+	}
+	if cfg.TenantId != "tenant" {
+		t.Errorf("TenantId = %q, want unchanged %q", cfg.TenantId, "tenant")
+	}
+}
+
+func TestWithBackendConfig_OverridesEnvironment(t *testing.T) {
+	// Simulates the intended precedence: environment variables populate the
+	// baseline first, then WithBackendConfig (sourced from a layer's backend
+	// configuration) takes precedence on conflict — mirroring how OpenTofu
+	// itself resolves azurerm backend authentication and enabling a layer's
+	// state storage to authenticate against a different tenant/client than
+	// the one running statebridge.
+	t.Setenv("ARM_CLIENT_ID", "env-client")
+	t.Setenv("ARM_TENANT_ID", "env-tenant")
+	t.Setenv("ARM_USE_OIDC", "true")
+
+	cfg, err := NewCredentialConfiguration(
+		WithDefaultEnvironmentVariables(),
+		WithBackendConfig(map[string]string{
+			"client_id": "layer-client",
+			"tenant_id": "layer-tenant",
+			"use_oidc":  "false",
+		}),
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.ClientId != "layer-client" {
+		t.Errorf("ClientId = %q, want %q (backend-config should win)", cfg.ClientId, "layer-client")
+	}
+	if cfg.TenantId != "layer-tenant" {
+		t.Errorf("TenantId = %q, want %q (backend-config should win)", cfg.TenantId, "layer-tenant")
+	}
+	if cfg.useOidc == nil || *cfg.useOidc {
+		t.Error("expected useOidc to be false (backend-config should win over env)")
+	}
+}
+
+func TestWithBackendConfig_PartialOverrideKeepsEnvValues(t *testing.T) {
+	// Only tenant_id is overridden; client_id and the client secret sourced
+	// from the environment must survive the merge untouched.
+	t.Setenv("ARM_CLIENT_ID", "env-client")
+	t.Setenv("ARM_TENANT_ID", "env-tenant")
+	t.Setenv("ARM_CLIENT_SECRET", "env-secret")
+
+	cfg, err := NewCredentialConfiguration(
+		WithDefaultEnvironmentVariables(),
+		WithBackendConfig(map[string]string{
+			"tenant_id": "other-tenant",
+		}),
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.ClientId != "env-client" {
+		t.Errorf("ClientId = %q, want unchanged %q", cfg.ClientId, "env-client")
+	}
+	if cfg.TenantId != "other-tenant" {
+		t.Errorf("TenantId = %q, want %q", cfg.TenantId, "other-tenant")
+	}
+	if cfg.clientSecret == nil || *cfg.clientSecret != "env-secret" {
+		t.Errorf("clientSecret = %v, want unchanged %q", cfg.clientSecret, "env-secret")
+	}
+}
+
+func TestWithBackendConfig_UnrecognizedKeysIgnored(t *testing.T) {
+	cfg, err := NewCredentialConfiguration(
+		WithClientAndTenant("client", "tenant"),
+		WithBackendConfig(map[string]string{
+			"subscription_id":      "sub-id",
+			"storage_account_name": "not-a-credential-field",
+		}),
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.ClientId != "client" || cfg.TenantId != "tenant" {
+		t.Errorf("expected fields untouched, got ClientId=%q TenantId=%q", cfg.ClientId, cfg.TenantId)
+	}
+}

@@ -13,6 +13,9 @@ import (
 	"github.com/hashicorp/hcl/v2"
 	"github.com/hashicorp/hcl/v2/hclparse"
 	"github.com/hashicorp/hcl/v2/hclsyntax"
+	"github.com/zclconf/go-cty/cty"
+
+	"github.com/terraprovider/statebridge/pkg/auth"
 )
 
 // BackendConfig holds Azure Blob Storage backend configuration
@@ -25,6 +28,16 @@ type BackendConfig struct {
 	// share a single container it is the field that distinguishes their state
 	// (and, via embedded metadata, their migration blobs) from one another.
 	Key string
+	// Credentials holds azurerm-backend-style authentication attribute values
+	// (see auth.CredentialKeys — e.g. "client_id", "tenant_id", "use_oidc")
+	// discovered for this layer from its inline HCL backend block and/or
+	// -backend-config CLI flags/files. These values are merged on top of the
+	// process's environment-sourced credential configuration when resolving
+	// the credential to use for this layer's blob storage operations (see
+	// ResolveCredential), allowing a layer's state storage to authenticate
+	// against a different tenant/service principal than the one running
+	// statebridge.
+	Credentials map[string]string
 }
 
 // Validate checks that the required fields are populated.
@@ -148,7 +161,43 @@ func extractAzurermConfig(block *hcl.Block) (*BackendConfig, error) {
 		}
 	}
 
+	for _, key := range auth.CredentialKeys {
+		attr, ok := attrs[key]
+		if !ok {
+			continue
+		}
+		val, diags := attr.Expr.Value(nil)
+		if diags.HasErrors() {
+			continue
+		}
+		if s, ok := ctyValueToString(val); ok {
+			if config.Credentials == nil {
+				config.Credentials = make(map[string]string)
+			}
+			config.Credentials[key] = s
+		}
+	}
+
 	return config, nil
+}
+
+// ctyValueToString safely converts a cty.Value to a string for the subset of
+// types an azurerm backend credential attribute may use: strings as-is, and
+// booleans as "true"/"false". Unlike cty.Value.AsString(), this never
+// panics on a mismatched type — it returns ok=false instead, so an inline
+// backend block with an attribute of an unexpected type is simply skipped.
+func ctyValueToString(val cty.Value) (string, bool) {
+	switch val.Type() {
+	case cty.String:
+		return val.AsString(), true
+	case cty.Bool:
+		if val.True() {
+			return "true", true
+		}
+		return "false", true
+	default:
+		return "", false
+	}
 }
 
 // ParseInitArgs extracts backend-config key=value pairs from init arguments.
@@ -167,6 +216,9 @@ func ParseInitArgs(layerPath string, args []string) map[string]string {
 		"container_name":       true,
 		"resource_group_name":  true,
 		"key":                  true,
+	}
+	for _, key := range auth.CredentialKeys {
+		recognized[key] = true
 	}
 	result := make(map[string]string)
 
@@ -292,9 +344,18 @@ func parseBackendConfigPlainText(data []byte) map[string]string {
 }
 
 // MergeBackendConfig applies overrides onto base. Non-empty override
-// values replace the corresponding base values.
+// values replace the corresponding base values. Credentials is merged key by
+// key (rather than replaced wholesale) using the same precedence: a
+// non-empty override value for a given credential key replaces the base
+// value for that key, while any base-only keys are preserved.
 func MergeBackendConfig(base *BackendConfig, overrides map[string]string) *BackendConfig {
 	result := *base
+	if base.Credentials != nil {
+		result.Credentials = make(map[string]string, len(base.Credentials))
+		for k, v := range base.Credentials {
+			result.Credentials[k] = v
+		}
+	}
 	if v, ok := overrides["storage_account_name"]; ok && v != "" {
 		result.StorageAccountName = v
 	}
@@ -306,6 +367,14 @@ func MergeBackendConfig(base *BackendConfig, overrides map[string]string) *Backe
 	}
 	if v, ok := overrides["key"]; ok && v != "" {
 		result.Key = v
+	}
+	for _, key := range auth.CredentialKeys {
+		if v, ok := overrides[key]; ok && v != "" {
+			if result.Credentials == nil {
+				result.Credentials = make(map[string]string)
+			}
+			result.Credentials[key] = v
+		}
 	}
 	return &result
 }

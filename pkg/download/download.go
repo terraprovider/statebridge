@@ -67,7 +67,12 @@ func (d *Downloader) Download(ctx context.Context, targetDir string) ([]string, 
 		return nil, fmt.Errorf("discovering backend config: %w", err)
 	}
 
-	uploader, err := d.uploaderFactory(config.StorageAccountName, config.ContainerName, d.cred)
+	cred, err := upload.ResolveCredential(d.cred, config)
+	if err != nil {
+		return nil, fmt.Errorf("resolving credentials: %w", err)
+	}
+
+	uploader, err := d.uploaderFactory(config.StorageAccountName, config.ContainerName, cred)
 	if err != nil {
 		return nil, fmt.Errorf("creating blob client: %w", err)
 	}
