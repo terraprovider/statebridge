@@ -361,13 +361,13 @@ operations:
 	}
 
 	cfg := Config{StateReader: testutil.NewMockStateReader(states)}
-	err := runEngineExpectError(t, cfg, []string{migrationFile})
+	result := runEngine(t, cfg, []string{migrationFile})
 
-	// The error is wrapped by resilient processing as "all migration files were skipped".
-	// The original "not a list" message is printed to stderr.
-	if !strings.Contains(err.Error(), "all migration files were skipped") {
-		t.Errorf("expected skip error, got: %v", err)
-	}
+	// The processing error is reported as a per-file skip (resilient
+	// processing), not a fatal error: the whole run still succeeds with a
+	// warning printed to stderr since no output was generated. The original
+	// "not a list" message is printed to stderr as well.
+	assertAllSkippedWithError(t, result, migrationFile)
 }
 
 // TestEngine_ProcessFiles_ImportFromSource_MissingExpandAttribute tests that
@@ -407,13 +407,13 @@ operations:
 	}
 
 	cfg := Config{StateReader: testutil.NewMockStateReader(states)}
-	err := runEngineExpectError(t, cfg, []string{migrationFile})
+	result := runEngine(t, cfg, []string{migrationFile})
 
-	// The error is wrapped by resilient processing as "all migration files were skipped".
-	// The original "no attribute" message is printed to stderr.
-	if !strings.Contains(err.Error(), "all migration files were skipped") {
-		t.Errorf("expected skip error, got: %v", err)
-	}
+	// The processing error is reported as a per-file skip (resilient
+	// processing), not a fatal error: the whole run still succeeds with a
+	// warning printed to stderr since no output was generated. The original
+	// "no attribute" message is printed to stderr as well.
+	assertAllSkippedWithError(t, result, migrationFile)
 }
 
 // TestEngine_ProcessFiles_ImportFromSource_WithAddressPrefix tests that

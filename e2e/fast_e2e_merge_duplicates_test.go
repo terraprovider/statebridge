@@ -200,22 +200,34 @@ operations:
           key_a: shared
 `, sharedDir, appDir))
 
-	// Generate should fail because the import IDs differ.
-	// When the only migration file is error-skipped, ProcessFiles returns an error
-	// ("all migration files were skipped"), so we call the engine directly.
+	// Generate should produce no output because the import IDs differ.
+	// When the only migration file ends up error-skipped, ProcessFiles no
+	// longer treats "zero output generated" as fatal — it succeeds with a
+	// warning printed to stderr ("all migration files were skipped, no
+	// output generated"), so we call the engine directly to inspect the
+	// result rather than expecting an error.
 	reader, err := state.NewTofuStateReaderFromPath(nil)
 	if err != nil {
 		t.Fatalf("creating state reader: %v", err)
 	}
 	eng := engine.New(engine.Config{StateReader: reader, DryRun: false})
-	_, err = eng.ProcessFiles(context.Background(), []string{migDir})
-	if err == nil {
-		t.Fatal("expected error from ProcessFiles due to merge_duplicates conflict")
+	result, err := eng.ProcessFiles(context.Background(), []string{migDir})
+	if err != nil {
+		t.Fatalf("unexpected error from ProcessFiles: %v", err)
 	}
-	// The error says "all migration files were skipped: <path>"; the detailed
-	// conflict message (with differing import IDs) is logged to stderr.
-	// Just confirm the file was indeed skipped as an error.
-	if !strings.Contains(err.Error(), "skipped") {
-		t.Errorf("expected error to mention files being skipped, got: %v", err)
+	if len(result.OutputFiles) != 0 {
+		t.Errorf("expected no output files due to merge_duplicates conflict, got: %v", result.OutputFiles)
+	}
+	// The detailed conflict message (with differing import IDs) is logged to
+	// stderr; just confirm the file was indeed skipped due to an error.
+	found := false
+	for _, sf := range result.SkippedFiles {
+		if sf.Reason == engine.SkipError {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected migration file to be skipped due to an error, got: %+v", result.SkippedFiles)
 	}
 }

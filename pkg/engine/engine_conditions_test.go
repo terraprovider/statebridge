@@ -247,15 +247,21 @@ operations:
 		srcLayer: testutil.BuildState(),
 	})
 
-	err := runEngineExpectError(t, Config{StateReader: mock}, files)
-	if !strings.Contains(err.Error(), "skipped") {
-		t.Errorf("expected error to mention 'skipped', got: %v", err)
+	result := runEngine(t, Config{StateReader: mock}, files)
+	if len(result.OutputFiles) != 0 {
+		t.Errorf("expected no output files, got: %v", result.OutputFiles)
 	}
-	if !strings.Contains(err.Error(), "001_move_a.yaml") {
-		t.Errorf("expected error to mention first file, got: %v", err)
-	}
-	if !strings.Contains(err.Error(), "002_move_b.yaml") {
-		t.Errorf("expected error to mention second file, got: %v", err)
+	for _, f := range files {
+		found := false
+		for _, sf := range result.SkippedFiles {
+			if sf.FilePath == f && sf.Reason == SkipError {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("expected %q to be skipped with SkipError, got: %+v", f, result.SkippedFiles)
+		}
 	}
 }
 

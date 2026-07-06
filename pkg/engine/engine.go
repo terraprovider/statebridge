@@ -112,6 +112,13 @@ func (e *Engine) Writer() *generator.Writer {
 // because a source resource no longer exists in state), it is skipped with an
 // informational message to stderr. This allows unrelated migration files to
 // still be generated. Parse errors and validation errors remain fatal.
+//
+// If every migration file ends up skipped due to a processing error and no
+// output is generated, a warning is printed to stderr but ProcessFiles still
+// returns successfully (nil error). This is deliberately not a hard failure:
+// for some deployments a referenced resource may legitimately not exist —
+// e.g. optional configuration that isn't enabled for that particular
+// instance — so "no migrations were applicable this run" must not fail CI.
 func (e *Engine) ProcessFiles(ctx context.Context, paths []string) (*ProcessResult, error) {
 	files, err := e.parser.ParseFiles(paths)
 	if err != nil {
@@ -198,7 +205,11 @@ func (e *Engine) ProcessFiles(ctx context.Context, paths []string) (*ProcessResu
 		}
 	}
 	if len(errorSkipped) > 0 && len(allBlocks) == 0 {
-		return nil, fmt.Errorf("all migration files were skipped: %s", strings.Join(errorSkipped, ", "))
+		// Warning, not a fatal error: some deployments legitimately have no
+		// applicable migrations this run (e.g. a moved resource doesn't exist
+		// because this instance never had that configuration enabled).
+		// Individual per-file skip reasons were already printed to stderr above.
+		fmt.Fprintf(os.Stderr, "Warning: all migration files were skipped, no output generated: %s\n", strings.Join(errorSkipped, ", "))
 	}
 
 	// Consolidate module-level removals: when all managed resources within

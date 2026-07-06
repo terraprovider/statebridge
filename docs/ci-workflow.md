@@ -69,7 +69,7 @@ When processing multiple migration YAML files, statebridge is resilient to indiv
 Skipping "migrations/001_move.yaml": operation[0] (move): no resources matching "aws_instance.gone" found in state
 ```
 
-This allows unrelated migrations to be generated even when some migrations reference resources that have already been moved. Parse errors and YAML validation errors remain fatal. If all files are skipped, the command returns an error.
+This allows unrelated migrations to be generated even when some migrations reference resources that have already been moved. Parse errors and YAML validation errors remain fatal. If every migration file ends up skipped due to a processing error and no output is generated, this is reported as a warning, not a hard failure: for some deployments a referenced resource may legitimately not exist (e.g. optional configuration that isn't enabled for that particular instance), so "no migrations were applicable this run" must not fail CI.
 
 ## Data Source Exclusion
 
