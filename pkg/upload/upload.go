@@ -33,9 +33,10 @@ type Manager struct {
 	cred              azcore.TokenCredential
 	uploaderFactory   UploaderFactory
 	initArgs          []string
-	uploaderCache     map[string]BlobUploader   // keyed by "account|container"
-	configCache       map[string]*BackendConfig // keyed by layer path
-	uploadedInSession map[string]bool           // track blobs uploaded in this session to avoid cleanup
+	uploaderCache     map[string]BlobUploader           // keyed by "account|container"
+	configCache       map[string]*BackendConfig         // keyed by layer path
+	credCache         map[string]azcore.TokenCredential // keyed by layer path
+	uploadedInSession map[string]bool                   // track blobs uploaded in this session to avoid cleanup
 	force             bool
 	guardChecker      GuardChecker
 }
@@ -49,6 +50,7 @@ func NewManager(cred azcore.TokenCredential, initArgs []string, opts ...ManagerO
 		initArgs:          initArgs,
 		uploaderCache:     make(map[string]BlobUploader),
 		configCache:       make(map[string]*BackendConfig),
+		credCache:         make(map[string]azcore.TokenCredential),
 		uploadedInSession: make(map[string]bool),
 	}
 	for _, opt := range opts {
@@ -188,7 +190,12 @@ func (m *Manager) getUploader(layerPath string) (BlobUploader, error) {
 		return uploader, nil
 	}
 
-	uploader, err := m.uploaderFactory(config.StorageAccountName, config.ContainerName, m.cred)
+	cred, err := m.getCredential(layerPath, config)
+	if err != nil {
+		return nil, err
+	}
+
+	uploader, err := m.uploaderFactory(config.StorageAccountName, config.ContainerName, cred)
 	if err != nil {
 		return nil, fmt.Errorf("creating uploader for %s/%s: %w", config.StorageAccountName, config.ContainerName, err)
 	}
@@ -208,6 +215,22 @@ func (m *Manager) getBackendConfig(layerPath string) (*BackendConfig, error) {
 	}
 	m.configCache[layerPath] = config
 	return config, nil
+}
+
+// getCredential resolves and caches, per layer path, the credential to use
+// for that layer's blob storage operations. When the layer's backend
+// configuration carries no credential values, this is simply the Manager's
+// shared base credential (see ResolveCredential).
+func (m *Manager) getCredential(layerPath string, config *BackendConfig) (azcore.TokenCredential, error) {
+	if cred, ok := m.credCache[layerPath]; ok {
+		return cred, nil
+	}
+	cred, err := ResolveCredential(m.cred, config)
+	if err != nil {
+		return nil, fmt.Errorf("layer %q: %w", layerPath, err)
+	}
+	m.credCache[layerPath] = cred
+	return cred, nil
 }
 
 // blobOwnedByOtherLayer reports whether the blob provably belongs to a layer

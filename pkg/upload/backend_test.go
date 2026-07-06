@@ -508,3 +508,170 @@ terraform {
 		}
 	})
 }
+
+func TestParseHCLBackend_CredentialFields(t *testing.T) {
+	dir := t.TempDir()
+	content := `
+terraform {
+  backend "azurerm" {
+    storage_account_name = "credacct"
+    container_name        = "credcontainer"
+    client_id             = "hcl-client"
+    tenant_id             = "hcl-tenant"
+    use_oidc              = true
+    use_msi               = false
+  }
+}
+`
+	if err := os.WriteFile(filepath.Join(dir, "backend.tf"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := ParseHCLBackend(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	want := map[string]string{
+		"client_id": "hcl-client",
+		"tenant_id": "hcl-tenant",
+		"use_oidc":  "true",
+		"use_msi":   "false",
+	}
+	for k, v := range want {
+		if cfg.Credentials[k] != v {
+			t.Errorf("Credentials[%q] = %q, want %q", k, cfg.Credentials[k], v)
+		}
+	}
+	// Only the attributes present in the block should be populated.
+	if len(cfg.Credentials) != len(want) {
+		t.Errorf("Credentials = %v, want exactly %v", cfg.Credentials, want)
+	}
+}
+
+func TestParseHCLBackend_NoCredentialFields(t *testing.T) {
+	dir := t.TempDir()
+	content := `
+terraform {
+  backend "azurerm" {
+    storage_account_name = "acct"
+    container_name        = "container"
+  }
+}
+`
+	if err := os.WriteFile(filepath.Join(dir, "backend.tf"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := ParseHCLBackend(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(cfg.Credentials) != 0 {
+		t.Errorf("expected no Credentials, got %v", cfg.Credentials)
+	}
+}
+
+func TestParseInitArgs_CredentialKeys(t *testing.T) {
+	args := []string{
+		"-backend-config=client_id=cli-client",
+		"-backend-config=tenant_id=cli-tenant",
+		"-backend-config=use_oidc=true",
+		"-backend-config=client_secret=cli-secret",
+	}
+
+	got := ParseInitArgs(".", args)
+
+	want := map[string]string{
+		"client_id":     "cli-client",
+		"tenant_id":     "cli-tenant",
+		"use_oidc":      "true",
+		"client_secret": "cli-secret",
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Errorf("%s = %q, want %q", k, got[k], v)
+		}
+	}
+}
+
+func TestMergeBackendConfig_Credentials(t *testing.T) {
+	base := &BackendConfig{
+		StorageAccountName: "acct",
+		ContainerName:      "container",
+		Credentials: map[string]string{
+			"client_id": "inline-client",
+			"tenant_id": "inline-tenant",
+		},
+	}
+
+	overrides := map[string]string{
+		"tenant_id":     "override-tenant", // should win over inline
+		"client_secret": "override-secret", // new key, not present inline
+	}
+
+	result := MergeBackendConfig(base, overrides)
+
+	if result.Credentials["client_id"] != "inline-client" {
+		t.Errorf("Credentials[client_id] = %q, want %q (preserved from base)", result.Credentials["client_id"], "inline-client")
+	}
+	if result.Credentials["tenant_id"] != "override-tenant" {
+		t.Errorf("Credentials[tenant_id] = %q, want %q (override should win)", result.Credentials["tenant_id"], "override-tenant")
+	}
+	if result.Credentials["client_secret"] != "override-secret" {
+		t.Errorf("Credentials[client_secret] = %q, want %q", result.Credentials["client_secret"], "override-secret")
+	}
+
+	// Base must not be mutated by the merge.
+	if base.Credentials["tenant_id"] != "inline-tenant" {
+		t.Errorf("base.Credentials[tenant_id] was mutated: got %q, want %q", base.Credentials["tenant_id"], "inline-tenant")
+	}
+	if _, ok := base.Credentials["client_secret"]; ok {
+		t.Error("base.Credentials should not have gained client_secret")
+	}
+}
+
+func TestMergeBackendConfig_NilBaseCredentials(t *testing.T) {
+	base := &BackendConfig{StorageAccountName: "acct", ContainerName: "container"}
+	overrides := map[string]string{"client_id": "override-client"}
+
+	result := MergeBackendConfig(base, overrides)
+
+	if result.Credentials["client_id"] != "override-client" {
+		t.Errorf("Credentials[client_id] = %q, want %q", result.Credentials["client_id"], "override-client")
+	}
+	if base.Credentials != nil {
+		t.Error("base.Credentials should remain nil")
+	}
+}
+
+func TestDiscoverBackendConfig_CredentialsFromInlineAndOverride(t *testing.T) {
+	dir := t.TempDir()
+	content := `
+terraform {
+  backend "azurerm" {
+    storage_account_name = "acct"
+    container_name        = "container"
+    client_id             = "inline-client"
+    tenant_id             = "inline-tenant"
+  }
+}
+`
+	if err := os.WriteFile(filepath.Join(dir, "backend.tf"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	initArgs := []string{"-backend-config=tenant_id=override-tenant"}
+
+	cfg, err := DiscoverBackendConfig(dir, initArgs)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if cfg.Credentials["client_id"] != "inline-client" {
+		t.Errorf("Credentials[client_id] = %q, want %q", cfg.Credentials["client_id"], "inline-client")
+	}
+	if cfg.Credentials["tenant_id"] != "override-tenant" {
+		t.Errorf("Credentials[tenant_id] = %q, want %q (backend-config override should win)", cfg.Credentials["tenant_id"], "override-tenant")
+	}
+}

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
 	tfjson "github.com/hashicorp/terraform-json"
 
 	"github.com/terraprovider/statebridge/pkg/generator"
@@ -518,4 +519,84 @@ func TestDownloadSourceLayerScoping(t *testing.T) {
 			t.Fatalf("expected 1 file (indeterminate, lenient fallback), got %d", len(files))
 		}
 	})
+}
+
+// fakeCredential is a distinguishable azcore.TokenCredential stand-in used to
+// verify identity (pointer equality) of the credential passed to the
+// uploader factory, without performing any real token acquisition.
+type fakeCredential struct{}
+
+func (f *fakeCredential) GetToken(context.Context, policy.TokenRequestOptions) (azcore.AccessToken, error) {
+	return azcore.AccessToken{}, nil
+}
+
+func writeBackendTFWithCredentials(t *testing.T, dir, extraAttrs string) {
+	t.Helper()
+	content := "\nterraform {\n  backend \"azurerm\" {\n    storage_account_name = \"testacct\"\n    container_name       = \"testcontainer\"\n" +
+		extraAttrs + "  }\n}\n"
+	if err := os.WriteFile(filepath.Join(dir, "backend.tf"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDownload_UsesLayerSpecificCredential(t *testing.T) {
+	mock := newMockUploader()
+
+	dir := t.TempDir()
+	writeBackendTFWithCredentials(t, dir, `    client_id = "layer-client"
+    tenant_id = "layer-tenant"
+    use_cli   = true
+`)
+
+	base := &fakeCredential{}
+	var gotCred azcore.TokenCredential
+	dl := NewDownloader(base, nil, WithUploaderFactory(func(_, _ string, cred azcore.TokenCredential) (upload.BlobUploader, error) {
+		gotCred = cred
+		return mock, nil
+	}))
+
+	if _, err := dl.Download(context.Background(), dir); err != nil {
+		t.Fatalf("Download error: %v", err)
+	}
+	if gotCred == azcore.TokenCredential(base) {
+		t.Error("expected the uploader factory to receive a layer-specific credential, not the base credential")
+	}
+}
+
+func TestDownload_NoLayerCredentialsUsesBase(t *testing.T) {
+	mock := newMockUploader()
+
+	dir := t.TempDir()
+	writeBackendTF(t, dir)
+
+	base := &fakeCredential{}
+	var gotCred azcore.TokenCredential
+	dl := NewDownloader(base, nil, WithUploaderFactory(func(_, _ string, cred azcore.TokenCredential) (upload.BlobUploader, error) {
+		gotCred = cred
+		return mock, nil
+	}))
+
+	if _, err := dl.Download(context.Background(), dir); err != nil {
+		t.Fatalf("Download error: %v", err)
+	}
+	if gotCred != azcore.TokenCredential(base) {
+		t.Error("expected the uploader factory to receive the base credential when the layer has no credential values")
+	}
+}
+
+func TestDownload_CredentialErrorPropagates(t *testing.T) {
+	dir := t.TempDir()
+	writeBackendTFWithCredentials(t, dir, `    client_id = "layer-client"
+    tenant_id = "layer-tenant"
+    use_msi   = "not-a-bool"
+`)
+
+	dl := NewDownloader(&fakeCredential{}, nil, WithUploaderFactory(func(_, _ string, _ azcore.TokenCredential) (upload.BlobUploader, error) {
+		return newMockUploader(), nil
+	}))
+
+	_, err := dl.Download(context.Background(), dir)
+	if err == nil {
+		t.Fatal("expected error due to invalid use_msi value in layer backend config")
+	}
 }

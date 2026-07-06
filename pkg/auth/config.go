@@ -4,12 +4,32 @@ import (
 	"crypto"
 	"crypto/x509"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 
 	"github.com/terraprovider/statebridge/pkg/util"
 	"golang.org/x/crypto/pkcs12"
 )
+
+// CredentialKeys lists the configuration attribute names — matching the
+// names used by OpenTofu/Terraform's azurerm backend — that WithBackendConfig
+// recognizes as sources of credential values. Any other key in the map
+// passed to WithBackendConfig is ignored.
+var CredentialKeys = []string{
+	"client_id",
+	"tenant_id",
+	"client_secret",
+	"client_certificate_path",
+	"client_certificate_password",
+	"use_cli",
+	"use_msi",
+	"use_oidc",
+	"oidc_token",
+	"oidc_request_url",
+	"oidc_request_token",
+	"ado_service_connection_id",
+}
 
 // CredentialConfiguration holds the configuration for Entra authentication.
 // It supports multiple authentication methods including client secrets,
@@ -163,6 +183,87 @@ func (c *CredentialConfiguration) parseEnv(prefixes ...string) error {
 		if v := util.GetMultienv[string]("ARM_ADO_PIPELINE_SERVICE_CONNECTION_ID", "ARM_OIDC_AZURE_SERVICE_CONNECTION_ID", "AZURESUBSCRIPTION_SERVICE_CONNECTION_ID"); v != nil && *v != "" {
 			c.adoPipelineServiceConnectionID = v
 		}
+	}
+	return nil
+}
+
+// WithBackendConfig configures credential fields from a plain string map
+// keyed by the same attribute names used in OpenTofu/Terraform's azurerm
+// backend block (see CredentialKeys) — e.g. "client_id", "tenant_id",
+// "use_oidc". Unrecognized keys are ignored.
+//
+// This lets values discovered from a layer's backend configuration (inline
+// HCL "backend \"azurerm\"" block, or -backend-config CLI flags/files) be
+// merged into the credential configuration as an additional source, on top
+// of whatever was already populated by an earlier option such as
+// WithDefaultEnvironmentVariables. When both a source populated via
+// WithDefaultEnvironmentVariables and this option set the same field, the
+// value from this option wins, since options are applied in call order and
+// each option simply overwrites any value set by an earlier one. Applying
+// WithDefaultEnvironmentVariables first and WithBackendConfig second
+// therefore reproduces the same precedence OpenTofu itself uses when
+// resolving azurerm backend authentication: environment variables provide
+// the baseline, and explicit backend configuration takes precedence.
+func WithBackendConfig(values map[string]string) Option {
+	return func(c *CredentialConfiguration) error {
+		return c.parseValues(values)
+	}
+}
+
+// parseValues populates credential fields from a plain key/value map using
+// the attribute names listed in CredentialKeys. Unlike parseEnv (which
+// silently warns and skips on an unparsable environment variable, since
+// ambient env vars may be unrelated to the current invocation), an invalid
+// boolean value here returns an error: these values are explicitly authored
+// for this layer, so a typo should be surfaced rather than silently ignored.
+func (c *CredentialConfiguration) parseValues(values map[string]string) error {
+	if v, ok := values["client_id"]; ok && v != "" {
+		c.ClientId = v
+	}
+	if v, ok := values["tenant_id"]; ok && v != "" {
+		c.TenantId = v
+	}
+	if v, ok := values["client_secret"]; ok && v != "" {
+		c.clientSecret = &v
+	}
+	if v, ok := values["client_certificate_path"]; ok && v != "" {
+		c.clientCertificatePath = &v
+	}
+	if v, ok := values["client_certificate_password"]; ok && v != "" {
+		c.clientCertificatePassword = &v
+	}
+	if v, ok := values["use_cli"]; ok && v != "" {
+		parsed, err := util.Parse[bool](v)
+		if err != nil {
+			return fmt.Errorf("invalid value for use_cli: %w", err)
+		}
+		c.useAzCli = &parsed
+	}
+	if v, ok := values["use_msi"]; ok && v != "" {
+		parsed, err := util.Parse[bool](v)
+		if err != nil {
+			return fmt.Errorf("invalid value for use_msi: %w", err)
+		}
+		c.useMsi = &parsed
+	}
+	if v, ok := values["use_oidc"]; ok && v != "" {
+		parsed, err := util.Parse[bool](v)
+		if err != nil {
+			return fmt.Errorf("invalid value for use_oidc: %w", err)
+		}
+		c.useOidc = &parsed
+	}
+	if v, ok := values["oidc_token"]; ok && v != "" {
+		c.oidcToken = &v
+	}
+	if v, ok := values["oidc_request_url"]; ok && v != "" {
+		c.oidcTokenRequestURL = &v
+	}
+	if v, ok := values["oidc_request_token"]; ok && v != "" {
+		c.oidcRequestToken = &v
+	}
+	if v, ok := values["ado_service_connection_id"]; ok && v != "" {
+		c.adoPipelineServiceConnectionID = &v
 	}
 	return nil
 }

@@ -116,7 +116,12 @@ func pruneLayer(
 		return 0, 0, fmt.Errorf("discovering backend config: %w", err)
 	}
 
-	uploader, err := upload.DefaultUploaderFactory(config.StorageAccountName, config.ContainerName, cred)
+	layerCred, err := upload.ResolveCredential(cred, config)
+	if err != nil {
+		return 0, 0, fmt.Errorf("resolving credentials: %w", err)
+	}
+
+	uploader, err := upload.DefaultUploaderFactory(config.StorageAccountName, config.ContainerName, layerCred)
 	if err != nil {
 		return 0, 0, fmt.Errorf("creating blob client: %w", err)
 	}
