@@ -282,7 +282,7 @@ func parseBackendConfigFile(path string) (map[string]string, error) {
 }
 
 // parseBackendConfigHCL parses backend config as HCL attribute assignments.
-// Returns an error if parsing fails or if no string values could be extracted.
+// Returns an error if parsing fails or if no values could be extracted.
 func parseBackendConfigHCL(filename string, data []byte) (map[string]string, error) {
 	file, diags := hclsyntax.ParseConfig(data, filename, hcl.Pos{Line: 1, Column: 1})
 	if diags.HasErrors() {
@@ -302,13 +302,15 @@ func parseBackendConfigHCL(filename string, data []byte) (map[string]string, err
 			// Fall through to plain text parsing for the whole file.
 			continue
 		}
-		if val.Type().FriendlyName() != "string" {
-			continue
+		// Use the same string/bool conversion as inline HCL backend blocks
+		// (ctyValueToString) so boolean attributes such as use_oidc, use_msi,
+		// and use_cli are captured here too, not just string-valued fields.
+		if s, ok := ctyValueToString(val); ok {
+			result[name] = s
 		}
-		result[name] = val.AsString()
 	}
 
-	// If we parsed attributes but couldn't extract any string values,
+	// If we parsed attributes but couldn't extract any values,
 	// let the caller fall through to plain text parsing.
 	if len(attrs) > 0 && len(result) == 0 {
 		return nil, fmt.Errorf("no string values extracted from HCL")

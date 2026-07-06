@@ -243,6 +243,63 @@ key                  = "terraform.tfstate"
 	}
 }
 
+// TestParseInitArgsWithHCLFile_BooleanCredentialAlongsideStrings is a
+// regression test: a boolean credential attribute (e.g. use_oidc) in an
+// HCL-format --backend-config file was previously silently dropped whenever
+// the file also contained string-valued attributes, because
+// parseBackendConfigHCL only extracted cty.String values. Since the file as
+// a whole successfully parsed as HCL and yielded a non-empty result (from
+// the string fields), the "no values extracted" fallback to plain-text
+// parsing never triggered, so the boolean value was lost silently — no
+// error, no warning.
+func TestParseInitArgsWithHCLFile_BooleanCredentialAlongsideStrings(t *testing.T) {
+	dir := t.TempDir()
+
+	hclFile := filepath.Join(dir, "backend.hcl")
+	err := os.WriteFile(hclFile, []byte(`
+client_id = "hcl-client"
+tenant_id = "hcl-tenant"
+use_oidc  = true
+use_msi   = false
+`), 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := ParseInitArgs(dir, []string{"-backend-config=" + hclFile})
+
+	want := map[string]string{
+		"client_id": "hcl-client",
+		"tenant_id": "hcl-tenant",
+		"use_oidc":  "true",
+		"use_msi":   "false",
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Errorf("%s = %q, want %q", k, got[k], v)
+		}
+	}
+}
+
+// TestParseInitArgsWithHCLFile_BooleanOnly covers a file containing only a
+// single boolean attribute (no string fields at all).
+func TestParseInitArgsWithHCLFile_BooleanOnly(t *testing.T) {
+	dir := t.TempDir()
+
+	hclFile := filepath.Join(dir, "backend.hcl")
+	err := os.WriteFile(hclFile, []byte(`use_oidc = true
+`), 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := ParseInitArgs(dir, []string{"-backend-config=" + hclFile})
+
+	if got["use_oidc"] != "true" {
+		t.Errorf("use_oidc = %q, want %q", got["use_oidc"], "true")
+	}
+}
+
 func TestParseInitArgsWithPlainTextFile(t *testing.T) {
 	dir := t.TempDir()
 
