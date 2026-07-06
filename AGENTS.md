@@ -1237,6 +1237,7 @@ ARM_CLIENT_ID=... ARM_TENANT_ID=... ARM_SUBSCRIPTION_ID=... ARM_USE_OIDC=true \
 - `e2e/testproject/layers/` — Static Terraform project with 3 layers (shared, app, networking)
 - `e2e/helpers_test.go` — Test helpers (tofu init/apply/plan/destroy via terraform-exec, engine.ProcessFiles wrapper, blob container lifecycle)
 - `e2e/e2e_test.go` — Test functions covering move, keyed move, rename, remove+import, condition skip, upload/download
+- `e2e/e2e_cross_tenant_test.go` — `TestE2E_CrossTenantUploadDownload`: proves migrations can be uploaded/downloaded from a storage account authenticated via credentials supplied entirely through a checked-in `--backend-config=<file>` (`e2e/testdata/cross_tenant_backend.hcl`), rather than the default `ARM_*` environment. See below.
 
 **Environment variables:**
 - `ARM_CLIENT_ID`, `ARM_TENANT_ID`, `ARM_SUBSCRIPTION_ID` — Azure auth
@@ -1245,6 +1246,8 @@ ARM_CLIENT_ID=... ARM_TENANT_ID=... ARM_SUBSCRIPTION_ID=... ARM_USE_OIDC=true \
 - `E2E_STORAGE_ACCOUNT_NAME` — Pre-existing storage account for upload/download tests (service principal needs "Storage Blob Data Contributor" role). If not set, `TestE2E_UploadDownload` is skipped.
 
 **Test isolation:** Each test generates a unique resource prefix (`tfe2e` + 4 random hex chars) and uses `t.Cleanup()` to destroy all resources even on failure. Local backend — no shared state. The upload/download test creates an ephemeral blob container per run (named after the unique prefix) and deletes it on cleanup.
+
+**Cross-tenant credential test (`TestE2E_CrossTenantUploadDownload`):** Unlike the other upload/download tests, this one targets a *fixed, persistent* storage account/container (`e2e/testdata/cross_tenant_backend.hcl`) dedicated to this kind of testing, rather than an ephemeral per-run container. Its `storage_account_name`, `container_name`, `subscription_id`, `client_id`, `tenant_id`, `use_azuread_auth`, `use_oidc`, and `snapshot` values are checked in verbatim — no additional env vars are needed, since the whole point is that these values (none of which are secrets) flow entirely from the `--backend-config` file. The test deliberately builds its base credential from the default `ARM_*` environment (the primary tenant) and relies on `upload.ResolveCredential` merging in the file's `client_id`/`tenant_id`/`use_oidc` on top of it; a regression in that merge logic would surface as an authentication failure against the cross-tenant account. Because the container is not created/destroyed per run, both the Terraform resource name and the migration YAML filename embed the run's unique prefix, and the test explicitly deletes (by exact blob name) only the blobs it uploaded in `t.Cleanup()` — it never touches the container itself or any other blob in it.
 
 ## Project Structure
 

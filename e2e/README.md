@@ -33,8 +33,9 @@ ARM_CLIENT_ID=... ARM_TENANT_ID=... ARM_SUBSCRIPTION_ID=... ARM_USE_OIDC=true \
 | File | Tests |
 |------|-------|
 | `e2e_test.go` | Full pipeline tests against Azure: move, keyed move, rename, remove+import, condition skip, upload/download |
+| `e2e_cross_tenant_test.go` | `TestE2E_CrossTenantUploadDownload`: upload/download against a storage account authenticated entirely via a checked-in `--backend-config=<file>` (`testdata/cross_tenant_backend.hcl`), proving credential values from backend config are merged on top of the default `ARM_*` environment credential |
 | `helpers_test.go` | Azure test helpers: resource provisioning, blob container lifecycle, credential setup |
 
 ## Test Project
 
-The `fastproject/` directory contains a static Terraform project with 3 layers (`shared`, `app`, `networking`) using only local providers. The `testproject/` directory contains an Azure-based project for full E2E tests.
+The `fastproject/` directory contains a static Terraform project with 3 layers (`shared`, `app`, `networking`) using only local providers. The `testproject/` directory contains an Azure-based project for full E2E tests. The `testdata/` directory holds fixture files, such as the cross-tenant backend config used above.
