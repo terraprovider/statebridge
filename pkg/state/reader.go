@@ -110,9 +110,22 @@ func (r *TofuStateReader) ReadState(ctx context.Context, layerPath string) (*tfj
 }
 
 // runInit executes `tofu init` with the configured backend-config arguments.
+//
+// tf.SetStdout/SetStderr apply to *every* subsequent command run through this
+// same *tfexec.Terraform instance, not just Init: terraform-exec merges the
+// configured writers into every command's output stream, including the
+// internal buffer JSON-returning calls (like the retry Show() the caller
+// makes right after runInit returns) use to capture and parse their result.
+// Left unset, a later Show() call would additionally stream the entire raw
+// state JSON to os.Stderr. So the writers are reset once tofu init completes
+// (success or failure), before control returns to the caller.
 func (r *TofuStateReader) runInit(ctx context.Context, tf *tfexec.Terraform, absPath string) error {
 	tf.SetStdout(os.Stderr)
 	tf.SetStderr(os.Stderr)
+	defer func() {
+		tf.SetStdout(nil)
+		tf.SetStderr(nil)
+	}()
 
 	var opts []tfexec.InitOption
 	for _, arg := range r.initArgs {

@@ -13,7 +13,8 @@ The state package provides OpenTofu state reading with caching and auto-init sup
 
 | File | Tests |
 |------|-------|
-| `reader_test.go` | State reader tests with mock tofu binary |
+| `reader_test.go` | `FlattenState`/`LookupResource` tests using synthetic state (no tofu binary needed) |
+| `reader_init_test.go` | `TestRunInit_DoesNotLeakStateJSONAfterward`: regression test (real `tofu` binary, skipped if not on PATH) asserting the auto-init retry path doesn't leak the full state JSON to the writers configured for `tofu init`'s own output |
 | `types_test.go` | `ResourceExists` tests including module address matching and for_each instances |
 
 ## Running Tests
