@@ -190,11 +190,10 @@ operations:
 	})
 
 	// Incomplete coverage causes the file to be skipped (not a fatal error).
-	// Since it's the only file, ProcessFiles returns "all migration files were skipped".
-	err := runEngineExpectError(t, Config{StateReader: mock}, []string{migrationFile})
-	if !strings.Contains(err.Error(), "skipped") {
-		t.Errorf("expected error to mention files were skipped, got: %v", err)
-	}
+	// Since it's the only file, ProcessFiles succeeds with a warning printed
+	// to stderr ("all migration files were skipped, no output generated").
+	result := runEngine(t, Config{StateReader: mock}, []string{migrationFile})
+	assertAllSkippedWithError(t, result, migrationFile)
 }
 
 func TestEngine_ProcessFiles_MergeDuplicates(t *testing.T) {
@@ -342,10 +341,8 @@ operations:
 		),
 	})
 
-	err := runEngineExpectError(t, Config{StateReader: mock}, []string{migrationFile})
-	if !strings.Contains(err.Error(), "skipped") {
-		t.Errorf("expected error mentioning 'skipped', got: %v", err)
-	}
+	result := runEngine(t, Config{StateReader: mock}, []string{migrationFile})
+	assertAllSkippedWithError(t, result, migrationFile)
 }
 
 func TestEngine_ProcessFiles_MergeDuplicates_ConflictingIDs(t *testing.T) {
@@ -384,8 +381,6 @@ operations:
 		),
 	})
 
-	err := runEngineExpectError(t, Config{StateReader: mock}, []string{migrationFile})
-	if !strings.Contains(err.Error(), "skipped") {
-		t.Errorf("expected error mentioning 'skipped', got: %v", err)
-	}
+	result := runEngine(t, Config{StateReader: mock}, []string{migrationFile})
+	assertAllSkippedWithError(t, result, migrationFile)
 }

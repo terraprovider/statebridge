@@ -272,8 +272,6 @@ operations:
 		srcLayer: testutil.BuildState(),
 	})
 
-	err := runEngineExpectError(t, Config{StateReader: mock}, []string{migrationFile})
-	if !strings.Contains(err.Error(), "skipped") {
-		t.Errorf("expected error mentioning skipped, got: %v", err)
-	}
+	result := runEngine(t, Config{StateReader: mock}, []string{migrationFile})
+	assertAllSkippedWithError(t, result, migrationFile)
 }
