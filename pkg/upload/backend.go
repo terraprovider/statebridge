@@ -313,7 +313,7 @@ func parseBackendConfigHCL(filename string, data []byte) (map[string]string, err
 	// If we parsed attributes but couldn't extract any values,
 	// let the caller fall through to plain text parsing.
 	if len(attrs) > 0 && len(result) == 0 {
-		return nil, fmt.Errorf("no string values extracted from HCL")
+		return nil, fmt.Errorf("no values extracted from HCL")
 	}
 
 	return result, nil
