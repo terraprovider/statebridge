@@ -123,7 +123,7 @@ func runPlan(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if hasChanges && flagPlanDetailedExitcode {
-		return &ExitCodeError{Code: 2}
+		return intendedExitCode(cmd, 2)
 	}
 	return nil
 }
