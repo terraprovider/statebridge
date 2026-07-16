@@ -92,6 +92,10 @@ removed {
 
 This works at any nesting depth. If all resources under `module.foo.module.bar` are moved but `module.foo` has other resources remaining, only `module.foo.module.bar` is consolidated.
 
+For a `remove` operation that must retain resource-level addresses, set
+`consolidate: false`. This is useful when a module contains a single managed
+resource but the generated `removed` block must not remove the entire module.
+
 ## Upload Guard in CI
 
 The upload guard protects against a common CI failure mode: a pipeline partially applies migrations across layers (e.g., L10 applied, L30 fails, L50 pending), then re-runs `generate --upload` which would overwrite still-needed import blocks.

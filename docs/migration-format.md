@@ -289,6 +289,8 @@ Removes resources from state tracking. By default, the underlying infrastructure
 
 **Required fields:** `layer`, `entries` (non-empty list); each entry requires `address`
 
+**Optional fields:** `destroy` (default: `false`), `consolidate` (default: `true`), and per-entry `destroy`.
+
 ```yaml
 - type: remove
   description: "Stop managing deprecated IAM resources"
@@ -298,6 +300,18 @@ Removes resources from state tracking. By default, the underlying infrastructure
     - address: "aws_iam_role.deprecated"
     - address: "aws_iam_policy.old_policy"
       destroy: true                          # per-entry override
+```
+
+When every managed resource in a module is removed, statebridge normally emits
+one module-level `removed` block. Set `consolidate: false` to preserve the
+resource-level `removed` blocks instead:
+
+```yaml
+- type: remove
+  layer: "./layers/legacy"
+  consolidate: false
+  entries:
+    - address: "module.legacy.aws_iam_role.deprecated"
 ```
 
 ---

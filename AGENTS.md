@@ -411,7 +411,10 @@ Removes resources from state. Generates `removed` blocks. Default: `destroy = fa
 
 Required fields: `layer`, `entries` (non-empty list)
 Each entry requires: `address`
-Optional fields: `destroy` (default: false), per-entry `destroy` override
+Optional fields: `destroy` (default: false), `consolidate` (default: true), per-entry `destroy` override
+Set `consolidate: false` to retain resource-level `removed` blocks when all
+managed resources in a module are removed. By default, statebridge consolidates
+them into a module-level `removed` block.
 
 ```yaml
 - type: remove
