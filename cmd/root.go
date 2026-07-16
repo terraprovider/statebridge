@@ -20,6 +20,15 @@ func (e *ExitCodeError) Error() string {
 	return fmt.Sprintf("exit code %d", e.Code)
 }
 
+// intendedExitCode returns an exit code that represents an expected command
+// outcome. Cobra would otherwise print the returned error and command usage;
+// suppress both only for this intentional non-zero exit path.
+func intendedExitCode(cmd *cobra.Command, code int) error {
+	cmd.SilenceErrors = true
+	cmd.SilenceUsage = true
+	return &ExitCodeError{Code: code}
+}
+
 // rootCmd represents the base command when called without any subcommands.
 var rootCmd = &cobra.Command{
 	Use:   "statebridge",
