@@ -166,6 +166,10 @@ definitions:
         type: boolean
         description: "Default destroy behavior for remove operations. false = remove from state only (default), true = also destroy infrastructure"
         default: false
+      consolidate:
+        type: boolean
+        description: "For remove operations: true (default) consolidates complete module removals; false retains resource-level removed blocks"
+        default: true
       imports:
         type: array
         description: "Resources to import into state (import only)"
