@@ -94,6 +94,15 @@ func validateOperation(index int, op *Operation) []ValidationError {
 		})
 	}
 
+	// consolidate is only valid on remove operations
+	if op.Consolidate != nil && op.Type != OpRemove {
+		errs = append(errs, ValidationError{
+			OperationIndex: index,
+			Field:          "consolidate",
+			Message:        "consolidate is only valid for remove operations",
+		})
+	}
+
 	switch op.Type {
 	case OpMove:
 		errs = append(errs, validateMove(index, op)...)

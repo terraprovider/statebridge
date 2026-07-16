@@ -318,6 +318,43 @@ operations:
 	}
 }
 
+func TestParseFile_RemoveWithoutConsolidation(t *testing.T) {
+	tests := []struct {
+		name string
+		yaml string
+	}{
+		{
+			name: "parses false",
+			yaml: `
+description: "Remove without consolidation"
+operations:
+  - type: remove
+    layer: "./layers/legacy"
+    consolidate: false
+    entries:
+      - address: "module.legacy.aws_instance.web"
+`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := writeTestFile(t, "007c_remove_without_consolidation.yaml", tt.yaml)
+			parser := NewParser()
+
+			mf, err := parser.ParseFile(path)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			op := mf.Operations[0]
+			if op.Consolidate == nil || *op.Consolidate {
+				t.Error("expected consolidate=false")
+			}
+		})
+	}
+}
+
 func TestParseFile_MultipleImports(t *testing.T) {
 	content := `
 description: "Multiple imports"

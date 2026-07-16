@@ -62,6 +62,21 @@ operations:
 			destroyTrueCount:  2,
 			destroyFalseCount: 1,
 		},
+		{
+			name: "without module consolidation",
+			yaml: `
+description: "Remove resource without module consolidation"
+operations:
+  - type: remove
+    layer: "LAYER"
+    consolidate: false
+    entries:
+      - address: "module.legacy.aws_iam_role.deprecated"
+`,
+			removedBlockCount: 1,
+			destroyTrueCount:  0,
+			destroyFalseCount: 1,
+		},
 	}
 
 	for _, tt := range tests {
@@ -80,6 +95,10 @@ operations:
 			content := testutil.ReadFirstOutput(t, result.OutputFiles)
 
 			testutil.AssertBlockCount(t, content, "removed {", tt.removedBlockCount)
+			if tt.name == "without module consolidation" {
+				testutil.AssertContains(t, content, "from = module.legacy.aws_iam_role.deprecated")
+				testutil.AssertNotContains(t, content, "from = module.legacy\n")
+			}
 			if tt.destroyTrueCount > 0 {
 				testutil.AssertBlockCount(t, content, "destroy = true", tt.destroyTrueCount)
 			}

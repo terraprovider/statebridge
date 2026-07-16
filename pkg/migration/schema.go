@@ -108,7 +108,7 @@ type ResourceCheck struct {
 // The Type field determines which other fields are relevant:
 //   - move:   SourceLayer, DestinationLayer, Resources (or AllResources + Overrides)
 //   - rename: Layer, Renames
-//   - remove: Layer, Entries, Destroy (optional)
+//   - remove: Layer, Entries, Destroy, Consolidate (optional)
 //   - import: Layer, Imports, Provider (optional)
 type Operation struct {
 	// Type determines the kind of migration operation.
@@ -178,6 +178,12 @@ type Operation struct {
 	// Defaults to false (safe removal from state only). Per-entry Destroy
 	// on RemoveEntry overrides this when set.
 	Destroy *bool `yaml:"destroy,omitempty"`
+
+	// Consolidate controls automatic consolidation of removed blocks into a
+	// module-level removed block. It applies only to remove operations and
+	// defaults to true. Set to false when the generated removal must retain its
+	// resource-level address even if it is the only managed resource in a module.
+	Consolidate *bool `yaml:"consolidate,omitempty"`
 
 	// Imports lists the resources to import into state (import operations).
 	Imports []ImportEntry `yaml:"imports,omitempty"`
@@ -328,6 +334,12 @@ func boolPtrDefault(p *bool, defaultVal bool) bool {
 // defaulting to false if not explicitly set.
 func (o *Operation) DestroyValue() bool {
 	return boolPtrDefault(o.Destroy, false)
+}
+
+// ConsolidateValue returns the effective value of Consolidate, defaulting to
+// true so existing migrations retain automatic module-level consolidation.
+func (o *Operation) ConsolidateValue() bool {
+	return boolPtrDefault(o.Consolidate, true)
 }
 
 // DestroyValue returns the effective value of the Destroy field,

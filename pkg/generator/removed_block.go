@@ -21,6 +21,11 @@ type RemovedBlock struct {
 
 	// Source is the migration YAML file path that created this block.
 	Source string
+
+	// SkipConsolidation prevents the engine from replacing this block with a
+	// module-level removed block. It is internal generation metadata and isn't
+	// rendered into HCL.
+	SkipConsolidation bool
 }
 
 // Render returns the HCL representation of the removed block.

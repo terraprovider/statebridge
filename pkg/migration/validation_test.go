@@ -117,6 +117,48 @@ func TestValidate_ValidRemoveOperation(t *testing.T) {
 	}
 }
 
+func TestValidate_ConsolidateOnlyValidForRemove(t *testing.T) {
+	tests := []struct {
+		name  string
+		op    Operation
+		field string
+	}{
+		{
+			name: "remove accepts consolidate",
+			op: Operation{
+				Type:        OpRemove,
+				Layer:       "./layers/legacy",
+				Consolidate: boolPtr(false),
+				Entries:     []RemoveEntry{{Address: "module.legacy.aws_instance.web"}},
+			},
+		},
+		{
+			name: "move rejects consolidate",
+			op: Operation{
+				Type:             OpMove,
+				SourceLayer:      "./src",
+				DestinationLayer: "./dst",
+				Consolidate:      boolPtr(false),
+				Resources:        []ResourceMove{{From: "aws_instance.web"}},
+			},
+			field: "consolidate",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mf := &MigrationFile{Description: "Validate consolidate", Operations: []Operation{tt.op}}
+			errs := Validate(mf)
+			if tt.field == "" && len(errs) != 0 {
+				t.Errorf("expected no errors, got %v", errs)
+			}
+			if tt.field != "" && !hasError(errs, tt.field) {
+				t.Errorf("expected validation error for %q, got %v", tt.field, errs)
+			}
+		})
+	}
+}
+
 func TestValidate_ValidImportOperation(t *testing.T) {
 	mf := &MigrationFile{
 		Description: "Valid import",

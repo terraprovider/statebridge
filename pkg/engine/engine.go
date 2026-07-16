@@ -943,11 +943,12 @@ func (e *Engine) processRemove(op *migration.Operation, sourceFile string) ([]ge
 			destroy = *entry.Destroy
 		}
 		blocks = append(blocks, &generator.RemovedBlock{
-			From:        migration.FullAddress(op.AddressPrefix, entry.Address),
-			Destroy:     destroy,
-			Layer:       op.Layer,
-			Description: op.Description,
-			Source:      sourceFile,
+			From:              migration.FullAddress(op.AddressPrefix, entry.Address),
+			Destroy:           destroy,
+			Layer:             op.Layer,
+			Description:       op.Description,
+			Source:            sourceFile,
+			SkipConsolidation: !op.ConsolidateValue(),
 		})
 	}
 	return blocks, nil
