@@ -484,10 +484,7 @@ func (e *Engine) processMoveModule(
 				return nil, fmt.Errorf("resolving import ID for %q: %w", r.Address, err)
 			}
 
-			destAddr := destBase
-			if r.Key != "" {
-				destAddr = fmt.Sprintf("%s[\"%s\"]", destBase, r.Key)
-			}
+			destAddr := destBase + state.FormatInstanceKey(r.Index)
 
 			blocks = append(blocks, &generator.ImportBlock{
 				To:          destAddr,
@@ -598,10 +595,7 @@ func (e *Engine) processMoveAllResources(
 			// Same-layer: emit moved blocks per instance, skip identity moves
 			for _, r := range g.resources {
 				srcFullAddr := r.Address
-				destAddr := destBase
-				if r.Key != "" {
-					destAddr = fmt.Sprintf("%s[\"%s\"]", destBase, r.Key)
-				}
+				destAddr := destBase + state.FormatInstanceKey(r.Index)
 				// Skip identity moves
 				if srcFullAddr == destAddr {
 					continue
@@ -640,10 +634,7 @@ func (e *Engine) processMoveAllResources(
 					return nil, fmt.Errorf("resolving import ID for %q: %w", r.Address, err)
 				}
 
-				destAddr := destBase
-				if r.Key != "" {
-					destAddr = fmt.Sprintf("%s[\"%s\"]", destBase, r.Key)
-				}
+				destAddr := destBase + state.FormatInstanceKey(r.Index)
 
 				blocks = append(blocks, &generator.ImportBlock{
 					To:          destAddr,
@@ -695,8 +686,8 @@ func (e *Engine) processMoveSimple(
 			tracker.setAllKeys(srcKey, allKeys)
 
 			for _, r := range resources {
-				srcFullAddr := fmt.Sprintf("%s[\"%s\"]", srcAddr, r.Key)
-				destFullAddr := fmt.Sprintf("%s[\"%s\"]", dstAddr, r.Key)
+				srcFullAddr := r.Address
+				destFullAddr := dstAddr + state.FormatInstanceKey(r.Index)
 				if srcFullAddr == destFullAddr {
 					continue
 				}
@@ -741,7 +732,7 @@ func (e *Engine) processMoveSimple(
 		}
 
 		for _, r := range resources {
-			destFullAddr := fmt.Sprintf("%s[\"%s\"]", dstAddr, r.Key)
+			destFullAddr := dstAddr + state.FormatInstanceKey(r.Index)
 			importID, err := e.resolver.ResolveImportID(r, res.ImportID)
 			if err != nil {
 				return nil, fmt.Errorf("resolving import ID for %q: %w", r.Address, err)
@@ -842,9 +833,11 @@ func (e *Engine) processMoveKeyed(
 			return nil, fmt.Errorf("evaluating destination key template for key %q: %w", r.Key, err)
 		}
 
-		// Construct full source and destination addresses
-		srcFullAddr := fmt.Sprintf("%s[\"%s\"]", srcAddr, r.Key)
-		destFullAddr := fmt.Sprintf("%s[\"%s\"]", dstAddr, destKey)
+		// Construct full source and destination addresses. The source uses the
+		// real state address (preserving count vs for_each key syntax); the
+		// destination key is a for_each remap produced by the key template.
+		srcFullAddr := r.Address
+		destFullAddr := fmt.Sprintf("%s[%q]", dstAddr, destKey)
 
 		if sameLayer {
 			// Same-layer: check for destination-side duplicates (merge_duplicates support)
@@ -1103,14 +1096,17 @@ func (e *Engine) buildSourcedImportBlock(
 
 	// If the source is a for_each resource or we're expanding, resolve the key.
 	if res.Key != "" || item != nil {
-		keyStr := res.Key // default: use source key
 		if entry.Key != "" {
-			keyStr, err = tmpl.Evaluate(entry.Key, tmplCtx)
+			// Explicit key template: the result is a for_each key, so quote it.
+			keyStr, err := tmpl.Evaluate(entry.Key, tmplCtx)
 			if err != nil {
 				return nil, fmt.Errorf("evaluating key template: %w", err)
 			}
+			destAddr = fmt.Sprintf("%s[%q]", destAddr, keyStr)
+		} else {
+			// Default: reuse the source index, preserving count vs for_each syntax.
+			destAddr += state.FormatInstanceKey(res.Index)
 		}
-		destAddr = fmt.Sprintf("%s[\"%s\"]", destAddr, keyStr)
 	}
 
 	return &generator.ImportBlock{

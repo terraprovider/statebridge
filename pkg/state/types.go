@@ -367,6 +367,32 @@ func stateResourceToInfo(r *tfjson.StateResource) *ResourceInfo {
 	}
 }
 
+// FormatInstanceKey renders a resource instance index as a bracketed address
+// suffix, using the syntax Terraform/OpenTofu expects for each key kind:
+//
+//	for_each key (string) → ["key"]   (quoted)
+//	count index (numeric) → [0]        (bare integer)
+//	no index (nil)        → ""         (empty)
+//
+// This distinction matters when constructing destination addresses for moved
+// and import blocks: a count index must stay a bare integer. Quoting it (e.g.
+// ["0"]) makes Terraform treat it as a for_each key, producing an address that
+// does not match the resource in state.
+func FormatInstanceKey(index interface{}) string {
+	switch v := index.(type) {
+	case nil:
+		return ""
+	case string:
+		return fmt.Sprintf("[%q]", v)
+	case float64:
+		return fmt.Sprintf("[%d]", int64(v))
+	case int:
+		return fmt.Sprintf("[%d]", v)
+	default:
+		return fmt.Sprintf("[%q]", formatIndex(index))
+	}
+}
+
 // formatIndex converts an index value to its string representation.
 // For string keys, returns the key directly.
 // For numeric indices, formats as an integer.

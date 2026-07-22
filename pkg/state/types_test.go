@@ -498,6 +498,31 @@ func TestBaseAddress(t *testing.T) {
 	}
 }
 
+func TestFormatInstanceKey(t *testing.T) {
+	tests := []struct {
+		name  string
+		index interface{}
+		want  string
+	}{
+		{"nil index", nil, ""},
+		{"for_each string key", "my-key", `["my-key"]`},
+		{"for_each numeric-looking string key", "0", `["0"]`},
+		// count indices arrive from terraform-json as float64 and must render
+		// as bare integers, never quoted strings.
+		{"count index float64", float64(0), "[0]"},
+		{"count index float64 nonzero", float64(12), "[12]"},
+		{"count index int", 3, "[3]"},
+		{"for_each key with quote", `a"b`, `["a\"b"]`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := FormatInstanceKey(tt.index); got != tt.want {
+				t.Errorf("FormatInstanceKey(%#v) = %q, want %q", tt.index, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestConfigAddress(t *testing.T) {
 	tests := []struct {
 		address string
