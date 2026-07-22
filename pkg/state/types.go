@@ -5,6 +5,7 @@ package state
 import (
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"sort"
 	"strings"
 
@@ -391,10 +392,18 @@ func FormatInstanceKey(index interface{}) string {
 		return fmt.Sprintf("[%q]", v)
 	case json.Number:
 		return fmt.Sprintf("[%s]", v.String())
-	case float64:
-		return fmt.Sprintf("[%d]", int64(v))
-	case int:
-		return fmt.Sprintf("[%d]", v)
+	}
+
+	// Any numeric type is a count index and must render as a bare integer.
+	// Detect every int/uint/float kind via reflection so a caller passing
+	// e.g. int64 or uint doesn't fall through to the quoted for_each form.
+	switch rv := reflect.ValueOf(index); rv.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return fmt.Sprintf("[%d]", rv.Int())
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return fmt.Sprintf("[%d]", rv.Uint())
+	case reflect.Float32, reflect.Float64:
+		return fmt.Sprintf("[%d]", int64(rv.Float()))
 	default:
 		return fmt.Sprintf("[%q]", formatIndex(index))
 	}

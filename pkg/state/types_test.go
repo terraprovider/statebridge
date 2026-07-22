@@ -513,10 +513,15 @@ func TestFormatInstanceKey(t *testing.T) {
 		// integers, never quoted strings.
 		{"count index json.Number", json.Number("0"), "[0]"},
 		{"count index json.Number nonzero", json.Number("12"), "[12]"},
-		// float64/int are also handled for callers that build state directly.
+		// float64/int and other integer kinds are handled for callers that
+		// build state directly rather than decoding it from JSON.
 		{"count index float64", float64(0), "[0]"},
 		{"count index float64 nonzero", float64(12), "[12]"},
 		{"count index int", 3, "[3]"},
+		{"count index int64", int64(7), "[7]"},
+		{"count index uint", uint(9), "[9]"},
+		{"count index uint64", uint64(42), "[42]"},
+		{"count index float32", float32(5), "[5]"},
 		{"for_each key with quote", `a"b`, `["a\"b"]`},
 	}
 	for _, tt := range tests {
