@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -101,10 +102,12 @@ operations:
     resources:
       - from: "aws_instance.web"
 `,
+			// Indices are json.Number to mirror how terraform-exec's Show
+			// decodes real state (it enables UseJSONNumber).
 			stateResources: []*tfjson.StateResource{
-				testutil.NewResource("aws_instance.web[0]", "aws_instance", "web", float64(0),
+				testutil.NewResource("aws_instance.web[0]", "aws_instance", "web", json.Number("0"),
 					map[string]interface{}{"id": "i-0"}),
-				testutil.NewResource("aws_instance.web[1]", "aws_instance", "web", float64(1),
+				testutil.NewResource("aws_instance.web[1]", "aws_instance", "web", json.Number("1"),
 					map[string]interface{}{"id": "i-1"}),
 			},
 			srcRemovedCount: 1,
@@ -129,7 +132,7 @@ operations:
 			stateResources: []*tfjson.StateResource{
 				testutil.NewResource(
 					"module.conditional_access[0].azuread_group_without_members.ca_pilot_all_users[0]",
-					"azuread_group_without_members", "ca_pilot_all_users", float64(0),
+					"azuread_group_without_members", "ca_pilot_all_users", json.Number("0"),
 					map[string]interface{}{"id": "grp-pilot"}),
 				// Sibling keeps the module instance non-empty so the removed block
 				// stays resource-level (avoids the multi-instance guard path).

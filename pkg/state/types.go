@@ -3,6 +3,7 @@
 package state
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -378,12 +379,18 @@ func stateResourceToInfo(r *tfjson.StateResource) *ResourceInfo {
 // and import blocks: a count index must stay a bare integer. Quoting it (e.g.
 // ["0"]) makes Terraform treat it as a for_each key, producing an address that
 // does not match the resource in state.
+//
+// Note: state read via terraform-exec's Show decodes JSON numbers as
+// json.Number (it enables UseJSONNumber), so count indices arrive as
+// json.Number rather than float64. Both are handled.
 func FormatInstanceKey(index interface{}) string {
 	switch v := index.(type) {
 	case nil:
 		return ""
 	case string:
 		return fmt.Sprintf("[%q]", v)
+	case json.Number:
+		return fmt.Sprintf("[%s]", v.String())
 	case float64:
 		return fmt.Sprintf("[%d]", int64(v))
 	case int:
@@ -404,6 +411,8 @@ func formatIndex(index interface{}) string {
 	switch v := index.(type) {
 	case string:
 		return v
+	case json.Number:
+		return v.String()
 	case float64:
 		return fmt.Sprintf("%d", int(v))
 	default:

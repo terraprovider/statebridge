@@ -1,6 +1,7 @@
 package state
 
 import (
+	"encoding/json"
 	"testing"
 
 	tfjson "github.com/hashicorp/terraform-json"
@@ -507,8 +508,12 @@ func TestFormatInstanceKey(t *testing.T) {
 		{"nil index", nil, ""},
 		{"for_each string key", "my-key", `["my-key"]`},
 		{"for_each numeric-looking string key", "0", `["0"]`},
-		// count indices arrive from terraform-json as float64 and must render
-		// as bare integers, never quoted strings.
+		// Real state read via terraform-exec Show decodes numbers as
+		// json.Number; count indices arrive this way and must render as bare
+		// integers, never quoted strings.
+		{"count index json.Number", json.Number("0"), "[0]"},
+		{"count index json.Number nonzero", json.Number("12"), "[12]"},
+		// float64/int are also handled for callers that build state directly.
 		{"count index float64", float64(0), "[0]"},
 		{"count index float64 nonzero", float64(12), "[12]"},
 		{"count index int", 3, "[3]"},
