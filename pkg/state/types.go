@@ -3,7 +3,9 @@
 package state
 
 import (
+	"encoding/json"
 	"fmt"
+	"reflect"
 	"sort"
 	"strings"
 
@@ -367,6 +369,46 @@ func stateResourceToInfo(r *tfjson.StateResource) *ResourceInfo {
 	}
 }
 
+// FormatInstanceKey renders a resource instance index as a bracketed address
+// suffix, using the syntax Terraform/OpenTofu expects for each key kind:
+//
+//	for_each key (string) → ["key"]   (quoted)
+//	count index (numeric) → [0]        (bare integer)
+//	no index (nil)        → ""         (empty)
+//
+// This distinction matters when constructing destination addresses for moved
+// and import blocks: a count index must stay a bare integer. Quoting it (e.g.
+// ["0"]) makes Terraform treat it as a for_each key, producing an address that
+// does not match the resource in state.
+//
+// Note: state read via terraform-exec's Show decodes JSON numbers as
+// json.Number (it enables UseJSONNumber), so count indices arrive as
+// json.Number rather than float64. Both are handled.
+func FormatInstanceKey(index interface{}) string {
+	switch v := index.(type) {
+	case nil:
+		return ""
+	case string:
+		return fmt.Sprintf("[%q]", v)
+	case json.Number:
+		return fmt.Sprintf("[%s]", v.String())
+	}
+
+	// Any numeric type is a count index and must render as a bare integer.
+	// Detect every int/uint/float kind via reflection so a caller passing
+	// e.g. int64 or uint doesn't fall through to the quoted for_each form.
+	switch rv := reflect.ValueOf(index); rv.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return fmt.Sprintf("[%d]", rv.Int())
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return fmt.Sprintf("[%d]", rv.Uint())
+	case reflect.Float32, reflect.Float64:
+		return fmt.Sprintf("[%d]", int64(rv.Float()))
+	default:
+		return fmt.Sprintf("[%q]", formatIndex(index))
+	}
+}
+
 // formatIndex converts an index value to its string representation.
 // For string keys, returns the key directly.
 // For numeric indices, formats as an integer.
@@ -378,6 +420,8 @@ func formatIndex(index interface{}) string {
 	switch v := index.(type) {
 	case string:
 		return v
+	case json.Number:
+		return v.String()
 	case float64:
 		return fmt.Sprintf("%d", int(v))
 	default:

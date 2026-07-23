@@ -1,6 +1,7 @@
 package state
 
 import (
+	"encoding/json"
 	"testing"
 
 	tfjson "github.com/hashicorp/terraform-json"
@@ -493,6 +494,40 @@ func TestBaseAddress(t *testing.T) {
 		t.Run(tt.address, func(t *testing.T) {
 			if got := BaseAddress(tt.address); got != tt.want {
 				t.Errorf("BaseAddress(%q) = %q, want %q", tt.address, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestFormatInstanceKey(t *testing.T) {
+	tests := []struct {
+		name  string
+		index interface{}
+		want  string
+	}{
+		{"nil index", nil, ""},
+		{"for_each string key", "my-key", `["my-key"]`},
+		{"for_each numeric-looking string key", "0", `["0"]`},
+		// Real state read via terraform-exec Show decodes numbers as
+		// json.Number; count indices arrive this way and must render as bare
+		// integers, never quoted strings.
+		{"count index json.Number", json.Number("0"), "[0]"},
+		{"count index json.Number nonzero", json.Number("12"), "[12]"},
+		// float64/int and other integer kinds are handled for callers that
+		// build state directly rather than decoding it from JSON.
+		{"count index float64", float64(0), "[0]"},
+		{"count index float64 nonzero", float64(12), "[12]"},
+		{"count index int", 3, "[3]"},
+		{"count index int64", int64(7), "[7]"},
+		{"count index uint", uint(9), "[9]"},
+		{"count index uint64", uint64(42), "[42]"},
+		{"count index float32", float32(5), "[5]"},
+		{"for_each key with quote", `a"b`, `["a\"b"]`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := FormatInstanceKey(tt.index); got != tt.want {
+				t.Errorf("FormatInstanceKey(%#v) = %q, want %q", tt.index, got, tt.want)
 			}
 		})
 	}

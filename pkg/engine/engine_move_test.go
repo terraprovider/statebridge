@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -86,6 +87,68 @@ operations:
 			dstContains:     []string{`module.new.resource.all["key1"]`},
 			srcRemovedCount: 1,
 			dstImportCount:  1,
+		},
+		{
+			// A count-indexed resource: the instance keys are integers and must
+			// stay bare ([0], [1]) in generated addresses — never quoted as
+			// for_each keys (["0"]), which would not match the resource in state.
+			name: "count-indexed resource move keeps bare integer keys",
+			yaml: `
+description: "Move a count resource"
+operations:
+  - type: move
+    source_layer: "SRC"
+    destination_layer: "DST"
+    resources:
+      - from: "aws_instance.web"
+`,
+			// Indices are json.Number to mirror how terraform-exec's Show
+			// decodes real state (it enables UseJSONNumber).
+			stateResources: []*tfjson.StateResource{
+				testutil.NewResource("aws_instance.web[0]", "aws_instance", "web", json.Number("0"),
+					map[string]interface{}{"id": "i-0"}),
+				testutil.NewResource("aws_instance.web[1]", "aws_instance", "web", json.Number("1"),
+					map[string]interface{}{"id": "i-1"}),
+			},
+			srcRemovedCount: 1,
+			dstImportCount:  2,
+			dstContains:     []string{"aws_instance.web[0]", "aws_instance.web[1]"},
+			dstNotContains:  []string{`aws_instance.web["0"]`, `aws_instance.web["1"]`},
+		},
+		{
+			// Reproduces the reported bug: a count-indexed resource inside an
+			// indexed module. The trailing resource count index must render as
+			// [0], not ["0"].
+			name: "count-indexed resource inside indexed module",
+			yaml: `
+description: "Move ca_pilot_all_users"
+operations:
+  - type: move
+    source_layer: "SRC"
+    destination_layer: "DST"
+    resources:
+      - from: "module.conditional_access[0].azuread_group_without_members.ca_pilot_all_users"
+`,
+			stateResources: []*tfjson.StateResource{
+				testutil.NewResource(
+					"module.conditional_access[0].azuread_group_without_members.ca_pilot_all_users[0]",
+					"azuread_group_without_members", "ca_pilot_all_users", json.Number("0"),
+					map[string]interface{}{"id": "grp-pilot"}),
+				// Sibling keeps the module instance non-empty so the removed block
+				// stays resource-level (avoids the multi-instance guard path).
+				testutil.NewResource(
+					"module.conditional_access[0].azuread_application.app",
+					"azuread_application", "app", nil,
+					map[string]interface{}{"id": "app-1"}),
+			},
+			srcRemovedCount: 1,
+			dstImportCount:  1,
+			dstContains: []string{
+				"module.conditional_access[0].azuread_group_without_members.ca_pilot_all_users[0]",
+			},
+			dstNotContains: []string{
+				`ca_pilot_all_users["0"]`,
+			},
 		},
 		{
 			name: "for_each move under indexed module",
