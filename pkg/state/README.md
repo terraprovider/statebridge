@@ -16,7 +16,7 @@ The state package provides OpenTofu state reading with caching and auto-init sup
 |------|-------|
 | `reader_test.go` | `FlattenState`/`LookupResource` tests using synthetic state (no tofu binary needed) |
 | `reader_init_test.go` | `TestRunInit_DoesNotLeakStateJSONAfterward`: regression test (real `tofu` binary, skipped if not on PATH) asserting the auto-init retry path doesn't leak the full state JSON to the writers configured for `tofu init`'s own output |
-| `rawstate_test.go` | `parseRawState` tests with synthetic raw state, plus `TestReadState_FallsBackToRawStateOnSchemaVersionMismatch` (real `tofu` binary, skipped if not on PATH) reproducing the `show -json` schema version mismatch |
+| `rawstate_test.go` | `parseRawState` tests with synthetic raw state, plus `ReadState` fallback tests (real `tofu` binary, skipped if not on PATH): falls back on the `show -json` schema version mismatch, does not fall back when the auto-init retry fails, and reports the `state pull` error when the fallback fails too |
 | `types_test.go` | `ResourceExists` tests including module address matching and for_each instances |
 
 ## Running Tests

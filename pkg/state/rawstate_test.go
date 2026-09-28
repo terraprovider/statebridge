@@ -102,14 +102,23 @@ func TestParseRawState(t *testing.T) {
 }
 
 func TestParseRawState_Empty(t *testing.T) {
-	for _, in := range []string{"", "  \n"} {
-		s, err := parseRawState([]byte(in))
-		if err != nil {
-			t.Fatalf("parseRawState(%q): %v", in, err)
-		}
-		if got := FlattenState(s); len(got) != 0 {
-			t.Errorf("parseRawState(%q): expected no resources, got %d", in, len(got))
-		}
+	tests := []struct {
+		name string
+		in   string
+	}{
+		{"empty", ""},
+		{"whitespace", "  \n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s, err := parseRawState([]byte(tt.in))
+			if err != nil {
+				t.Fatalf("parseRawState: %v", err)
+			}
+			if got := FlattenState(s); len(got) != 0 {
+				t.Errorf("expected no resources, got %d", len(got))
+			}
+		})
 	}
 }
 
@@ -137,6 +146,60 @@ func TestParseRawState_Errors(t *testing.T) {
 // provider"). ReadState must fall back to `tofu state pull` and return the
 // same addresses as before.
 func TestReadState_FallsBackToRawStateOnSchemaVersionMismatch(t *testing.T) {
+	tofuPath, dir, want := setupSchemaMismatchLayer(t)
+
+	got := stateAddresses(t, NewTofuStateReader(tofuPath, nil), dir)
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("fallback addresses = %v, want %v", got, want)
+	}
+}
+
+// TestReadState_InitFailureIsNotMaskedByRawStateFallback asserts that when
+// `tofu show -json` fails and the auto-init retry itself fails, ReadState
+// returns the init error instead of falling back to `tofu state pull`, which
+// would still read the state of the previously initialized backend.
+func TestReadState_InitFailureIsNotMaskedByRawStateFallback(t *testing.T) {
+	tofuPath, dir, _ := setupSchemaMismatchLayer(t)
+
+	// The local backend accepts no "foo" argument, so `tofu init` fails.
+	r := NewTofuStateReader(tofuPath, []string{"-backend-config=foo=bar"})
+	_, err := r.ReadState(context.Background(), dir)
+	if err == nil {
+		t.Fatal("expected ReadState to fail with the tofu init error, got nil")
+	}
+	if !strings.Contains(err.Error(), "tofu init failed") {
+		t.Errorf("expected tofu init error, got: %v", err)
+	}
+}
+
+// TestReadState_ReportsStatePullError asserts that when both `tofu show -json`
+// and the `tofu state pull` fallback fail, the error names both failures.
+func TestReadState_ReportsStatePullError(t *testing.T) {
+	tofuPath, dir, _ := setupSchemaMismatchLayer(t)
+
+	// An uninstalled module makes both show -json and state pull fail
+	// ("Module not installed").
+	if err := os.WriteFile(filepath.Join(dir, "extra.tf"), []byte(`module "extra" { source = "./mod" }`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := NewTofuStateReader(tofuPath, nil).ReadState(context.Background(), dir)
+	if err == nil {
+		t.Fatal("expected ReadState to fail, got nil")
+	}
+	for _, want := range []string{"reading state for", "tofu state pull failed"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("expected error to contain %q, got: %v", want, err)
+		}
+	}
+}
+
+// setupSchemaMismatchLayer applies a small configuration to a local backend,
+// records its state addresses, then rewrites every schema_version in the
+// state file so that `tofu show -json` fails with a schema version mismatch.
+// It returns the tofu path, the layer directory and the recorded addresses.
+func setupSchemaMismatchLayer(t *testing.T) (string, string, []string) {
+	t.Helper()
 	tofuPath, err := exec.LookPath("tofu")
 	if err != nil {
 		t.Skip("tofu binary not found in PATH; skipping")
@@ -147,6 +210,9 @@ func TestReadState_FallsBackToRawStateOnSchemaVersionMismatch(t *testing.T) {
 	// is needed for init or apply.
 	files := map[string]string{
 		"main.tf": `
+terraform {
+  backend "local" {}
+}
 resource "terraform_data" "c" {
   count = 2
   input = count.index
@@ -200,10 +266,7 @@ module "m" {
 		t.Fatalf("expected tofu show to fail with a schema version mismatch, got: %v", err)
 	}
 
-	got := stateAddresses(t, NewTofuStateReader(tofuPath, nil), dir)
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("fallback addresses = %v, want %v", got, want)
-	}
+	return tofuPath, dir, want
 }
 
 func stateAddresses(t *testing.T, r *TofuStateReader, dir string) []string {
