@@ -19,11 +19,14 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
+          persist-credentials: false
           fetch-depth: 0
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
+          # No build cache for release artifacts: a cache written by another run could poison them
+          cache: false
 
       - uses: aquaproj/aqua-installer@96a9bc20066c5bf5e275b41019cfc165b25f4e2e # v4.0.5
         with:
@@ -88,7 +91,7 @@ jobs:
     # slsa-framework/slsa-github-generator doesn't support pinning version
     # > Invalid ref: 68bad40844440577b33778c9f29077a3388838e9. Expected ref of the form refs/tags/vX.Y.Z
     # https://github.com/slsa-framework/slsa-github-generator/issues/722
-    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v2.1.0
+    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v2.1.0 # zizmor: ignore[unpinned-uses] -- generator requires a tag ref, see above
     with:
       base64-subjects: "${{ needs.build.outputs.hashes }}"
       upload-assets: false

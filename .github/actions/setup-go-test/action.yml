@@ -34,7 +34,12 @@ runs:
 
     - name: Run tests
       shell: bash
-      run: gotestsum --junitfile test-results.xml --format ${{ inputs.gotestsum-format }} -- ${{ inputs.test-args }}
+      env:
+        INPUTS_GOTESTSUM_FORMAT: ${{ inputs.gotestsum-format }}
+        INPUTS_TEST_ARGS: ${{ inputs.test-args }}
+      # INPUTS_TEST_ARGS is intentionally unquoted: it holds several go test arguments
+      # shellcheck disable=SC2086
+      run: gotestsum --junitfile test-results.xml --format "${INPUTS_GOTESTSUM_FORMAT}" -- ${INPUTS_TEST_ARGS}
 
     - name: Test Summary
       uses: EnricoMi/publish-unit-test-result-action@c950f6fb443cb5af20a377fd0dfaa78838901040 # v2.23.0
