@@ -16,6 +16,6 @@ runs:
       with:
         go-version-file: ${{ inputs.go-version-file }}
 
-    - uses: golangci/golangci-lint-action@4afd733a84b1f43292c63897423277bb7f4313a9 # v6.5.0
+    - uses: golangci/golangci-lint-action@4afd733a84b1f43292c63897423277bb7f4313a9 # v8.0.0
       with:
         version: ${{ inputs.golangci-lint-version }}

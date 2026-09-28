@@ -36,9 +36,10 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
+          persist-credentials: false
           fetch-depth: 0
 
-      - uses: ./.github/actions/setup-go-test
+      - uses: $/.github/actions/setup-go-test
         with:
           setup-tofu: "true"
           test-args: -tags=e2e -timeout=60m -count=1 ./e2e/...
