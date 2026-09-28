@@ -34,7 +34,7 @@ E2E environment: `ARM_CLIENT_ID`, `ARM_TENANT_ID`, `ARM_SUBSCRIPTION_ID`, `ARM_U
 
 ### Code Conventions
 
-- **Go 1.26**, module `github.com/terraprovider/statebridge`
+- **Recent Go version**, module `github.com/terraprovider/statebridge`
 - **Error handling:** Always wrap with context — `fmt.Errorf("context: %w", err)`
 - **Validation:** Collect all errors before returning, don't fast-fail (see `pkg/migration/validation.go`)
 - **Tests:** Table-driven with `t.Run()` subtests. Use helpers from `internal/testutil/` (no external test frameworks)
