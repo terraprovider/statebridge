@@ -63,6 +63,8 @@ func (r *TofuStateReader) TofuPath() string {
 // ReadState runs `tofu show -json` in the given layer directory and returns
 // the parsed state. Results are cached per absolute layer path. If the read
 // fails and initArgs were provided, `tofu init` is run and the read retried.
+// If `tofu show -json` still fails, the raw state from `tofu state pull` is
+// used instead (see parseRawState for how that differs).
 func (r *TofuStateReader) ReadState(ctx context.Context, layerPath string) (*tfjson.State, error) {
 	absPath, err := filepath.Abs(layerPath)
 	if err != nil {
@@ -91,6 +93,8 @@ func (r *TofuStateReader) ReadState(ctx context.Context, layerPath string) (*tfj
 	if err != nil {
 		// If init args are configured and we haven't tried init yet, do so.
 		if len(r.initArgs) > 0 && !r.initialized[absPath] {
+			// An init failure is returned as-is: falling back to the raw state
+			// here could read a stale backend left over from a previous init.
 			if initErr := r.runInit(ctx, tf, absPath); initErr != nil {
 				return nil, fmt.Errorf("tofu init failed for %q: %w", layerPath, initErr)
 			}
@@ -98,14 +102,36 @@ func (r *TofuStateReader) ReadState(ctx context.Context, layerPath string) (*tfj
 
 			s, err = tf.Show(ctx)
 			if err != nil {
-				return nil, fmt.Errorf("state read failed after init for %q: %w", layerPath, err)
+				s, err = r.readRawState(ctx, tf, layerPath, fmt.Errorf("state read failed after init for %q: %w", layerPath, err))
 			}
 		} else {
-			return nil, fmt.Errorf("reading state for %q: %w", layerPath, err)
+			s, err = r.readRawState(ctx, tf, layerPath, fmt.Errorf("reading state for %q: %w", layerPath, err))
+		}
+		if err != nil {
+			return nil, err
 		}
 	}
 
 	r.cache[absPath] = s
+	return s, nil
+}
+
+// readRawState is the fallback for a failed `tofu show -json`, which needs
+// every provider schema and refuses state written by a different resource
+// schema version (e.g. right after a provider upgrade, before the state has
+// been refreshed). It reads the raw state via `tofu state pull`, which needs
+// no provider schemas. showErr is the error from `tofu show -json`; it is
+// printed as a warning on success and included in the error on failure.
+func (r *TofuStateReader) readRawState(ctx context.Context, tf *tfexec.Terraform, layerPath string, showErr error) (*tfjson.State, error) {
+	raw, err := tf.StatePull(ctx)
+	if err != nil {
+		return nil, errors.Join(showErr, fmt.Errorf("raw state fallback: tofu state pull failed for %q: %w", layerPath, err))
+	}
+	s, err := parseRawState([]byte(raw))
+	if err != nil {
+		return nil, errors.Join(showErr, fmt.Errorf("raw state fallback: parsing raw state for %q: %w", layerPath, err))
+	}
+	fmt.Fprintf(os.Stderr, "Warning: %v\nFalling back to raw state from tofu state pull; attribute values are not upgraded to the current provider schema\n", showErr)
 	return s, nil
 }
 
