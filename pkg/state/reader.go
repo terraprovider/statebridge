@@ -63,6 +63,8 @@ func (r *TofuStateReader) TofuPath() string {
 // ReadState runs `tofu show -json` in the given layer directory and returns
 // the parsed state. Results are cached per absolute layer path. If the read
 // fails and initArgs were provided, `tofu init` is run and the read retried.
+// If `tofu show -json` still fails, the raw state from `tofu state pull` is
+// used instead (see parseRawState for how that differs).
 func (r *TofuStateReader) ReadState(ctx context.Context, layerPath string) (*tfjson.State, error) {
 	absPath, err := filepath.Abs(layerPath)
 	if err != nil {
@@ -87,25 +89,48 @@ func (r *TofuStateReader) ReadState(ctx context.Context, layerPath string) (*tfj
 		return nil, fmt.Errorf("initializing tofu for layer %q: %w", absPath, err)
 	}
 
-	s, err := tf.Show(ctx)
+	s, err := r.show(ctx, tf, absPath, layerPath)
 	if err != nil {
-		// If init args are configured and we haven't tried init yet, do so.
-		if len(r.initArgs) > 0 && !r.initialized[absPath] {
-			if initErr := r.runInit(ctx, tf, absPath); initErr != nil {
-				return nil, fmt.Errorf("tofu init failed for %q: %w", layerPath, initErr)
-			}
-			r.initialized[absPath] = true
-
-			s, err = tf.Show(ctx)
-			if err != nil {
-				return nil, fmt.Errorf("state read failed after init for %q: %w", layerPath, err)
-			}
-		} else {
-			return nil, fmt.Errorf("reading state for %q: %w", layerPath, err)
+		// `tofu show -json` needs every provider schema and refuses state
+		// written by a different resource schema version (e.g. right after a
+		// provider upgrade, before the state has been refreshed). Fall back to
+		// the raw state, which needs no provider schemas.
+		raw, pullErr := tf.StatePull(ctx)
+		if pullErr != nil {
+			return nil, err
 		}
+		s, pullErr = parseRawState([]byte(raw))
+		if pullErr != nil {
+			return nil, errors.Join(err, fmt.Errorf("parsing raw state for %q: %w", layerPath, pullErr))
+		}
+		fmt.Fprintf(os.Stderr, "Warning: %v\nFalling back to raw state from tofu state pull; attribute values are not upgraded to the current provider schema\n", err)
 	}
 
 	r.cache[absPath] = s
+	return s, nil
+}
+
+// show runs `tofu show -json`. If it fails and init args were provided,
+// `tofu init` is run and the read retried once.
+func (r *TofuStateReader) show(ctx context.Context, tf *tfexec.Terraform, absPath, layerPath string) (*tfjson.State, error) {
+	s, err := tf.Show(ctx)
+	if err == nil {
+		return s, nil
+	}
+
+	// If init args are configured and we haven't tried init yet, do so.
+	if len(r.initArgs) == 0 || r.initialized[absPath] {
+		return nil, fmt.Errorf("reading state for %q: %w", layerPath, err)
+	}
+	if initErr := r.runInit(ctx, tf, absPath); initErr != nil {
+		return nil, fmt.Errorf("tofu init failed for %q: %w", layerPath, initErr)
+	}
+	r.initialized[absPath] = true
+
+	s, err = tf.Show(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("state read failed after init for %q: %w", layerPath, err)
+	}
 	return s, nil
 }
 
