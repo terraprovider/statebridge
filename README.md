@@ -248,5 +248,5 @@ pkg/
 
 ## Requirements
 
-- Go 1.26.1+ (for building)
+- Recent Go version (for building)
 - OpenTofu (`tofu`) in PATH — required by all commands for state reading, condition evaluation, and backend initialization
