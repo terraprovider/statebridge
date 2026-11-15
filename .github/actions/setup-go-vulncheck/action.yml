@@ -9,9 +9,25 @@ inputs:
 runs:
   using: composite
   steps:
+    # go.mod may pin a patch release (go 1.27.1), which setup-go treats as an
+    # exact version, so check-latest alone can't move past it. Scan with the
+    # newest patch of the same minor release instead.
+    - name: Resolve Go minor version
+      id: go-version
+      shell: bash
+      env:
+        GO_MOD: ${{ inputs.go-version-file }}
+      run: |
+        minor=$(sed -nE 's/^go ([0-9]+\.[0-9]+)(\.[0-9]+)?[[:space:]]*$/\1/p' "$GO_MOD")
+        if [ -z "$minor" ]; then
+          echo "::error file=$GO_MOD::no go directive found"
+          exit 1
+        fi
+        echo "version=$minor.x" >> "$GITHUB_OUTPUT"
+
     - uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
       with:
-        go-version-file: ${{ inputs.go-version-file }}
+        go-version: ${{ steps.go-version.outputs.version }}
         check-latest: true
 
     - name: Install govulncheck
